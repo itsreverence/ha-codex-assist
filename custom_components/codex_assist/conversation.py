@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import httpx
+from homeassistant.components import conversation
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import MATCH_ALL
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import intent
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.httpx_client import get_async_client
+
+from .codex_client import CodexClient, CodexMessage
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    async_add_entities([CodexAssistConversationEntity(entry)])
+
+
+class CodexAssistConversationEntity(
+    conversation.ConversationEntity,
+    conversation.AbstractConversationAgent,
+):
+    _attr_has_entity_name = True
+    _attr_name = "Codex Assist"
+    _attr_supported_features = conversation.ConversationEntityFeature(0)
+    _attr_supports_streaming = False
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self.entry = entry
+        self._attr_unique_id = entry.entry_id
+
+    @property
+    def supported_languages(self) -> list[str] | str:
+        return MATCH_ALL
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        conversation.async_set_agent(self.hass, self.entry, self)
+
+    async def async_will_remove_from_hass(self) -> None:
+        conversation.async_unset_agent(self.hass, self.entry)
+        await super().async_will_remove_from_hass()
+
+    async def _async_handle_message(
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+    ) -> conversation.ConversationResult:
+        # MVP placeholder until OAuth config flow persists real tokens. This keeps
+        # the integration shape native to Assist while the Codex auth UI is built.
+        access_token = self.entry.data.get("access_token")
+        model = self.entry.data.get("model", "gpt-5.4")
+        prompt = self.entry.data.get(
+            "prompt",
+            "You are a concise Home Assistant Assist conversation agent.",
+        )
+
+        response = intent.IntentResponse(language=user_input.language)
+        if not access_token:
+            response.async_set_speech(
+                "Codex Assist is installed, but Codex OAuth login is not wired yet."
+            )
+            return conversation.ConversationResult(
+                response=response,
+                conversation_id=user_input.conversation_id,
+            )
+
+        http_client = get_async_client(self.hass)
+        codex = CodexClient(http_client=http_client, access_token=access_token)
+        try:
+            text = await codex.generate_text(
+                model=model,
+                instructions=prompt,
+                messages=[CodexMessage(role="user", content=user_input.text)],
+            )
+        except (httpx.HTTPError, RuntimeError) as err:
+            text = f"Codex Assist failed: {err}"
+
+        response.async_set_speech(text or "Codex returned an empty response.")
+        return conversation.ConversationResult(
+            response=response,
+            conversation_id=user_input.conversation_id,
+        )
