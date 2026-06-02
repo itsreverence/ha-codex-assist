@@ -9,7 +9,9 @@ from homeassistant.helpers import intent
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.httpx_client import get_async_client
 
+from .codex_auth import CodexAuthClient
 from .codex_client import CodexClient, CodexMessage
+from .codex_runtime import resolve_runtime_tokens
 
 
 async def async_setup_entry(
@@ -50,9 +52,6 @@ class CodexAssistConversationEntity(
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
-        # MVP placeholder until OAuth config flow persists real tokens. This keeps
-        # the integration shape native to Assist while the Codex auth UI is built.
-        access_token = self.entry.data.get("access_token")
         model = self.entry.data.get("model", "gpt-5.4")
         prompt = self.entry.data.get(
             "prompt",
@@ -60,17 +59,26 @@ class CodexAssistConversationEntity(
         )
 
         response = intent.IntentResponse(language=user_input.language)
-        if not access_token:
+        http_client = get_async_client(self.hass)
+        try:
+            tokens = await resolve_runtime_tokens(
+                self.entry.data,
+                auth_client=CodexAuthClient(http_client=http_client),
+                async_update_entry_data=lambda data: self.hass.config_entries.async_update_entry(
+                    self.entry,
+                    data=data,
+                ),
+            )
+        except RuntimeError:
             response.async_set_speech(
-                "Codex Assist is installed, but Codex OAuth login is not wired yet."
+                "Codex Assist is missing Codex access token data. Reconfigure the integration."
             )
             return conversation.ConversationResult(
                 response=response,
                 conversation_id=user_input.conversation_id,
             )
 
-        http_client = get_async_client(self.hass)
-        codex = CodexClient(http_client=http_client, access_token=access_token)
+        codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
         try:
             text = await codex.generate_text(
                 model=model,
