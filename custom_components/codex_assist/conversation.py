@@ -52,8 +52,9 @@ class CodexAssistConversationEntity(
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
-        model = self.entry.data.get("model", "gpt-5.4")
-        prompt = self.entry.data.get(
+        settings = {**self.entry.data, **self.entry.options}
+        model = settings.get("model", "gpt-5.4")
+        prompt = settings.get(
             "prompt",
             "You are a concise Home Assistant Assist conversation agent.",
         )

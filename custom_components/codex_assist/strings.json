@@ -20,5 +20,18 @@
       "device_code_auth_failed": "Codex sign-in failed. Restart setup and try again.",
       "device_code_request_failed": "Could not request a Codex device code. Check network access from Home Assistant and try again."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Codex Assist options",
+        "description": "Adjust text-only Codex Assist behavior. Home Assistant control tools are intentionally not exposed yet.",
+        "data": {
+          "model": "Model",
+          "prompt": "System prompt",
+          "safety_mode": "Safety mode"
+        }
+      }
+    }
   }
 }

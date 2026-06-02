@@ -21,10 +21,17 @@ CONF_MODEL = "model"
 DEFAULT_MODEL = "gpt-5.4"
 DEFAULT_PROMPT = "You are a concise Home Assistant Assist conversation agent."
 SAFETY_MODE_TALK_ONLY = "talk_only"
+DEFAULT_SAFETY_MODE = SAFETY_MODE_TALK_ONLY
 
 
 class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> CodexAssistOptionsFlow:
+        return CodexAssistOptionsFlow(config_entry)
 
     def __init__(self) -> None:
         self._setup_input: dict[str, Any] = {}
@@ -94,12 +101,35 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 def _user_schema() -> vol.Schema:
+    return _settings_schema({})
+
+
+class CodexAssistOptionsFlow(config_entries.OptionsFlow):
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(title="", data=dict(user_input))
+
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        return self.async_show_form(
+            step_id="init",
+            data_schema=_settings_schema(defaults),
+        )
+
+
+def _settings_schema(defaults: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
-            vol.Optional(CONF_MODEL, default=DEFAULT_MODEL): str,
-            vol.Optional(CONF_PROMPT, default=DEFAULT_PROMPT): str,
-            vol.Optional(CONF_SAFETY_MODE, default=SAFETY_MODE_TALK_ONLY): vol.In(
-                [SAFETY_MODE_TALK_ONLY]
-            ),
+            vol.Optional(CONF_MODEL, default=defaults.get(CONF_MODEL, DEFAULT_MODEL)): str,
+            vol.Optional(
+                CONF_PROMPT,
+                default=defaults.get(CONF_PROMPT, DEFAULT_PROMPT),
+            ): str,
+            vol.Optional(
+                CONF_SAFETY_MODE,
+                default=defaults.get(CONF_SAFETY_MODE, DEFAULT_SAFETY_MODE),
+            ): vol.In([SAFETY_MODE_TALK_ONLY]),
         }
     )
