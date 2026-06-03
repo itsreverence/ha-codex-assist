@@ -92,6 +92,29 @@ async def test_generate_text_does_not_duplicate_stream_delta_and_done_item_text(
 
 
 @pytest.mark.asyncio
+async def test_generate_text_handles_crlf_sse_and_done_sentinel():
+    response = FakeResponse(
+        200,
+        text=(
+            'event: response.output_text.delta\r\n'
+            'data: {"type":"response.output_text.delta","delta":"pong"}\r\n'
+            '\r\n'
+            'data: [DONE]\r\n'
+            '\r\n'
+        ),
+    )
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    result = await client.generate_text(
+        model="gpt-5.4",
+        instructions="You are concise.",
+        messages=[CodexMessage(role="user", content="ping")],
+    )
+
+    assert result == "pong"
+
+
+@pytest.mark.asyncio
 async def test_generate_text_surfaces_codex_error_body_for_debugging():
     client = CodexClient(
         http_client=FakeHttpClient(

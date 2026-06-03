@@ -84,13 +84,41 @@ class CodexAssistConversationEntity(
             text = await codex.generate_text(
                 model=model,
                 instructions=prompt,
-                messages=[CodexMessage(role="user", content=user_input.text)],
+                messages=_codex_messages_from_chat_log(chat_log, user_input),
             )
         except (httpx.HTTPError, RuntimeError) as err:
             text = f"Codex Assist failed: {err}"
+        else:
+            chat_log.async_add_assistant_content_without_tools(
+                conversation.AssistantContent(
+                    agent_id=user_input.agent_id,
+                    content=text,
+                )
+            )
 
         response.async_set_speech(text or "Codex returned an empty response.")
         return conversation.ConversationResult(
             response=response,
             conversation_id=user_input.conversation_id,
         )
+
+
+def _codex_messages_from_chat_log(
+    chat_log: conversation.ChatLog,
+    user_input: conversation.ConversationInput,
+) -> list[CodexMessage]:
+    messages: list[CodexMessage] = []
+    for content in chat_log.content:
+        role = getattr(content, "role", None)
+        text = getattr(content, "content", None)
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if role == "user":
+            messages.append(CodexMessage(role="user", content=text))
+        elif role == "assistant":
+            messages.append(CodexMessage(role="assistant", content=text))
+
+    if not messages or messages[-1].role != "user" or messages[-1].content != user_input.text:
+        messages.append(CodexMessage(role="user", content=user_input.text))
+
+    return messages[-12:]

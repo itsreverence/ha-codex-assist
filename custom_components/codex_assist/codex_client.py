@@ -114,20 +114,33 @@ def extract_streamed_output_text(stream_text: str) -> str:
 
 
 def _iter_sse_events(stream_text: str):
-    for block in stream_text.split("\n\n"):
-        data_lines = []
-        for line in block.splitlines():
-            if line.startswith("data:"):
-                data_lines.append(line.removeprefix("data:").strip())
+    data_lines: list[str] = []
+
+    def flush_event():
         if not data_lines:
-            continue
+            return None
         data = "\n".join(data_lines)
+        data_lines.clear()
+        if data == "[DONE]":
+            return None
         try:
             payload = json.loads(data)
         except json.JSONDecodeError:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    for line in stream_text.splitlines():
+        if not line.strip():
+            payload = flush_event()
+            if payload is not None:
+                yield payload
             continue
-        if isinstance(payload, dict):
-            yield payload
+        if line.startswith("data:"):
+            data_lines.append(line.removeprefix("data:").strip())
+
+    payload = flush_event()
+    if payload is not None:
+        yield payload
 
 
 def _response_error_detail(response: Any) -> str:
