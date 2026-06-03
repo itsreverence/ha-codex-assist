@@ -4,11 +4,31 @@
   <img src="assets/codex-assist-icon.png" alt="Codex Assist icon" width="128" height="128">
 </p>
 
+<p align="center">
+  <a href="https://github.com/itsreverence/ha-codex-assist/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/itsreverence/ha-codex-assist?style=for-the-badge"></a>
+  <a href="https://github.com/itsreverence/ha-codex-assist/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/itsreverence/ha-codex-assist/ci.yml?branch=main&style=for-the-badge&label=CI"></a>
+  <img alt="HACS custom repository" src="https://img.shields.io/badge/HACS-Custom-orange?style=for-the-badge">
+</p>
+
 Use OpenAI Codex / ChatGPT as a Home Assistant Assist conversation agent.
 
 Codex Assist installs as a custom Home Assistant integration, signs in with Codex-style ChatGPT device-code auth, and lets Assist answer questions or control only the Home Assistant entities you expose to Assist.
 
+## Why use it?
+
+- Use ChatGPT/Codex access from an eligible ChatGPT subscription instead of wiring Home Assistant to OpenAI API billing.
+- Add Codex as a selectable Home Assistant Assist conversation agent.
+- Keep device control inside Home Assistant's normal Assist exposed-entity safety model.
+- No separate API key setup for users who already use Codex with ChatGPT sign-in.
+
 > Experimental: this project is not affiliated with OpenAI or Home Assistant. It follows the authentication approach used by the official OpenAI Codex CLI, but the downstream Codex service interface is not currently presented as a stable public API for third-party Home Assistant integrations. Compatibility may change with upstream Codex updates.
+
+## Requirements
+
+- Home Assistant `2026.5.0` or newer.
+- HACS installed.
+- A ChatGPT account/plan with Codex access.
+- Assist entities exposed only for devices you want the agent to see or control.
 
 ## Install with HACS
 
