@@ -5,6 +5,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.helpers import selector
 from homeassistant.helpers.httpx_client import get_async_client
 
 from . import DOMAIN
@@ -13,6 +14,7 @@ from .codex_auth import (
     CodexAuthClient,
     CodexDeviceCode,
 )
+from .codex_models import DEFAULT_CODEX_MODELS, fetch_codex_model_ids
 
 CONF_ACCESS_TOKEN = "access_token"
 CONF_PROMPT = "prompt"
@@ -128,7 +130,7 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 def _user_schema() -> vol.Schema:
-    return _settings_schema({})
+    return _settings_schema({}, model_options=DEFAULT_CODEX_MODELS)
 
 
 class CodexAssistOptionsFlow(config_entries.OptionsFlow):
@@ -140,20 +142,31 @@ class CodexAssistOptionsFlow(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=dict(user_input))
 
         defaults = {**self.config_entry.data, **self.config_entry.options}
+        model_options = await fetch_codex_model_ids(
+            http_client=get_async_client(self.hass),
+            access_token=self.config_entry.data.get(CONF_ACCESS_TOKEN),
+        )
         return self.async_show_form(
             step_id="init",
-            data_schema=_settings_schema(defaults),
+            data_schema=_settings_schema(defaults, model_options=model_options),
         )
 
 
-def _settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+def _settings_schema(
+    defaults: dict[str, Any],
+    *,
+    model_options: list[str],
+) -> vol.Schema:
     safety_mode = defaults.get(CONF_SAFETY_MODE, DEFAULT_SAFETY_MODE)
     if safety_mode != SAFETY_MODE_FULL_CONTROL:
         safety_mode = SAFETY_MODE_FULL_CONTROL
 
+    model_default = defaults.get(CONF_MODEL, DEFAULT_MODEL)
+    model_options = list(dict.fromkeys([*model_options, str(model_default), DEFAULT_MODEL]))
+
     return vol.Schema(
         {
-            vol.Optional(CONF_MODEL, default=defaults.get(CONF_MODEL, DEFAULT_MODEL)): str,
+            vol.Optional(CONF_MODEL, default=model_default): _model_selector(model_options),
             vol.Optional(
                 CONF_PROMPT,
                 default=defaults.get(CONF_PROMPT, DEFAULT_PROMPT),
@@ -163,4 +176,16 @@ def _settings_schema(defaults: dict[str, Any]) -> vol.Schema:
                 default=safety_mode,
             ): vol.In([SAFETY_MODE_FULL_CONTROL]),
         }
+    )
+
+
+def _model_selector(model_options: list[str]) -> selector.SelectSelector:
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(value=model, label=model) for model in model_options
+            ],
+            mode=selector.SelectSelectorMode.DROPDOWN,
+            custom_value=True,
+        )
     )
