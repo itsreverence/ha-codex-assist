@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Codex Assist",
+        "description": "Set the default model and prompt. Setup will then show a Codex sign-in code for your ChatGPT/Codex account.",
+        "data": {
+          "model": "Model",
+          "prompt": "System prompt",
+          "safety_mode": "Safety mode"
+        }
+      },
+      "device": {
+        "title": "Sign in with Codex",
+        "description": "Open {verification_uri} in your browser, sign in with your ChatGPT/Codex account, and enter this code:\n\n{user_code}\n\nAfter approving it, come back here and submit this form. If OpenAI says it is not ready yet, wait about {interval} seconds and try again."
+      }
+    },
+    "error": {
+      "authorization_pending": "That code has not been approved yet. Finish signing in in your browser, wait a few seconds, then continue again.",
+      "device_code_auth_failed": "Codex sign-in failed. Restart setup and try again.",
+      "device_code_request_failed": "Could not request a Codex device code. Check network access from Home Assistant and try again."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Codex Assist options",
+        "description": "Adjust text-only Codex Assist behavior. Home Assistant control tools are intentionally not exposed yet.",
+        "data": {
+          "model": "Model",
+          "prompt": "System prompt",
+          "safety_mode": "Safety mode"
+        }
+      }
+    }
+  }
+}
