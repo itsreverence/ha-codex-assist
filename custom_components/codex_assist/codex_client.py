@@ -91,7 +91,8 @@ def _chatgpt_account_id(access_token: str) -> str | None:
 
 
 def extract_streamed_output_text(stream_text: str) -> str:
-    parts: list[str] = []
+    delta_parts: list[str] = []
+    done_parts: list[str] = []
     for event in _iter_sse_events(stream_text):
         event_type = event.get("type")
         if event_type == "error":
@@ -99,12 +100,16 @@ def extract_streamed_output_text(stream_text: str) -> str:
         if event_type == "response.output_text.delta":
             delta = event.get("delta")
             if isinstance(delta, str):
-                parts.append(delta)
+                delta_parts.append(delta)
             continue
         if event_type == "response.output_item.done":
             item = event.get("item")
             if isinstance(item, dict):
-                parts.append(extract_output_text({"output": [item]}))
+                done_parts.append(extract_output_text({"output": [item]}))
+    # Codex streams both text deltas and the completed message item. The
+    # completed item repeats the same visible text, so prefer deltas when
+    # present and only fall back to output_item.done when no deltas arrived.
+    parts = delta_parts or done_parts
     return "".join(parts).strip()
 
 

@@ -60,6 +60,38 @@ async def test_generate_text_requests_required_codex_streaming_shape():
 
 
 @pytest.mark.asyncio
+async def test_generate_text_does_not_duplicate_stream_delta_and_done_item_text():
+    text = "Codex Assist is connected."
+    response = FakeResponse(
+        200,
+        text=_sse_event(
+            "response.output_text.delta",
+            {"type": "response.output_text.delta", "delta": text},
+        )
+        + _sse_event(
+            "response.output_item.done",
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": text}],
+                },
+            },
+        )
+        + _sse_event("response.completed", {"type": "response.completed"}),
+    )
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    result = await client.generate_text(
+        model="gpt-5.4",
+        instructions="You are concise.",
+        messages=[CodexMessage(role="user", content="ping")],
+    )
+
+    assert result == text
+
+
+@pytest.mark.asyncio
 async def test_generate_text_surfaces_codex_error_body_for_debugging():
     client = CodexClient(
         http_client=FakeHttpClient(
