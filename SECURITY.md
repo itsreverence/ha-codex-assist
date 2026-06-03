@@ -21,4 +21,6 @@ Codex Assist uses Home Assistant's normal Assist LLM API and exposed-entity cont
 
 ![Codex Assist safety model](assets/codex-assist-safety-model.png)
 
+The important boundary is: Codex / ChatGPT may request an action, but Codex Assist must route that request through Home Assistant's Assist LLM API. Home Assistant then limits execution to the entities exposed to Assist.
+
 Keep sensitive entities such as locks, alarms, water shutoff valves, garage doors, covers, and security controls unexposed unless you deliberately want Assist control over them.

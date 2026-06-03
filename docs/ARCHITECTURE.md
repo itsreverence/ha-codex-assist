@@ -9,17 +9,11 @@ Codex Assist is a Home Assistant custom integration that registers a native Assi
 1. Home Assistant sends a voice/chat request through an Assist pipeline using `conversation.codex_assist`.
 2. Codex Assist refreshes its stored Codex/ChatGPT token if needed.
 3. Codex Assist sends the conversation to the Codex-compatible service interface.
-4. If Codex requests a Home Assistant tool call, Codex Assist routes it through Home Assistant's Assist LLM API.
-5. Home Assistant executes only the tools/entities exposed to Assist.
+4. If Codex requests a Home Assistant tool call, Codex Assist maps that request into Home Assistant's Assist LLM API.
+5. Home Assistant executes the allowed Assist tool call and returns the result.
 6. Codex Assist returns the final response to Home Assistant.
 
-## Safety boundary
-
-Codex Assist does not provide a raw service-call bridge. It uses Home Assistant's normal Assist LLM API, so control is bounded by the entities exposed to Assist.
-
-![Codex Assist safety model](../assets/codex-assist-safety-model.png)
-
-Sensitive devices such as locks, alarms, garage doors, water shutoff valves, covers, and similar high-impact entities should stay unexposed unless the user deliberately wants Assist control there.
+For the security boundary and exposed-entity model, see [../SECURITY.md](../SECURITY.md).
 
 ## Upstream compatibility
 
