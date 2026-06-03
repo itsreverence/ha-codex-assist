@@ -1,5 +1,9 @@
 # Home Assistant Codex Assist
 
+<p align="center">
+  <img src="assets/codex-assist-icon.png" alt="Codex Assist icon" width="128" height="128">
+</p>
+
 A custom Home Assistant Assist conversation agent backed by OpenAI Codex / ChatGPT OAuth.
 
 > Experimental: this project is not affiliated with OpenAI or Home Assistant. Codex/ChatGPT OAuth backend access is not an official public OpenAI API surface and may change without notice.
@@ -18,7 +22,7 @@ It is designed to behave like a normal Home Assistant voice-assistant provider:
 
 ## Current status
 
-Working local MVP, smoke-tested on Home Assistant `2026.5.4`:
+Public HACS custom repository release `v0.1.0`, smoke-tested on Home Assistant `2026.5.4`:
 
 - Codex device-code sign-in flow
 - runtime access-token refresh before model calls
@@ -26,12 +30,13 @@ Working local MVP, smoke-tested on Home Assistant `2026.5.4`:
 - Home Assistant conversation entity registration
 - Home Assistant chat-log history support for follow-up turns
 - native Home Assistant Assist control through the built-in LLM API and exposed-entity surface
+- HACS custom repository install/migration path verified
 - live smoke test: listed exposed lights and turned exposed lights on/off through Assist tools
 
-Still planned before a wider release:
+Still planned before a wider/default-listing release:
 
 - broader safe-command smoke tests across read-only devices, fans, media, and climates
-- release packaging and public issue templates
+- more user feedback on the experimental Codex OAuth backend
 
 ## Control and safety stance
 
@@ -54,9 +59,25 @@ Before using it for day-to-day control:
 
 ## Installation for development / custom repository use
 
-Until this is published publicly, install it manually or as a private/custom HACS repository.
+Install it as a HACS custom repository:
 
-Manual install:
+1. In Home Assistant, open **HACS**.
+2. Open the three-dot menu → **Custom repositories**.
+3. Add this repository URL:
+
+   ```text
+   https://github.com/itsreverence/ha-codex-assist
+   ```
+
+4. Category: **Integration**.
+5. Install **Codex Assist**.
+6. Restart Home Assistant.
+7. Go to **Settings → Devices & services → Add integration**.
+8. Search for **Codex Assist**.
+9. Follow the device-code login instructions.
+10. Select `Codex Assist` in an Assist pipeline and test with a harmless command.
+
+Manual development install:
 
 1. Copy `custom_components/codex_assist` into your Home Assistant config directory:
 
@@ -69,14 +90,6 @@ Manual install:
 4. Search for **Codex Assist**.
 5. Follow the device-code login instructions.
 6. Select `Codex Assist` in an Assist pipeline and test with a harmless command.
-
-HACS custom repository install:
-
-1. Add this repository as a HACS custom repository.
-2. Category: **Integration**.
-3. Install **Codex Assist**.
-4. Restart Home Assistant.
-5. Add/configure the integration from **Devices & services**.
 
 ## Troubleshooting
 
