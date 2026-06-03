@@ -7,7 +7,7 @@ class FakeResponse:
     def __init__(self, status_code, payload):
         self.status_code = status_code
         self._payload = payload
-        self.text = str(payload)
+        self.text = ""
 
     def json(self):
         return self._payload
@@ -58,6 +58,7 @@ async def test_generate_text_posts_responses_payload_to_codex_backend():
         "instructions": "You are a Home Assistant voice agent.",
         "input": [{"role": "user", "content": "turn on movie mode"}],
         "store": False,
+        "stream": True,
     }
 
 
