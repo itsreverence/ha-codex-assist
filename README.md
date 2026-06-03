@@ -56,7 +56,11 @@ Codex Assist installs as a custom Home Assistant integration, signs in with Code
 - Supports follow-up chat context from Home Assistant Assist.
 - Uses Home Assistant's built-in Assist LLM API for exposed-entity control.
 
-For deeper technical details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/WORKFLOW.md](docs/WORKFLOW.md).
+## Architecture at a glance
+
+![Codex Assist architecture](assets/codex-assist-architecture.png)
+
+For deeper technical details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/WORKFLOW.md](docs/WORKFLOW.md), and [SECURITY.md](SECURITY.md).
 
 ## Safety model
 

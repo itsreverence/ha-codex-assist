@@ -47,13 +47,7 @@ PY
 
 Transparent icon corners should report alpha `0`.
 
-For SVG diagrams, render to PNG before using image/vision tooling:
-
-```bash
-rsvg-convert -w 1200 -h 520 assets/codex-assist-flow.svg -o /tmp/codex-assist-flow.png
-```
-
-Do not pass raw SVG directly to image-analysis tools that only accept PNG/JPEG/GIF/WEBP.
+For generated documentation diagrams, prefer PNG/JPEG/WEBP for image-analysis tooling and GitHub preview compatibility. Raw SVG is fine for hand-authored vector diagrams, but render it to PNG before using image/vision tooling.
 
 ## Post-install smoke test
 

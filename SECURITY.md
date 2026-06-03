@@ -19,4 +19,6 @@ Report sensitive issues privately to the repository maintainer. Include:
 
 Codex Assist uses Home Assistant's normal Assist LLM API and exposed-entity controls. It should not add a custom raw service-call bridge or bypass Home Assistant's Assist exposure model.
 
+![Codex Assist safety model](assets/codex-assist-safety-model.png)
+
 Keep sensitive entities such as locks, alarms, water shutoff valves, garage doors, covers, and security controls unexposed unless you deliberately want Assist control over them.
