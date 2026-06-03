@@ -2,7 +2,7 @@
 
 Codex Assist is a Home Assistant custom integration that registers a native Assist conversation agent backed by Codex / ChatGPT access.
 
-![Codex Assist architecture flow](../assets/codex-assist-flow.svg)
+![Codex Assist architecture](../assets/codex-assist-architecture.png)
 
 ## Flow
 
@@ -16,6 +16,8 @@ Codex Assist is a Home Assistant custom integration that registers a native Assi
 ## Safety boundary
 
 Codex Assist does not provide a raw service-call bridge. It uses Home Assistant's normal Assist LLM API, so control is bounded by the entities exposed to Assist.
+
+![Codex Assist safety model](../assets/codex-assist-safety-model.png)
 
 Sensitive devices such as locks, alarms, garage doors, water shutoff valves, covers, and similar high-impact entities should stay unexposed unless the user deliberately wants Assist control there.
 
