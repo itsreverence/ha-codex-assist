@@ -12,96 +12,58 @@
 
 Use OpenAI Codex / ChatGPT as a Home Assistant Assist conversation agent.
 
-Codex Assist installs as a custom Home Assistant integration, signs in with Codex-style ChatGPT device-code auth, and lets Assist answer questions or control only the Home Assistant entities you expose to Assist.
+Codex Assist signs in with Codex-style ChatGPT device-code auth, adds Codex as a selectable Assist conversation agent, and keeps device control inside Home Assistant's normal exposed-entity safety model.
 
-## Why use it?
+> Experimental: this project is not affiliated with OpenAI or Home Assistant. Codex backend compatibility may change with upstream Codex updates.
 
-- Use ChatGPT/Codex access from an eligible ChatGPT subscription instead of wiring Home Assistant to OpenAI API billing.
-- Add Codex as a selectable Home Assistant Assist conversation agent.
-- Keep device control inside Home Assistant's normal Assist exposed-entity safety model.
-- No separate API key setup for users who already use Codex with ChatGPT sign-in.
+## Quick install
 
-> Experimental: this project is not affiliated with OpenAI or Home Assistant. It follows the authentication approach used by the official OpenAI Codex CLI, but the downstream Codex service interface is not currently presented as a stable public API for third-party Home Assistant integrations. Compatibility may change with upstream Codex updates.
+Requirements: Home Assistant `2026.5.0` or newer, HACS, and a ChatGPT account/plan with Codex access.
 
-## Requirements
-
-- Home Assistant `2026.5.0` or newer.
-- HACS installed.
-- A ChatGPT account/plan with Codex access.
-- Assist entities exposed only for devices you want the agent to see or control.
-
-## Install with HACS
-
-1. In Home Assistant, open **HACS**.
-2. Open the three-dot menu → **Custom repositories**.
-3. Add this repository:
+1. In Home Assistant, open **HACS → Custom repositories**.
+2. Add this repository as an **Integration**:
 
    ```text
    https://github.com/itsreverence/ha-codex-assist
    ```
 
-4. Set category to **Integration**.
-5. Install **Codex Assist**.
-6. Restart Home Assistant.
-7. Go to **Settings → Devices & services → Add integration**.
-8. Search for **Codex Assist**.
-9. Follow the device-code sign-in flow.
-10. Select **Codex Assist** in your Assist pipeline and test with something harmless, like an exposed light.
+3. Install **Codex Assist**.
+4. Restart Home Assistant.
+5. Go to **Settings → Devices & services → Add integration**.
+6. Search for **Codex Assist** and complete device-code sign-in.
+7. Select **Codex Assist** in your Assist pipeline.
+8. Test with a harmless exposed entity first, like a single light.
 
-## What it does
+## Why use it?
 
-- Adds `conversation.codex_assist` as a native Home Assistant conversation agent.
-- Uses Home Assistant config and reauth flows.
-- Refreshes Codex/ChatGPT access tokens before model calls.
-- Supports follow-up chat context from Home Assistant Assist.
-- Uses Home Assistant's built-in Assist LLM API for exposed-entity control.
+- Use eligible ChatGPT/Codex subscription access instead of wiring Home Assistant to OpenAI API billing.
+- Pick Codex as a normal Home Assistant Assist conversation agent.
+- Let Home Assistant's Assist exposed-entity controls define what the agent can see or control.
+- Configure model and prompt from the integration options flow.
 
-## Architecture at a glance
+## Safety short version
 
-![Codex Assist architecture](assets/codex-assist-architecture.png)
+Codex Assist does **not** expose a raw “call any Home Assistant service” bridge. It routes control through Home Assistant's Assist LLM API, so your **Assist exposed entities** list is the practical safety boundary.
 
-For deeper technical details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/WORKFLOW.md](docs/WORKFLOW.md), and [SECURITY.md](SECURITY.md).
+Start with harmless lights or read-only questions. Keep locks, alarms, garage doors, water shutoff valves, covers, and other sensitive devices unexposed unless you deliberately want Assist control there.
 
-## Safety model
+## User guide
 
-Codex Assist does **not** expose a raw “call any Home Assistant service” bridge.
+The GitHub Wiki is the main user manual:
 
-Control goes through Home Assistant's normal Assist LLM tool system, so the practical safety boundary is your **Assist exposed entities** list.
+- [Installation](https://github.com/itsreverence/ha-codex-assist/wiki/Installation)
+- [Choosing a Model](https://github.com/itsreverence/ha-codex-assist/wiki/Choosing-a-Model)
+- [Safe Entity Exposure](https://github.com/itsreverence/ha-codex-assist/wiki/Safe-Entity-Exposure)
+- [Troubleshooting](https://github.com/itsreverence/ha-codex-assist/wiki/Troubleshooting)
+- [Compatibility and Limitations](https://github.com/itsreverence/ha-codex-assist/wiki/Compatibility-and-Limitations)
 
-Before daily use:
+## Project docs
 
-- expose only devices you actually want Assist to control
-- start with harmless lights or read-only questions
-- keep locks, alarms, garage doors, water shutoff valves, covers, and other sensitive devices unexposed unless you deliberately want voice/LLM control there
+Canonical code-tied docs stay in the repository:
 
-## Troubleshooting
-
-### `conversation.codex_assist` does not appear
-
-- Restart Home Assistant after installing or updating.
-- Confirm **Codex Assist** is configured under **Settings → Devices & services**.
-- Reload the config entry if the integration exists but the entity is missing.
-- Check Home Assistant logs for `codex_assist` setup errors.
-
-### The agent answers but cannot control devices
-
-- Confirm your Assist pipeline uses **Codex Assist**.
-- Confirm the target device/entity is exposed to Assist.
-- Test with a simple exposed light first.
-
-### Auth stops working
-
-Codex Assist refreshes tokens before each model call. If refresh fails, Home Assistant should start a reauth flow from Repairs or the integration page.
-
-## Manual development install
-
-For development only, copy the integration folder into Home Assistant:
-
-```text
-/config/custom_components/codex_assist
-```
-
-Then restart Home Assistant and add **Codex Assist** from **Settings → Devices & services**.
+- [Security policy](SECURITY.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development workflow](docs/WORKFLOW.md)
 
 ## Development checks
 
@@ -110,16 +72,4 @@ uv run ruff check .
 uv run pytest
 ```
 
-## Status
-
 Current release: `v0.1.4`.
-
-Smoke-tested on Home Assistant `2026.5.4` with:
-
-- HACS custom repository install
-- Codex device-code sign-in
-- access-token refresh
-- Assist conversation registration
-- exposed-light listing and on/off control through Home Assistant Assist tools
-
-A wider/default-listing release still needs broader smoke testing across read-only devices, fans, media players, climates, and user feedback on upstream Codex compatibility.
