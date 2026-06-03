@@ -39,8 +39,6 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         if user_input is not None:
-            await self.async_set_unique_id(DOMAIN)
-            self._abort_if_unique_id_configured()
             self._setup_input = dict(user_input)
             try:
                 self._device_code = await self._auth_client().request_device_code()
@@ -76,6 +74,8 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except RuntimeError:
             return self._show_device_form(errors={"base": "device_code_auth_failed"})
 
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
         data = {
             **self._setup_input,
             "access_token": tokens.access_token,
