@@ -10,6 +10,8 @@ def test_config_flow_exposes_options_flow_for_runtime_settings():
     assert "CodexAssistOptionsFlow" in source
     assert "async_step_init" in source
     assert "async_create_entry" in source
+    assert "return CodexAssistOptionsFlow()" in source
+    assert "self.config_entry = config_entry" not in source
 
 
 def test_options_flow_uses_codex_model_selector_with_custom_slug_fallback():

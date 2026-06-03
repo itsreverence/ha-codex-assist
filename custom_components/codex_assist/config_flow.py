@@ -34,7 +34,8 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> CodexAssistOptionsFlow:
-        return CodexAssistOptionsFlow(config_entry)
+        del config_entry
+        return CodexAssistOptionsFlow()
 
     def __init__(self) -> None:
         self._setup_input: dict[str, Any] = {}
@@ -134,9 +135,6 @@ def _user_schema() -> vol.Schema:
 
 
 class CodexAssistOptionsFlow(config_entries.OptionsFlow):
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
-
     async def async_step_init(self, user_input=None):
         if user_input is not None:
             return self.async_create_entry(title="", data=dict(user_input))
