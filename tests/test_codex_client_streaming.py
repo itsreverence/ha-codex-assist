@@ -115,6 +115,44 @@ async def test_generate_text_handles_crlf_sse_and_done_sentinel():
 
 
 @pytest.mark.asyncio
+async def test_generate_turn_extracts_streamed_function_call_arguments():
+    response = FakeResponse(
+        200,
+        text=_sse_event(
+            "response.output_item.added",
+            {
+                "type": "response.output_item.added",
+                "item": {"type": "function_call", "call_id": "call-1", "name": "HassTurnOff"},
+            },
+        )
+        + _sse_event(
+            "response.function_call_arguments.delta",
+            {"type": "response.function_call_arguments.delta", "delta": '{"name":"Hallway"'},
+        )
+        + _sse_event(
+            "response.function_call_arguments.done",
+            {
+                "type": "response.function_call_arguments.done",
+                "arguments": '{"name":"Hallway","domain":"light"}',
+            },
+        ),
+    )
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    result = await client.generate_turn(
+        model="gpt-5.4",
+        instructions="Use tools.",
+        input_items=[{"role": "user", "content": "turn off hallway"}],
+        tools=[{"type": "function", "name": "HassTurnOff", "parameters": {}}],
+    )
+
+    assert result.text == ""
+    assert result.tool_calls[0].id == "call-1"
+    assert result.tool_calls[0].name == "HassTurnOff"
+    assert result.tool_calls[0].arguments == {"name": "Hallway", "domain": "light"}
+
+
+@pytest.mark.asyncio
 async def test_generate_text_surfaces_codex_error_body_for_debugging():
     client = CodexClient(
         http_client=FakeHttpClient(

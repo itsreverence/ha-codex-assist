@@ -18,6 +18,19 @@ class CodexMessage:
     content: str
 
 
+@dataclass(frozen=True)
+class CodexToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CodexTurnResult:
+    text: str
+    tool_calls: list[CodexToolCall]
+
+
 class CodexClient:
     def __init__(
         self,
@@ -37,19 +50,35 @@ class CodexClient:
         instructions: str,
         messages: list[CodexMessage],
     ) -> str:
+        result = await self.generate_turn(
+            model=model,
+            instructions=instructions,
+            input_items=codex_messages_to_input_items(messages),
+        )
+        return result.text
+
+    async def generate_turn(
+        self,
+        *,
+        model: str,
+        instructions: str,
+        input_items: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> CodexTurnResult:
+        payload: dict[str, Any] = {
+            "model": model,
+            "instructions": instructions,
+            "input": input_items,
+            "store": False,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+
         response = await self._http_client.post(
             f"{self._base_url}/responses",
             headers=codex_headers(self._access_token),
-            json={
-                "model": model,
-                "instructions": instructions,
-                "input": [
-                    {"role": message.role, "content": message.content}
-                    for message in messages
-                ],
-                "store": False,
-                "stream": True,
-            },
+            json=payload,
         )
         if response.status_code != 200:
             detail = _response_error_detail(response)
@@ -57,8 +86,16 @@ class CodexClient:
                 f"Codex request failed with status {response.status_code}: {detail}"
             )
         if response.text:
-            return extract_streamed_output_text(response.text)
-        return extract_output_text(response.json())
+            return extract_streamed_turn_result(response.text)
+        payload = response.json()
+        return CodexTurnResult(
+            text=extract_output_text(payload),
+            tool_calls=extract_tool_calls(payload),
+        )
+
+
+def codex_messages_to_input_items(messages: list[CodexMessage]) -> list[dict[str, Any]]:
+    return [{"role": message.role, "content": message.content} for message in messages]
 
 
 def codex_headers(access_token: str) -> dict[str, str]:
@@ -91,8 +128,16 @@ def _chatgpt_account_id(access_token: str) -> str | None:
 
 
 def extract_streamed_output_text(stream_text: str) -> str:
+    return extract_streamed_turn_result(stream_text).text
+
+
+def extract_streamed_turn_result(stream_text: str) -> CodexTurnResult:
     delta_parts: list[str] = []
     done_parts: list[str] = []
+    tool_calls: list[CodexToolCall] = []
+    current_tool_call: dict[str, Any] | None = None
+    current_arguments = ""
+
     for event in _iter_sse_events(stream_text):
         event_type = event.get("type")
         if event_type == "error":
@@ -102,15 +147,41 @@ def extract_streamed_output_text(stream_text: str) -> str:
             if isinstance(delta, str):
                 delta_parts.append(delta)
             continue
+        if event_type == "response.output_item.added":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                current_tool_call = item
+                current_arguments = str(item.get("arguments") or "")
+            continue
+        if event_type == "response.function_call_arguments.delta":
+            delta = event.get("delta")
+            if isinstance(delta, str):
+                current_arguments += delta
+            continue
+        if event_type == "response.function_call_arguments.done":
+            arguments = event.get("arguments")
+            if isinstance(arguments, str):
+                current_arguments = arguments
+            if current_tool_call is not None:
+                tool_calls.append(_tool_call_from_item(current_tool_call, current_arguments))
+                current_tool_call = None
+                current_arguments = ""
+            continue
         if event_type == "response.output_item.done":
             item = event.get("item")
             if isinstance(item, dict):
-                done_parts.append(extract_output_text({"output": [item]}))
+                if item.get("type") == "function_call":
+                    tool_calls.append(
+                        _tool_call_from_item(item, str(item.get("arguments") or ""))
+                    )
+                else:
+                    done_parts.append(extract_output_text({"output": [item]}))
+
     # Codex streams both text deltas and the completed message item. The
     # completed item repeats the same visible text, so prefer deltas when
     # present and only fall back to output_item.done when no deltas arrived.
     parts = delta_parts or done_parts
-    return "".join(parts).strip()
+    return CodexTurnResult(text="".join(parts).strip(), tool_calls=tool_calls)
 
 
 def _iter_sse_events(stream_text: str):
@@ -180,3 +251,30 @@ def extract_output_text(payload: dict[str, Any]) -> str:
                 if isinstance(text, str):
                     parts.append(text)
     return "".join(parts).strip()
+
+
+def extract_tool_calls(payload: dict[str, Any]) -> list[CodexToolCall]:
+    tool_calls: list[CodexToolCall] = []
+    for item in payload.get("output") or []:
+        if isinstance(item, dict) and item.get("type") == "function_call":
+            tool_calls.append(_tool_call_from_item(item, str(item.get("arguments") or "")))
+    return tool_calls
+
+
+def _tool_call_from_item(item: dict[str, Any], arguments: str) -> CodexToolCall:
+    parsed_arguments: dict[str, Any] = {}
+    if arguments:
+        try:
+            loaded = json.loads(arguments)
+        except json.JSONDecodeError:
+            loaded = {}
+        if isinstance(loaded, dict):
+            parsed_arguments = loaded
+
+    call_id = item.get("call_id") or item.get("id") or ""
+    name = item.get("name") or ""
+    return CodexToolCall(
+        id=str(call_id),
+        name=str(name),
+        arguments=parsed_arguments,
+    )

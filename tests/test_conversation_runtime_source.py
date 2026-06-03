@@ -13,8 +13,9 @@ def test_conversation_uses_runtime_token_resolution_before_codex_request():
     assert "**self.entry.options" in source
 
 
-def test_conversation_missing_token_message_reflects_setup_problem_not_unwired_oauth():
+def test_conversation_auth_error_starts_reauth_instead_of_old_placeholder_message():
     source = CONVERSATION.read_text()
 
     assert "OAuth login is not wired yet" not in source
-    assert "missing Codex access token" in source
+    assert "async_start_reauth" in source
+    assert "needs you to sign in again" in source

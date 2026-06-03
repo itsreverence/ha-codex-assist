@@ -63,6 +63,49 @@ async def test_generate_text_posts_responses_payload_to_codex_backend():
 
 
 @pytest.mark.asyncio
+async def test_generate_turn_posts_tools_and_extracts_function_call():
+    http = FakeHttpClient(
+        [
+            FakeResponse(
+                200,
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": "call-1",
+                            "name": "HassTurnOn",
+                            "arguments": '{"name":"Kitchen","domain":"light"}',
+                        }
+                    ]
+                },
+            )
+        ]
+    )
+    client = CodexClient(http_client=http, access_token="token-1")
+
+    result = await client.generate_turn(
+        model="gpt-5.4",
+        instructions="Use tools.",
+        input_items=[{"role": "user", "content": "turn on kitchen"}],
+        tools=[
+            {
+                "type": "function",
+                "name": "HassTurnOn",
+                "description": "Turn on a device",
+                "parameters": {"type": "object", "properties": {}},
+                "strict": False,
+            }
+        ],
+    )
+
+    assert http.calls[0][1]["json"]["tools"][0]["name"] == "HassTurnOn"
+    assert result.text == ""
+    assert result.tool_calls[0].id == "call-1"
+    assert result.tool_calls[0].name == "HassTurnOn"
+    assert result.tool_calls[0].arguments == {"name": "Kitchen", "domain": "light"}
+
+
+@pytest.mark.asyncio
 async def test_generate_text_extracts_concatenated_output_text_items():
     http = FakeHttpClient([
         FakeResponse(

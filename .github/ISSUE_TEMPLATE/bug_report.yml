@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a Codex Assist problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Please do not paste access tokens, refresh tokens, cookies, or Home Assistant secrets.
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.5.4"
+    validations:
+      required: true
+  - type: input
+    id: integration-version
+    attributes:
+      label: Codex Assist version / commit
+      placeholder: "v0.1.0 or commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Problem area
+      options:
+        - Setup / device-code sign-in
+        - Token refresh / reauth
+        - Assist pipeline selection
+        - Exposed entity control
+        - Model response quality
+        - HACS install/update
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Home Assistant logs
+      description: Paste only relevant redacted log lines containing codex_assist.
+      render: text

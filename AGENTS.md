@@ -9,8 +9,7 @@ Build a public-quality Home Assistant custom integration that registers a native
 - Keep the integration generic and publishable; do not bake in Larry/Ricky Home entity IDs.
 - Do not copy or persist Hermes tokens. The integration must own its own OAuth/device-code credentials.
 - Treat Codex backend access as experimental/unsupported by OpenAI's public API docs; document that clearly.
-- Default to safe Home Assistant behavior: text-only first, then curated HA LLM API control behind explicit options.
-- Never expose broad/raw Home Assistant control by default.
+- Follow Home Assistant's native Assist LLM API/tool path for voice-model control; do not invent a raw arbitrary service-call bridge.
 - Avoid public endpoints. All auth and model calls should happen inside the user's HA instance.
 
 ## Verification

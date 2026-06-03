@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -20,8 +21,8 @@ CONF_SAFETY_MODE = "safety_mode"
 CONF_MODEL = "model"
 DEFAULT_MODEL = "gpt-5.4"
 DEFAULT_PROMPT = "You are a concise Home Assistant Assist conversation agent."
-SAFETY_MODE_TALK_ONLY = "talk_only"
-DEFAULT_SAFETY_MODE = SAFETY_MODE_TALK_ONLY
+SAFETY_MODE_FULL_CONTROL = "full_control"
+DEFAULT_SAFETY_MODE = SAFETY_MODE_FULL_CONTROL
 
 
 class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -74,14 +75,40 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except RuntimeError:
             return self._show_device_form(errors={"base": "device_code_auth_failed"})
 
-        await self.async_set_unique_id(DOMAIN)
-        self._abort_if_unique_id_configured()
         data = {
             **self._setup_input,
             "access_token": tokens.access_token,
             "refresh_token": tokens.refresh_token,
         }
+        if self.source == config_entries.SOURCE_REAUTH:
+            return self.async_update_reload_and_abort(
+                self._get_reauth_entry(),
+                data_updates=data,
+            )
+
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
         return self.async_create_entry(title="Codex Assist", data=data)
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]):
+        self._setup_input = {
+            key: entry_data[key]
+            for key in (CONF_MODEL, CONF_PROMPT, CONF_SAFETY_MODE)
+            if key in entry_data
+        }
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        if user_input is None:
+            return self.async_show_form(step_id="reauth_confirm")
+        try:
+            self._device_code = await self._auth_client().request_device_code()
+        except RuntimeError:
+            return self.async_show_form(
+                step_id="reauth_confirm",
+                errors={"base": "device_code_request_failed"},
+            )
+        return await self.async_step_device()
 
     def _auth_client(self) -> CodexAuthClient:
         return CodexAuthClient(http_client=get_async_client(self.hass))
@@ -120,6 +147,10 @@ class CodexAssistOptionsFlow(config_entries.OptionsFlow):
 
 
 def _settings_schema(defaults: dict[str, Any]) -> vol.Schema:
+    safety_mode = defaults.get(CONF_SAFETY_MODE, DEFAULT_SAFETY_MODE)
+    if safety_mode != SAFETY_MODE_FULL_CONTROL:
+        safety_mode = SAFETY_MODE_FULL_CONTROL
+
     return vol.Schema(
         {
             vol.Optional(CONF_MODEL, default=defaults.get(CONF_MODEL, DEFAULT_MODEL)): str,
@@ -129,7 +160,7 @@ def _settings_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): str,
             vol.Optional(
                 CONF_SAFETY_MODE,
-                default=defaults.get(CONF_SAFETY_MODE, DEFAULT_SAFETY_MODE),
-            ): vol.In([SAFETY_MODE_TALK_ONLY]),
+                default=safety_mode,
+            ): vol.In([SAFETY_MODE_FULL_CONTROL]),
         }
     )

@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an improvement for Codex Assist
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep safety boundaries in mind. This integration should stay within Home Assistant's normal Assist exposed-entity/tool surface.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should Codex Assist do differently?
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety / control impact
+      description: Does this expose or control new devices, services, or sensitive actions?
