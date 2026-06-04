@@ -9,6 +9,7 @@ Codex Assist is a Home Assistant custom integration that registers a native Assi
 - **Config flow**: handles Codex-style device-code sign-in, stores OAuth tokens in the Home Assistant config entry, and exposes options such as the selected Codex model.
 - **Model discovery**: offers a curated fallback model list and, when authenticated, asks the Codex backend for the currently available model IDs.
 - **Conversation agent**: registers `conversation.codex_assist` so Codex Assist can be selected in Home Assistant Assist pipelines.
+- **AI Task entity**: registers a native AI Task provider for structured data generation, attachment-aware prompts, and image generation.
 - **Codex client**: refreshes tokens when possible and sends conversation turns to the Codex-compatible service interface.
 - **Assist tool bridge**: maps model-requested actions into Home Assistant's Assist LLM API rather than calling services directly.
 
@@ -20,6 +21,15 @@ Codex Assist is a Home Assistant custom integration that registers a native Assi
 4. If Codex requests a Home Assistant tool call, Codex Assist maps that request into Home Assistant's Assist LLM API.
 5. Home Assistant validates and executes the allowed Assist tool call using its normal exposed-entity controls.
 6. Codex Assist returns the final response to Home Assistant.
+
+## AI Task flow
+
+1. Home Assistant sends an AI Task request to the Codex Assist AI Task entity.
+2. For data-generation tasks, Codex Assist translates instructions and supported attachments into Codex-compatible input items.
+3. For image-generation tasks, Codex Assist requests an image from the Codex-compatible service interface using curated quality and size options.
+4. Codex Assist returns the structured data or generated image bytes through Home Assistant's native AI Task result types.
+
+Normal Assist conversation surfaces may not expose an upload button even though Home Assistant chat-log objects can carry attachments internally. Native attachment testing should use AI Task surfaces that advertise attachment support.
 
 ## Security boundary
 

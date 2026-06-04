@@ -53,14 +53,14 @@ For generated documentation diagrams, prefer PNG/JPEG/WEBP for image-analysis to
 
 Do not publish screenshots that expose tokens, device codes, cookies, private Home Assistant URLs, private entity names, or private dashboard URLs.
 
-## Beta branch test install
+## Release-candidate test install
 
-Use this for local/beta testing while `main` stays on the stable `0.1.x` line for HACS default review.
+Use this for local release-candidate testing before cutting a stable GitHub release.
 
-1. Download the branch archive:
+1. Download the branch or tag archive you plan to test:
 
    ```text
-   https://github.com/itsreverence/ha-codex-assist/archive/refs/heads/v0.2-media-ai-task.zip
+   https://github.com/itsreverence/ha-codex-assist/archive/refs/heads/main.zip
    ```
 
 2. Extract the zip locally.
@@ -71,7 +71,7 @@ Use this for local/beta testing while `main` stays on the stable `0.1.x` line fo
    ```
 
 4. Restart Home Assistant.
-5. Confirm the integration version/logs reflect the branch code before testing. The `v0.2-media-ai-task` branch uses a beta manifest version such as `0.2.0-beta.3`; `main` remains on the latest stable `0.1.x` release for HACS review.
+5. Confirm the integration version/logs reflect the candidate code before testing.
 
 To roll back, reinstall the latest stable release from HACS and restart Home Assistant.
 
@@ -88,7 +88,7 @@ After a Home Assistant restart:
 
 ## Image attachment smoke test
 
-Use this only after installing the beta `v0.2-media-ai-task` branch.
+Use this after installing a build that includes Codex Assist AI Task support.
 
 This is a defensive backend check, not a promise that the normal Home Assistant Assist pop-up has an upload button. Home Assistant conversation chat logs can carry `UserContent.attachments`, and provider integrations may translate them if they appear, but the public `conversation.process` schema does not currently accept attachments and `ConversationEntityFeature` has no attachment flag. Prefer AI Task for native attachment workflows.
 
@@ -109,9 +109,9 @@ If the Assist UI you are using has no attachment button, the backend support is 
 
 ## AI Task media smoke test
 
-Use this for the native HA AI Task media path on the `v0.2-media-ai-task` branch.
+Use this for the native Home Assistant AI Task media path.
 
-1. Restart Home Assistant after installing the branch.
+1. Restart Home Assistant after installing the candidate build.
 2. Confirm the integration exposes a Codex Assist AI Task entity.
 3. In integration options, confirm chat settings appear first and image controls are curated dropdowns near the bottom:
    - **Image quality**: Low, Medium, High
@@ -122,7 +122,7 @@ Use this for the native HA AI Task media path on the `v0.2-media-ai-task` branch
 7. Confirm an attachment request is accepted because the entity advertises `AITaskEntityFeature.SUPPORT_ATTACHMENTS`.
 8. Confirm logs do not print tokens, local file contents, or base64 payloads.
 
-The v0.2 beta intentionally advertises `GENERATE_DATA`, `GENERATE_IMAGE`, and `SUPPORT_ATTACHMENTS` so one AI Task entity can smoke-test text/data generation, image attachment understanding, and Codex/ChatGPT subscription-backed image output together. Keep image generation on the v0.2 branch until the HACS/default stable line is clear or Larry explicitly decides to promote the beta into `main`.
+The v0.2 line intentionally advertises `GENERATE_DATA`, `GENERATE_IMAGE`, and `SUPPORT_ATTACHMENTS` so one AI Task entity can smoke-test text/data generation, image attachment understanding, and Codex/ChatGPT subscription-backed image output together.
 
 ## Reauth smoke test
 
