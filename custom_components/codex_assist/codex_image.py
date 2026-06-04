@@ -27,3 +27,10 @@ def validate_image_size(size: str) -> str:
     if size not in IMAGE_SIZE_OPTIONS:
         raise ValueError(f"Unsupported Codex Assist image size: {size}")
     return size
+
+
+def image_size_dimensions(size: str) -> tuple[int, int]:
+    """Return width and height for a supported OpenAI image-generation size."""
+    size = validate_image_size(size)
+    width, height = size.split("x", maxsplit=1)
+    return int(width), int(height)

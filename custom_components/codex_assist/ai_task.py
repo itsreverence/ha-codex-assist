@@ -12,7 +12,7 @@ from homeassistant.util.json import json_loads
 
 from .codex_auth import CodexAuthClient, CodexTokenSet
 from .codex_client import CodexAuthenticationError, CodexClient, CodexImageResult
-from .codex_image import DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE
+from .codex_image import DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE, image_size_dimensions
 from .codex_runtime import resolve_runtime_tokens
 from .config_flow import (
     DEFAULT_REASONING_EFFORT,
@@ -193,10 +193,13 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
             )
         )
 
+        width, height = image_size_dimensions(image_size)
         return ai_task.GenImageTaskResult(
             image_data=result.image_data,
             conversation_id=chat_log.conversation_id,
             mime_type=result.mime_type,
+            width=width,
+            height=height,
             model=result.model,
             revised_prompt=result.revised_prompt,
         )

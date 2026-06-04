@@ -12,6 +12,9 @@ def test_ai_task_declares_native_attachment_and_image_generation_support():
     assert "_async_generate_image" in AI_TASK_SOURCE
     assert "DEFAULT_IMAGE_MODEL" in AI_TASK_SOURCE
     assert "DEFAULT_IMAGE_SIZE" in AI_TASK_SOURCE
+    assert "image_size_dimensions" in AI_TASK_SOURCE
+    assert "width=width" in AI_TASK_SOURCE
+    assert "height=height" in AI_TASK_SOURCE
 
 
 def test_ai_task_uses_ha_chat_log_attachment_path():

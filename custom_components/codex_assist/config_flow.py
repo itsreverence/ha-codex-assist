@@ -189,14 +189,6 @@ def _settings_schema(
         {
             vol.Optional(CONF_MODEL, default=model_default): _model_selector(model_options),
             vol.Optional(
-                CONF_IMAGE_MODEL,
-                default=image_model_default,
-            ): _image_model_selector(),
-            vol.Optional(
-                CONF_IMAGE_SIZE,
-                default=image_size_default,
-            ): _image_size_selector(),
-            vol.Optional(
                 CONF_PROMPT,
                 default=defaults.get(CONF_PROMPT, DEFAULT_PROMPT),
             ): str,
@@ -227,6 +219,14 @@ def _settings_schema(
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
+            vol.Optional(
+                CONF_IMAGE_MODEL,
+                default=image_model_default,
+            ): _image_model_selector(),
+            vol.Optional(
+                CONF_IMAGE_SIZE,
+                default=image_size_default,
+            ): _image_size_selector(),
         }
     )
 
