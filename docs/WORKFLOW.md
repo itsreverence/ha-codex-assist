@@ -71,7 +71,7 @@ Use this for local testing only. Prefer this over cutting beta releases while a 
    ```
 
 4. Restart Home Assistant.
-5. Confirm the integration version/logs reflect the branch code before testing.
+5. Confirm the integration version/logs reflect the branch code before testing. The `v0.2-media-ai-task` branch uses a beta manifest version such as `0.2.0-beta.1`; `main` remains on the latest stable `0.1.x` release for HACS review.
 
 To roll back, reinstall the latest stable release from HACS and restart Home Assistant.
 
@@ -91,8 +91,8 @@ After a Home Assistant restart:
 Use this only after installing the unreleased `v0.2-media-ai-task` branch.
 
 1. Reauth Codex Assist if Home Assistant shows a repair or auth failure.
-2. Select an Assist surface that exposes attachment upload for conversation agents.
-3. Attach a small PNG/JPEG image under 10 MB.
+2. Select an Assist/chat surface that exposes attachment upload for conversation agents. Home Assistant's normal voice Assist pop-up may not show an upload button; that means the UI surface cannot exercise conversation attachments directly, not necessarily that the integration backend is missing image support.
+3. Attach a small PNG/JPEG image under 10 MB if the surface exposes an upload control.
 4. Ask a visual question such as:
 
    ```text
@@ -103,7 +103,7 @@ Use this only after installing the unreleased `v0.2-media-ai-task` branch.
 6. Confirm Home Assistant logs do not show `codex_assist` attachment/read errors.
 7. Try the same prompt without an image and confirm normal text-only Assist still works.
 
-If the Assist UI you are using has no attachment button, the backend support is present but that UI surface cannot exercise it directly.
+If the Assist UI you are using has no attachment button, the backend support is present but that UI surface cannot exercise it directly. Home Assistant AI Task has explicit `SUPPORT_ATTACHMENTS` feature support, so AI Task is the preferred native surface for future image/PDF smoke tests.
 
 ## Reauth smoke test
 
