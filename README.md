@@ -20,6 +20,9 @@ Codex Assist signs in with Codex-style ChatGPT device-code auth, adds Codex as a
 
 Requirements: Home Assistant `2026.5.0` or newer, HACS, and a ChatGPT account/plan with Codex access.
 
+[![Open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=itsreverence&repository=ha-codex-assist&category=integration)
+[![Add the Codex Assist integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=codex_assist)
+
 1. In Home Assistant, open **HACS → Custom repositories**.
 2. Add this repository as an **Integration**:
 
@@ -29,10 +32,11 @@ Requirements: Home Assistant `2026.5.0` or newer, HACS, and a ChatGPT account/pl
 
 3. Install **Codex Assist**.
 4. Restart Home Assistant.
-5. Go to **Settings → Devices & services → Add integration**.
-6. Search for **Codex Assist** and complete device-code sign-in.
-7. Select **Codex Assist** in your Assist pipeline.
-8. Test with a harmless exposed entity first, like a single light.
+5. In ChatGPT, enable **Settings → Security → Enable device code authorization for Codex** if it is available on your account.
+6. Go to **Settings → Devices & services → Add integration**, or use the button above.
+7. Search for **Codex Assist** and complete device-code sign-in.
+8. Select **Codex Assist** in your Assist pipeline.
+9. Test with a harmless exposed entity first, like a single light.
 
 ## Why use it?
 
