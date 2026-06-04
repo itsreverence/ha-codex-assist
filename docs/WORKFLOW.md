@@ -113,9 +113,9 @@ Use this for the native HA AI Task media path on the `v0.2-media-ai-task` branch
 
 1. Restart Home Assistant after installing the branch.
 2. Confirm the integration exposes a Codex Assist AI Task entity.
-3. In integration options, confirm text settings appear first and image controls are curated dropdowns near the bottom:
-   - **AI Task image quality**: Low, Medium, High
-   - **AI Task image size**: Square (1024×1024), Landscape (1536×1024), Portrait (1024×1536)
+3. In integration options, confirm chat settings appear first and image controls are curated dropdowns near the bottom:
+   - **Image quality**: Low, Medium, High
+   - **Image size**: Square (1024×1024), Landscape (1536×1024), Portrait (1024×1536)
 4. Call `ai_task.generate_data` with the Codex Assist AI Task entity, simple instructions, and a local media/camera/image attachment.
 5. Confirm the result references the attachment content.
 6. Call `ai_task.generate_image` with a plain prompt, then repeat once with a non-default size.
