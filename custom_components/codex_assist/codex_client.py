@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from .codex_image import image_model_quality, validate_image_size
+
 CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
 
@@ -294,7 +296,8 @@ def _image_generation_payload(
     image_model: str,
     size: str,
 ) -> dict[str, Any]:
-    quality = _image_model_quality(image_model)
+    quality = image_model_quality(image_model)
+    size = validate_image_size(size)
     return {
         "model": chat_model,
         "store": False,
@@ -329,13 +332,6 @@ def _image_generation_payload(
         "stream": True,
     }
 
-
-def _image_model_quality(image_model: str) -> str:
-    return {
-        "gpt-image-2-low": "low",
-        "gpt-image-2-medium": "medium",
-        "gpt-image-2-high": "high",
-    }.get(image_model, "medium")
 
 
 def _extract_image_b64(value: Any) -> str | None:

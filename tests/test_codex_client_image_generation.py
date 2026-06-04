@@ -86,6 +86,7 @@ async def test_generate_image_uses_codex_responses_image_generation_tool():
         ],
         chat_model="gpt-5.4",
         image_model="gpt-image-2-high",
+        size="1536x1024",
     )
 
     assert result.image_data == image_data
@@ -104,7 +105,7 @@ async def test_generate_image_uses_codex_responses_image_generation_tool():
         {
             "type": "image_generation",
             "model": "gpt-image-2",
-            "size": "1024x1024",
+            "size": "1536x1024",
             "quality": "high",
             "output_format": "png",
             "background": "opaque",
@@ -137,6 +138,20 @@ async def test_generate_image_accepts_partial_image_b64_events_without_type():
     result = await client.generate_image(prompt="draw it")
 
     assert result.image_data == image_data
+
+
+@pytest.mark.asyncio
+async def test_generate_image_rejects_unsupported_image_options_before_request():
+    client = CodexClient(
+        http_client=FakeHttpClient(FakeStreamResponse()),
+        access_token="token-1",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported Codex Assist image model"):
+        await client.generate_image(prompt="draw it", image_model="gpt-image-2-ultra")
+
+    with pytest.raises(ValueError, match="Unsupported Codex Assist image size"):
+        await client.generate_image(prompt="draw it", size="2048x2048")
 
 
 @pytest.mark.asyncio

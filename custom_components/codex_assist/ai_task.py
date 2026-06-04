@@ -12,6 +12,7 @@ from homeassistant.util.json import json_loads
 
 from .codex_auth import CodexAuthClient, CodexTokenSet
 from .codex_client import CodexAuthenticationError, CodexClient, CodexImageResult
+from .codex_image import DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE
 from .codex_runtime import resolve_runtime_tokens
 from .config_flow import (
     DEFAULT_REASONING_EFFORT,
@@ -140,7 +141,8 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
         """Generate an image from instructions and optional HA-native attachments."""
         settings = {**self.entry.data, **self.entry.options}
         chat_model = settings.get("model", "gpt-5.4")
-        image_model = settings.get("image_model", "gpt-image-2-medium")
+        image_model = settings.get("image_model", DEFAULT_IMAGE_MODEL)
+        image_size = settings.get("image_size", DEFAULT_IMAGE_SIZE)
 
         http_client = get_async_client(self.hass)
         auth_client = CodexAuthClient(http_client=http_client)
@@ -173,6 +175,7 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
                 task=task,
                 chat_model=chat_model,
                 image_model=image_model,
+                image_size=image_size,
             )
         except (httpx.HTTPError, RuntimeError) as err:
             LOGGER.exception("Codex Assist AI Task image request failed")
@@ -266,6 +269,7 @@ async def _generate_codex_ai_task_image(
     task: ai_task.GenImageTask,
     chat_model: str,
     image_model: str,
+    image_size: str,
 ) -> CodexImageResult:
     """Run Codex image generation with one auth refresh retry."""
     try:
@@ -274,6 +278,7 @@ async def _generate_codex_ai_task_image(
             input_items=await _codex_input_from_chat_log(hass, chat_log),
             chat_model=chat_model,
             image_model=image_model,
+            size=image_size,
         )
     except CodexAuthenticationError as err:
         LOGGER.warning(
@@ -291,6 +296,7 @@ async def _generate_codex_ai_task_image(
             input_items=await _codex_input_from_chat_log(hass, chat_log),
             chat_model=chat_model,
             image_model=image_model,
+            size=image_size,
         )
 
 

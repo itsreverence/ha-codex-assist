@@ -14,13 +14,13 @@ def test_config_flow_exposes_options_flow_for_runtime_settings():
     assert "self.config_entry = config_entry" not in source
 
 
-def test_options_flow_uses_codex_model_selector_with_custom_slug_fallback():
+def test_options_flow_uses_codex_model_selector_without_custom_slug_footgun():
     source = CONFIG_FLOW.read_text()
 
     assert "fetch_codex_model_ids" in source
     assert "SelectSelector" in source
     assert "SelectSelectorMode.DROPDOWN" in source
-    assert "custom_value=True" in source
+    assert "custom_value=True" not in source
 
 
 def test_options_flow_exposes_advanced_codex_response_controls():
@@ -31,6 +31,19 @@ def test_options_flow_exposes_advanced_codex_response_controls():
     assert "CONF_TEXT_VERBOSITY" in source
     assert '["low", "medium", "high"]' in source
     assert '["auto", "concise", "detailed", "off"]' in source
+
+
+def test_options_flow_exposes_image_generation_controls():
+    source = CONFIG_FLOW.read_text()
+
+    assert "CONF_IMAGE_MODEL" in source
+    assert "CONF_IMAGE_SIZE" in source
+    assert "gpt-image-2-low" in source
+    assert "gpt-image-2-medium" in source
+    assert "gpt-image-2-high" in source
+    assert "1024x1024" in source
+    assert "1536x1024" in source
+    assert "1024x1536" in source
 
 
 def test_options_flow_does_not_expose_redundant_safety_mode_choice():

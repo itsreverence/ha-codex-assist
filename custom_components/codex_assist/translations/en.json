@@ -6,6 +6,8 @@
         "description": "Choose a default Codex model and system prompt. Setup will then show a Codex sign-in code for your ChatGPT/Codex account.",
         "data": {
           "model": "Model",
+          "image_model": "Image quality",
+          "image_size": "Image size",
           "prompt": "System prompt",
           "reasoning_effort": "Reasoning effort",
           "reasoning_summary": "Reasoning summary",
@@ -34,6 +36,8 @@
         "description": "Adjust the Codex model, prompt, and advanced response behavior. Codex Assist uses Home Assistant's normal Assist LLM control tools and respects Home Assistant's exposed-entity settings.",
         "data": {
           "model": "Model",
+          "image_model": "Image quality",
+          "image_size": "Image size",
           "prompt": "System prompt",
           "reasoning_effort": "Reasoning effort",
           "reasoning_summary": "Reasoning summary",

@@ -14,12 +14,20 @@ from .codex_auth import (
     CodexAuthClient,
     CodexDeviceCode,
 )
+from .codex_image import (
+    DEFAULT_IMAGE_MODEL,
+    DEFAULT_IMAGE_SIZE,
+    IMAGE_MODEL_QUALITY,
+    IMAGE_SIZE_OPTIONS,
+)
 from .codex_models import DEFAULT_CODEX_MODELS, fetch_codex_model_ids
 
 CONF_ACCESS_TOKEN = "access_token"
 CONF_PROMPT = "prompt"
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_MODEL = "model"
+CONF_IMAGE_MODEL = "image_model"
+CONF_IMAGE_SIZE = "image_size"
 CONF_REASONING_EFFORT = "reasoning_effort"
 CONF_REASONING_SUMMARY = "reasoning_summary"
 CONF_TEXT_VERBOSITY = "text_verbosity"
@@ -101,6 +109,8 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             key: entry_data[key]
             for key in (
                 CONF_MODEL,
+                CONF_IMAGE_MODEL,
+                CONF_IMAGE_SIZE,
                 CONF_PROMPT,
                 CONF_REASONING_EFFORT,
                 CONF_REASONING_SUMMARY,
@@ -164,12 +174,28 @@ def _settings_schema(
     *,
     model_options: list[str],
 ) -> vol.Schema:
+    model_options = list(dict.fromkeys([*model_options, DEFAULT_MODEL]))
     model_default = defaults.get(CONF_MODEL, DEFAULT_MODEL)
-    model_options = list(dict.fromkeys([*model_options, str(model_default), DEFAULT_MODEL]))
+    if model_default not in model_options:
+        model_default = DEFAULT_MODEL
+    image_model_default = defaults.get(CONF_IMAGE_MODEL, DEFAULT_IMAGE_MODEL)
+    if image_model_default not in IMAGE_MODEL_QUALITY:
+        image_model_default = DEFAULT_IMAGE_MODEL
+    image_size_default = defaults.get(CONF_IMAGE_SIZE, DEFAULT_IMAGE_SIZE)
+    if image_size_default not in IMAGE_SIZE_OPTIONS:
+        image_size_default = DEFAULT_IMAGE_SIZE
 
     return vol.Schema(
         {
             vol.Optional(CONF_MODEL, default=model_default): _model_selector(model_options),
+            vol.Optional(
+                CONF_IMAGE_MODEL,
+                default=image_model_default,
+            ): _image_model_selector(),
+            vol.Optional(
+                CONF_IMAGE_SIZE,
+                default=image_size_default,
+            ): _image_size_selector(),
             vol.Optional(
                 CONF_PROMPT,
                 default=defaults.get(CONF_PROMPT, DEFAULT_PROMPT),
@@ -212,6 +238,31 @@ def _model_selector(model_options: list[str]) -> selector.SelectSelector:
                 selector.SelectOptionDict(value=model, label=model) for model in model_options
             ],
             mode=selector.SelectSelectorMode.DROPDOWN,
-            custom_value=True,
+        )
+    )
+
+
+def _image_model_selector() -> selector.SelectSelector:
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(value="gpt-image-2-low", label="Low"),
+                selector.SelectOptionDict(value="gpt-image-2-medium", label="Medium"),
+                selector.SelectOptionDict(value="gpt-image-2-high", label="High"),
+            ],
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _image_size_selector() -> selector.SelectSelector:
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[
+                selector.SelectOptionDict(value="1024x1024", label="Square (1024×1024)"),
+                selector.SelectOptionDict(value="1536x1024", label="Landscape (1536×1024)"),
+                selector.SelectOptionDict(value="1024x1536", label="Portrait (1024×1536)"),
+            ],
+            mode=selector.SelectSelectorMode.DROPDOWN,
         )
     )

@@ -107,16 +107,20 @@ This is a defensive backend check, not a promise that the normal Home Assistant 
 
 If the Assist UI you are using has no attachment button, the backend support is present but that UI surface cannot exercise it directly. Home Assistant AI Task has explicit `SUPPORT_ATTACHMENTS` feature support, so AI Task is the preferred native surface for future image/PDF smoke tests.
 
-## AI Task attachment smoke test
+## AI Task media smoke test
 
-Use this for the native HA attachment path on the `v0.2-media-ai-task` branch.
+Use this for the native HA AI Task media path on the `v0.2-media-ai-task` branch.
 
 1. Restart Home Assistant after installing the branch.
 2. Confirm the integration exposes a Codex Assist AI Task entity.
-3. Call `ai_task.generate_data` with the Codex Assist AI Task entity, simple instructions, and a local media/camera/image attachment.
-4. Confirm the result references the attachment content.
-5. Confirm an attachment request is accepted because the entity advertises `AITaskEntityFeature.SUPPORT_ATTACHMENTS`.
-6. Confirm logs do not print tokens, local file contents, or base64 payloads.
+3. In integration options, confirm image controls are curated dropdowns:
+   - **Image quality**: Low, Medium, High
+   - **Image size**: Square (1024×1024), Landscape (1536×1024), Portrait (1024×1536)
+4. Call `ai_task.generate_data` with the Codex Assist AI Task entity, simple instructions, and a local media/camera/image attachment.
+5. Confirm the result references the attachment content.
+6. Call `ai_task.generate_image` with a plain prompt, then repeat once with a non-default size.
+7. Confirm an attachment request is accepted because the entity advertises `AITaskEntityFeature.SUPPORT_ATTACHMENTS`.
+8. Confirm logs do not print tokens, local file contents, or base64 payloads.
 
 The v0.2 beta intentionally advertises `GENERATE_DATA`, `GENERATE_IMAGE`, and `SUPPORT_ATTACHMENTS` so one AI Task entity can smoke-test text/data generation, image attachment understanding, and Codex/ChatGPT subscription-backed image output together. Keep image generation on the v0.2 branch until it passes real HA smoke tests; do not merge it into `main` while the HACS/default stable line is under review.
 
@@ -136,5 +140,5 @@ When changing model configuration or before a release that includes model select
 1. Start setup/options without a usable token and confirm the curated fallback models appear.
 2. Complete auth and reopen options.
 3. Confirm backend-discovered models appear when the Codex backend returns them.
-4. Confirm a custom model slug can still be retained or entered manually.
+4. Confirm a stale saved model that is no longer in the discovered/fallback list is replaced with the default model instead of being silently re-added.
 5. Confirm failed model discovery falls back gracefully and does not block setup.
