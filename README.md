@@ -39,7 +39,12 @@ Requirements: Home Assistant `2026.5.0` or newer, HACS, and a ChatGPT account/pl
 - Use eligible ChatGPT/Codex subscription access instead of wiring Home Assistant to OpenAI API billing.
 - Pick Codex as a normal Home Assistant Assist conversation agent.
 - Let Home Assistant's Assist exposed-entity controls define what the agent can see or control.
+- Ask about exposed entity state and request simple actions in the same Assist chat.
 - Configure model and prompt from the integration options flow.
+
+<p align="center">
+  <img src="assets/codex-assist-light-control.png" alt="Codex Assist confirming yard lights are on and turning them off" width="430">
+</p>
 
 <p align="center">
   <img src="assets/codex-assist-options.png" alt="Codex Assist options showing model and system prompt controls" width="640">
@@ -76,4 +81,4 @@ uv run ruff check .
 uv run pytest
 ```
 
-Current release: `v0.1.6`.
+Current release: `v0.1.7`.
