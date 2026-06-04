@@ -53,6 +53,28 @@ For generated documentation diagrams, prefer PNG/JPEG/WEBP for image-analysis to
 
 Do not publish screenshots that expose tokens, device codes, cookies, private Home Assistant URLs, private entity names, or private dashboard URLs.
 
+## Unreleased branch test install
+
+Use this for local testing only. Prefer this over cutting beta releases while a HACS default PR is waiting for review.
+
+1. Download the branch archive:
+
+   ```text
+   https://github.com/itsreverence/ha-codex-assist/archive/refs/heads/v0.2-media-ai-task.zip
+   ```
+
+2. Extract the zip locally.
+3. Copy the extracted `custom_components/codex_assist` directory into Home Assistant:
+
+   ```text
+   /config/custom_components/codex_assist
+   ```
+
+4. Restart Home Assistant.
+5. Confirm the integration version/logs reflect the branch code before testing.
+
+To roll back, reinstall the latest stable release from HACS and restart Home Assistant.
+
 ## Post-install smoke test
 
 After a Home Assistant restart:
@@ -63,6 +85,25 @@ After a Home Assistant restart:
 4. Ask it to list exposed entities.
 5. Test one harmless exposed light on/off.
 6. Confirm sensitive entities remain unexposed unless intentionally allowed.
+
+## Image attachment smoke test
+
+Use this only after installing the unreleased `v0.2-media-ai-task` branch.
+
+1. Reauth Codex Assist if Home Assistant shows a repair or auth failure.
+2. Select an Assist surface that exposes attachment upload for conversation agents.
+3. Attach a small PNG/JPEG image under 10 MB.
+4. Ask a visual question such as:
+
+   ```text
+   What is in this image? Do not control any devices.
+   ```
+
+5. Confirm the answer references actual image content.
+6. Confirm Home Assistant logs do not show `codex_assist` attachment/read errors.
+7. Try the same prompt without an image and confirm normal text-only Assist still works.
+
+If the Assist UI you are using has no attachment button, the backend support is present but that UI surface cannot exercise it directly.
 
 ## Reauth smoke test
 
