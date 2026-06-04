@@ -19,12 +19,9 @@ from .codex_models import DEFAULT_CODEX_MODELS, fetch_codex_model_ids
 CONF_ACCESS_TOKEN = "access_token"
 CONF_PROMPT = "prompt"
 CONF_REFRESH_TOKEN = "refresh_token"
-CONF_SAFETY_MODE = "safety_mode"
 CONF_MODEL = "model"
 DEFAULT_MODEL = "gpt-5.4"
 DEFAULT_PROMPT = "You are a concise Home Assistant Assist conversation agent."
-SAFETY_MODE_FULL_CONTROL = "full_control"
-DEFAULT_SAFETY_MODE = SAFETY_MODE_FULL_CONTROL
 
 
 class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -96,7 +93,7 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth(self, entry_data: Mapping[str, Any]):
         self._setup_input = {
             key: entry_data[key]
-            for key in (CONF_MODEL, CONF_PROMPT, CONF_SAFETY_MODE)
+            for key in (CONF_MODEL, CONF_PROMPT)
             if key in entry_data
         }
         return await self.async_step_reauth_confirm()
@@ -155,10 +152,6 @@ def _settings_schema(
     *,
     model_options: list[str],
 ) -> vol.Schema:
-    safety_mode = defaults.get(CONF_SAFETY_MODE, DEFAULT_SAFETY_MODE)
-    if safety_mode != SAFETY_MODE_FULL_CONTROL:
-        safety_mode = SAFETY_MODE_FULL_CONTROL
-
     model_default = defaults.get(CONF_MODEL, DEFAULT_MODEL)
     model_options = list(dict.fromkeys([*model_options, str(model_default), DEFAULT_MODEL]))
 
@@ -169,10 +162,6 @@ def _settings_schema(
                 CONF_PROMPT,
                 default=defaults.get(CONF_PROMPT, DEFAULT_PROMPT),
             ): str,
-            vol.Optional(
-                CONF_SAFETY_MODE,
-                default=safety_mode,
-            ): vol.In([SAFETY_MODE_FULL_CONTROL]),
         }
     )
 

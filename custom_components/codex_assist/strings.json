@@ -6,8 +6,7 @@
         "description": "Set the default model and prompt. Setup will then show a Codex sign-in code for your ChatGPT/Codex account.",
         "data": {
           "model": "Model",
-          "prompt": "System prompt",
-          "safety_mode": "Safety mode"
+          "prompt": "System prompt"
         }
       },
       "device": {
@@ -32,8 +31,7 @@
         "description": "Adjust Codex Assist behavior. Codex Assist uses Home Assistant's normal Assist LLM control tools and respects Home Assistant's exposed-entity settings.",
         "data": {
           "model": "Model",
-          "prompt": "System prompt",
-          "safety_mode": "Safety mode"
+          "prompt": "System prompt"
         }
       }
     }
