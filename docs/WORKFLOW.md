@@ -90,6 +90,8 @@ After a Home Assistant restart:
 
 Use this only after installing the unreleased `v0.2-media-ai-task` branch.
 
+This is a defensive backend check, not a promise that the normal Home Assistant Assist pop-up has an upload button. Home Assistant conversation chat logs can carry `UserContent.attachments`, and provider integrations may translate them if they appear, but the public `conversation.process` schema does not currently accept attachments and `ConversationEntityFeature` has no attachment flag. Prefer AI Task for native attachment workflows.
+
 1. Reauth Codex Assist if Home Assistant shows a repair or auth failure.
 2. Select an Assist/chat surface that exposes attachment upload for conversation agents. Home Assistant's normal voice Assist pop-up may not show an upload button; that means the UI surface cannot exercise conversation attachments directly, not necessarily that the integration backend is missing image support.
 3. Attach a small PNG/JPEG image under 10 MB if the surface exposes an upload control.
@@ -104,6 +106,19 @@ Use this only after installing the unreleased `v0.2-media-ai-task` branch.
 7. Try the same prompt without an image and confirm normal text-only Assist still works.
 
 If the Assist UI you are using has no attachment button, the backend support is present but that UI surface cannot exercise it directly. Home Assistant AI Task has explicit `SUPPORT_ATTACHMENTS` feature support, so AI Task is the preferred native surface for future image/PDF smoke tests.
+
+## AI Task attachment smoke test
+
+Use this for the native HA attachment path on the `v0.2-media-ai-task` branch.
+
+1. Restart Home Assistant after installing the branch.
+2. Confirm the integration exposes a Codex Assist AI Task entity.
+3. Call `ai_task.generate_data` with the Codex Assist AI Task entity, simple instructions, and a local media/camera/image attachment.
+4. Confirm the result references the attachment content.
+5. Confirm an attachment request is accepted because the entity advertises `AITaskEntityFeature.SUPPORT_ATTACHMENTS`.
+6. Confirm logs do not print tokens, local file contents, or base64 payloads.
+
+Do not advertise `GENERATE_IMAGE` unless Codex Assist intentionally supports image generation output. For v0.2, the intended scope is data generation from text plus image attachments.
 
 ## Reauth smoke test
 
