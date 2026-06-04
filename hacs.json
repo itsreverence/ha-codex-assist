@@ -1,7 +1,6 @@
 {
   "name": "Codex Assist",
   "content_in_root": false,
-  "domains": ["codex_assist"],
   "homeassistant": "2026.5.0",
   "render_readme": true
 }
