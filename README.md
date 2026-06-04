@@ -82,4 +82,4 @@ uv run ruff check .
 uv run pytest
 ```
 
-Current release: `v0.1.9`.
+Current release: `v0.1.10`.

@@ -74,6 +74,7 @@ async def test_stream_turn_yields_text_deltas_and_posts_advanced_options():
     ]
     payload = http.calls[0][2]["json"]
     assert payload["reasoning"] == {"effort": "medium", "summary": "auto"}
+    assert payload["include"] == ["reasoning.encrypted_content"]
     assert payload["text"] == {"verbosity": "low"}
 
 
@@ -141,3 +142,28 @@ async def test_stream_turn_omits_reasoning_summary_when_off():
 
     assert deltas == []
     assert http.calls[0][2]["json"]["reasoning"] == {"effort": "low"}
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_omits_advanced_options_for_non_reasoning_models():
+    response = FakeStreamResponse(200, [])
+    http = FakeHttpClient(response)
+    client = CodexClient(http_client=http, access_token="token-1")
+
+    deltas = [
+        delta
+        async for delta in client.stream_turn(
+            model="custom-fast-model",
+            instructions="x",
+            input_items=[],
+            reasoning_effort="low",
+            reasoning_summary="auto",
+            text_verbosity="medium",
+        )
+    ]
+
+    assert deltas == []
+    payload = http.calls[0][2]["json"]
+    assert "reasoning" not in payload
+    assert "include" not in payload
+    assert "text" not in payload

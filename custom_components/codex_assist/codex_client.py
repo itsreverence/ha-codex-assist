@@ -207,13 +207,19 @@ def _responses_payload(
     }
     if tools:
         payload["tools"] = tools
-    if reasoning_effort:
-        payload["reasoning"] = {"effort": reasoning_effort}
-        if reasoning_summary and reasoning_summary != "off":
-            payload["reasoning"]["summary"] = reasoning_summary
-    if text_verbosity:
-        payload["text"] = {"verbosity": text_verbosity}
+    if _supports_reasoning_options(model):
+        if reasoning_effort:
+            payload["reasoning"] = {"effort": reasoning_effort}
+            if reasoning_summary and reasoning_summary != "off":
+                payload["reasoning"]["summary"] = reasoning_summary
+            payload["include"] = ["reasoning.encrypted_content"]
+        if text_verbosity:
+            payload["text"] = {"verbosity": text_verbosity}
     return payload
+
+
+def _supports_reasoning_options(model: str) -> bool:
+    return model.startswith(("gpt-5", "o"))
 
 
 def codex_messages_to_input_items(messages: list[CodexMessage]) -> list[dict[str, Any]]:
