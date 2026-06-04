@@ -1,6 +1,10 @@
 import pytest
 
-from custom_components.codex_assist.codex_client import CodexClient, CodexMessage
+from custom_components.codex_assist.codex_client import (
+    CodexAuthenticationError,
+    CodexClient,
+    CodexMessage,
+)
 
 
 class FakeResponse:
@@ -138,6 +142,29 @@ async def test_generate_text_raises_clear_error_for_backend_failure():
     client = CodexClient(http_client=http, access_token="token-1")
 
     with pytest.raises(RuntimeError, match="Codex request failed with status 429"):
+        await client.generate_text(
+            model="gpt-5.4",
+            instructions="x",
+            messages=[CodexMessage(role="user", content="hello")],
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_text_raises_auth_error_for_invalidated_token():
+    http = FakeHttpClient([
+        FakeResponse(
+            401,
+            {
+                "error": {
+                    "message": "Your authentication token has been invalidated.",
+                    "code": "token_invalidated",
+                }
+            },
+        )
+    ])
+    client = CodexClient(http_client=http, access_token="token-1")
+
+    with pytest.raises(CodexAuthenticationError, match="token has been invalidated"):
         await client.generate_text(
             model="gpt-5.4",
             instructions="x",

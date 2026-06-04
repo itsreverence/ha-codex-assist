@@ -81,9 +81,13 @@ class CodexClient:
             json=payload,
         )
         if response.status_code != 200:
-            detail = _response_error_detail(response)
+            error = _response_error(response)
+            if response.status_code == 401 or error.code == "token_invalidated":
+                raise CodexAuthenticationError(
+                    f"Codex authentication failed: {error.detail}"
+                )
             raise RuntimeError(
-                f"Codex request failed with status {response.status_code}: {detail}"
+                f"Codex request failed with status {response.status_code}: {error.detail}"
             )
         if response.text:
             return extract_streamed_turn_result(response.text)
@@ -125,6 +129,16 @@ def _chatgpt_account_id(access_token: str) -> str | None:
     except Exception:
         return None
     return account_id if isinstance(account_id, str) and account_id else None
+
+
+class CodexAuthenticationError(RuntimeError):
+    """Raised when Codex rejects the stored access token."""
+
+
+@dataclass(frozen=True)
+class CodexResponseError:
+    detail: str
+    code: str | None = None
 
 
 def extract_streamed_output_text(stream_text: str) -> str:
@@ -214,17 +228,24 @@ def _iter_sse_events(stream_text: str):
         yield payload
 
 
-def _response_error_detail(response: Any) -> str:
+def _response_error(response: Any) -> CodexResponseError:
     text = getattr(response, "text", "") or ""
     try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return text[:500] if text else "unknown error"
+        payload = json.loads(text) if text else response.json()
+    except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
+        return CodexResponseError(text[:500] if text else "unknown error")
     if isinstance(payload, dict):
         detail = payload.get("detail") or payload.get("message") or payload.get("error")
+        if isinstance(detail, dict):
+            code_value = detail.get("code")
+            message = detail.get("message") or detail.get("detail") or code_value
+            return CodexResponseError(
+                message if isinstance(message, str) else "unknown error",
+                code_value if isinstance(code_value, str) else None,
+            )
         if isinstance(detail, str):
-            return detail
-    return text[:500] if text else "unknown error"
+            return CodexResponseError(detail)
+    return CodexResponseError(text[:500] if text else "unknown error")
 
 
 def _event_error_detail(event: dict[str, Any]) -> str:

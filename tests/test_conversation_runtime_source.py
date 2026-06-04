@@ -19,3 +19,13 @@ def test_conversation_auth_error_starts_reauth_instead_of_old_placeholder_messag
     assert "OAuth login is not wired yet" not in source
     assert "async_start_reauth" in source
     assert "needs you to sign in again" in source
+
+
+def test_conversation_refreshes_once_when_codex_rejects_access_token():
+    source = CONVERSATION.read_text()
+
+    assert "CodexAuthenticationError" in source
+    assert "access token was rejected; refreshing and retrying once" in source
+    assert "_refresh_runtime_tokens" in source
+    assert "token was rejected after refresh" in source
+    assert "starting reauth flow" in source

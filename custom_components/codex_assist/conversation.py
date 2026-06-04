@@ -14,8 +14,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.httpx_client import get_async_client
 
 from . import DOMAIN
-from .codex_auth import CodexAuthClient
-from .codex_client import CodexClient
+from .codex_auth import CodexAuthClient, CodexTokenSet
+from .codex_client import CodexAuthenticationError, CodexClient
 from .codex_runtime import resolve_runtime_tokens
 
 MAX_TOOL_ITERATIONS = 5
@@ -79,10 +79,11 @@ class CodexAssistConversationEntity(
             return err.as_conversation_result()
 
         http_client = get_async_client(self.hass)
+        auth_client = CodexAuthClient(http_client=http_client)
         try:
             tokens = await resolve_runtime_tokens(
                 self.entry.data,
-                auth_client=CodexAuthClient(http_client=http_client),
+                auth_client=auth_client,
                 async_update_entry_data=lambda data: self.hass.config_entries.async_update_entry(
                     self.entry,
                     data=data,
@@ -90,25 +91,64 @@ class CodexAssistConversationEntity(
             )
         except RuntimeError as err:
             LOGGER.warning("Codex Assist authentication failed; starting reauth flow: %s", err)
-            self.entry.async_start_reauth(self.hass)
-            response.async_set_speech(
-                "Codex Assist needs you to sign in again. Open Home Assistant repairs "
-                "or the integration page to reauthenticate."
-            )
-            return conversation.ConversationResult(
-                response=response,
-                conversation_id=user_input.conversation_id,
-            )
+            return _start_reauth_result(self.hass, self.entry, response, user_input)
 
         codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS):
-                result = await codex.generate_turn(
-                    model=model,
-                    instructions=_instructions_from_chat_log(chat_log, prompt),
-                    input_items=_codex_input_from_chat_log(chat_log),
-                    tools=_codex_tools_from_chat_log(chat_log),
-                )
+                try:
+                    result = await codex.generate_turn(
+                        model=model,
+                        instructions=_instructions_from_chat_log(chat_log, prompt),
+                        input_items=_codex_input_from_chat_log(chat_log),
+                        tools=_codex_tools_from_chat_log(chat_log),
+                    )
+                except CodexAuthenticationError as err:
+                    LOGGER.warning(
+                        "Codex Assist access token was rejected; refreshing and retrying once: %s",
+                        err,
+                    )
+                    try:
+                        tokens = await _refresh_runtime_tokens(
+                            self.hass,
+                            self.entry,
+                            auth_client,
+                            tokens,
+                        )
+                    except RuntimeError as refresh_err:
+                        LOGGER.warning(
+                            "Codex Assist token refresh failed; starting reauth flow: %s",
+                            refresh_err,
+                        )
+                        return _start_reauth_result(
+                            self.hass,
+                            self.entry,
+                            response,
+                            user_input,
+                        )
+                    codex = CodexClient(
+                        http_client=http_client,
+                        access_token=tokens.access_token,
+                    )
+                    try:
+                        result = await codex.generate_turn(
+                            model=model,
+                            instructions=_instructions_from_chat_log(chat_log, prompt),
+                            input_items=_codex_input_from_chat_log(chat_log),
+                            tools=_codex_tools_from_chat_log(chat_log),
+                        )
+                    except CodexAuthenticationError as retry_err:
+                        LOGGER.warning(
+                            "Codex Assist token was rejected after refresh; "
+                            "starting reauth flow: %s",
+                            retry_err,
+                        )
+                        return _start_reauth_result(
+                            self.hass,
+                            self.entry,
+                            response,
+                            user_input,
+                        )
                 assistant = conversation.AssistantContent(
                     agent_id=user_input.agent_id,
                     content=result.text or None,
@@ -148,6 +188,39 @@ class CodexAssistConversationEntity(
             )
 
         return conversation.async_get_result_from_chat_log(user_input, chat_log)
+
+
+async def _refresh_runtime_tokens(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    auth_client: CodexAuthClient,
+    tokens: CodexTokenSet,
+) -> CodexTokenSet:
+    if not tokens.refresh_token:
+        raise RuntimeError("Codex Assist is missing refresh_token")
+    refreshed = await auth_client.refresh(tokens)
+    updated_data = dict(entry.data)
+    updated_data["access_token"] = refreshed.access_token
+    updated_data["refresh_token"] = refreshed.refresh_token
+    hass.config_entries.async_update_entry(entry, data=updated_data)
+    return refreshed
+
+
+def _start_reauth_result(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    response: intent.IntentResponse,
+    user_input: conversation.ConversationInput,
+) -> conversation.ConversationResult:
+    entry.async_start_reauth(hass)
+    response.async_set_speech(
+        "Codex Assist needs you to sign in again. Open Home Assistant repairs "
+        "or the integration page to reauthenticate."
+    )
+    return conversation.ConversationResult(
+        response=response,
+        conversation_id=user_input.conversation_id,
+    )
 
 
 def _instructions_from_chat_log(
