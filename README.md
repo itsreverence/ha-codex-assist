@@ -46,7 +46,7 @@ Requirements: Home Assistant `2026.5.0` or newer, HACS, and a ChatGPT account/pl
 - Ask about exposed entity state and request simple actions in the same Assist chat.
 - Stream replies in Assist while Codex is answering.
 - Configure model, prompt, reasoning effort, reasoning summary, and text verbosity from the integration options flow.
-- On the v0.2 media branch, test native AI Task attachment handling and subscription-backed image generation with curated image quality and size controls.
+- Use Home Assistant AI Task for structured data generation, attachment-aware prompts, and subscription-backed image generation with curated image quality and size controls.
 
 <p align="center">
   <img src="assets/codex-assist-light-control.png" alt="Codex Assist confirming yard lights are on and turning them off" width="430">
@@ -87,4 +87,4 @@ uv run ruff check .
 uv run pytest
 ```
 
-Current release: `v0.1.10`.
+Current stable candidate: `v0.2.0`.
