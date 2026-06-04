@@ -71,7 +71,7 @@ Use this for local testing only. Prefer this over cutting beta releases while a 
    ```
 
 4. Restart Home Assistant.
-5. Confirm the integration version/logs reflect the branch code before testing. The `v0.2-media-ai-task` branch uses a beta manifest version such as `0.2.0-beta.1`; `main` remains on the latest stable `0.1.x` release for HACS review.
+5. Confirm the integration version/logs reflect the branch code before testing. The `v0.2-media-ai-task` branch uses a beta manifest version such as `0.2.0-beta.2`; `main` remains on the latest stable `0.1.x` release for HACS review.
 
 To roll back, reinstall the latest stable release from HACS and restart Home Assistant.
 
@@ -118,7 +118,7 @@ Use this for the native HA attachment path on the `v0.2-media-ai-task` branch.
 5. Confirm an attachment request is accepted because the entity advertises `AITaskEntityFeature.SUPPORT_ATTACHMENTS`.
 6. Confirm logs do not print tokens, local file contents, or base64 payloads.
 
-Do not advertise `GENERATE_IMAGE` unless Codex Assist intentionally supports image generation output. For v0.2, the intended scope is data generation from text plus image attachments.
+The v0.2 beta intentionally advertises `GENERATE_DATA`, `GENERATE_IMAGE`, and `SUPPORT_ATTACHMENTS` so one AI Task entity can smoke-test text/data generation, image attachment understanding, and Codex/ChatGPT subscription-backed image output together. Keep image generation on the v0.2 branch until it passes real HA smoke tests; do not merge it into `main` while the HACS/default stable line is under review.
 
 ## Reauth smoke test
 

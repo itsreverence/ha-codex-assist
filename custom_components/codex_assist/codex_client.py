@@ -35,6 +35,14 @@ class CodexTurnResult:
 
 
 @dataclass(frozen=True)
+class CodexImageResult:
+    image_data: bytes
+    mime_type: str
+    model: str
+    revised_prompt: str | None = None
+
+
+@dataclass(frozen=True)
 class CodexTextDelta:
     text: str
 
@@ -187,6 +195,66 @@ class CodexClient:
                 if delta is not None:
                     yield delta
 
+    async def generate_image(
+        self,
+        *,
+        prompt: str,
+        input_items: list[dict[str, Any]] | None = None,
+        chat_model: str = "gpt-5.4",
+        image_model: str = "gpt-image-2-medium",
+        size: str = "1024x1024",
+    ) -> CodexImageResult:
+        """Generate an image through Codex Responses image_generation tool."""
+        payload = _image_generation_payload(
+            prompt=prompt,
+            input_items=input_items,
+            chat_model=chat_model,
+            image_model=image_model,
+            size=size,
+        )
+
+        image_b64: str | None = None
+        text_parts: list[str] = []
+        async with self._http_client.stream(
+            "POST",
+            f"{self._base_url}/responses",
+            headers=codex_headers(self._access_token),
+            json=payload,
+            timeout=300,
+        ) as response:
+            if response.status_code != 200:
+                error = await _stream_response_error(response)
+                if response.status_code == 401 or error.code == "token_invalidated":
+                    raise CodexAuthenticationError(
+                        f"Codex authentication failed: {error.detail}"
+                    )
+                raise RuntimeError(
+                    f"Codex image request failed with status {response.status_code}: {error.detail}"
+                )
+
+            async for event in _aiter_sse_events(response):
+                found = _extract_image_b64(event)
+                if found:
+                    image_b64 = found
+                delta = _stream_delta_from_event(event)
+                if isinstance(delta, CodexTextDelta):
+                    text_parts.append(delta.text)
+
+        if not image_b64:
+            raise RuntimeError("Codex response contained no image_generation result")
+
+        try:
+            image_data = base64.b64decode(image_b64, validate=True)
+        except (ValueError, TypeError) as err:
+            raise RuntimeError("Codex image_generation result was not valid base64") from err
+
+        return CodexImageResult(
+            image_data=image_data,
+            mime_type="image/png",
+            model=image_model,
+            revised_prompt="".join(text_parts).strip() or None,
+        )
+
 
 def _responses_payload(
     *,
@@ -216,6 +284,81 @@ def _responses_payload(
         if text_verbosity:
             payload["text"] = {"verbosity": text_verbosity}
     return payload
+
+
+def _image_generation_payload(
+    *,
+    prompt: str,
+    input_items: list[dict[str, Any]] | None,
+    chat_model: str,
+    image_model: str,
+    size: str,
+) -> dict[str, Any]:
+    quality = _image_model_quality(image_model)
+    return {
+        "model": chat_model,
+        "store": False,
+        "instructions": (
+            "You are an assistant that must fulfill image generation requests "
+            "by using the image_generation tool when provided."
+        ),
+        "input": input_items
+        or [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": prompt}],
+            }
+        ],
+        "tools": [
+            {
+                "type": "image_generation",
+                "model": "gpt-image-2",
+                "size": size,
+                "quality": quality,
+                "output_format": "png",
+                "background": "opaque",
+                "partial_images": 1,
+            }
+        ],
+        "tool_choice": {
+            "type": "allowed_tools",
+            "mode": "required",
+            "tools": [{"type": "image_generation"}],
+        },
+        "stream": True,
+    }
+
+
+def _image_model_quality(image_model: str) -> str:
+    return {
+        "gpt-image-2-low": "low",
+        "gpt-image-2-medium": "medium",
+        "gpt-image-2-high": "high",
+    }.get(image_model, "medium")
+
+
+def _extract_image_b64(value: Any) -> str | None:
+    """Return the newest image b64 embedded in a Responses event payload."""
+    found: str | None = None
+    if isinstance(value, dict):
+        if value.get("type") == "image_generation_call":
+            result = value.get("result")
+            if isinstance(result, str) and result:
+                found = result
+        partial = value.get("partial_image_b64")
+        if isinstance(partial, str) and partial:
+            found = partial
+        for child in value.values():
+            nested = _extract_image_b64(child)
+            if nested:
+                found = nested
+    elif isinstance(value, list):
+        for child in value:
+            nested = _extract_image_b64(child)
+            if nested:
+                found = nested
+    return found
 
 
 def _supports_reasoning_options(model: str) -> bool:
@@ -350,11 +493,16 @@ def extract_streamed_turn_result(stream_text: str) -> CodexTurnResult:
 
 
 def _iter_sse_events(stream_text: str):
+    event_name: str | None = None
     data_lines: list[str] = []
 
     def flush_event():
+        nonlocal event_name
         if not data_lines:
+            event_name = None
             return None
+        event = event_name
+        event_name = None
         data = "\n".join(data_lines)
         data_lines.clear()
         if data == "[DONE]":
@@ -363,6 +511,8 @@ def _iter_sse_events(stream_text: str):
             payload = json.loads(data)
         except json.JSONDecodeError:
             return None
+        if isinstance(payload, dict) and event and "type" not in payload:
+            payload["type"] = event
         return payload if isinstance(payload, dict) else None
 
     for line in stream_text.splitlines():
@@ -373,6 +523,8 @@ def _iter_sse_events(stream_text: str):
             continue
         if line.startswith("data:"):
             data_lines.append(line.removeprefix("data:").strip())
+        elif line.startswith("event:"):
+            event_name = line.removeprefix("event:").strip()
 
     payload = flush_event()
     if payload is not None:
@@ -454,24 +606,30 @@ def _tool_call_from_item(item: dict[str, Any], arguments: str) -> CodexToolCall:
 
 
 async def _aiter_sse_events(response: Any) -> AsyncIterator[dict[str, Any]]:
+    event_name: str | None = None
     data_lines: list[str] = []
 
     async for line in response.aiter_lines():
         if not line.strip():
-            payload = _parse_sse_payload(data_lines)
+            payload = _parse_sse_payload(data_lines, event_name)
+            event_name = None
             data_lines.clear()
             if payload is not None:
                 yield payload
             continue
         if line.startswith("data:"):
             data_lines.append(line.removeprefix("data:").strip())
+        elif line.startswith("event:"):
+            event_name = line.removeprefix("event:").strip()
 
-    payload = _parse_sse_payload(data_lines)
+    payload = _parse_sse_payload(data_lines, event_name)
     if payload is not None:
         yield payload
 
 
-def _parse_sse_payload(data_lines: list[str]) -> dict[str, Any] | None:
+def _parse_sse_payload(
+    data_lines: list[str], event_name: str | None = None
+) -> dict[str, Any] | None:
     if not data_lines:
         return None
     data = "\n".join(data_lines)
@@ -481,6 +639,8 @@ def _parse_sse_payload(data_lines: list[str]) -> dict[str, Any] | None:
         payload = json.loads(data)
     except json.JSONDecodeError:
         return None
+    if isinstance(payload, dict) and event_name and "type" not in payload:
+        payload["type"] = event_name
     return payload if isinstance(payload, dict) else None
 
 
