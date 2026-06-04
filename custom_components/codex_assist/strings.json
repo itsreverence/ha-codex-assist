@@ -6,7 +6,10 @@
         "description": "Set the default model and prompt. Setup will then show a Codex sign-in code for your ChatGPT/Codex account.",
         "data": {
           "model": "Model",
-          "prompt": "System prompt"
+          "prompt": "System prompt",
+          "reasoning_effort": "Reasoning effort",
+          "reasoning_summary": "Reasoning summary",
+          "text_verbosity": "Text verbosity"
         }
       },
       "device": {
@@ -28,10 +31,13 @@
     "step": {
       "init": {
         "title": "Codex Assist options",
-        "description": "Adjust Codex Assist behavior. Codex Assist uses Home Assistant's normal Assist LLM control tools and respects Home Assistant's exposed-entity settings.",
+        "description": "Adjust the Codex model, prompt, and advanced response behavior. Codex Assist uses Home Assistant's normal Assist LLM control tools and respects Home Assistant's exposed-entity settings.",
         "data": {
           "model": "Model",
-          "prompt": "System prompt"
+          "prompt": "System prompt",
+          "reasoning_effort": "Reasoning effort",
+          "reasoning_summary": "Reasoning summary",
+          "text_verbosity": "Text verbosity"
         }
       }
     }

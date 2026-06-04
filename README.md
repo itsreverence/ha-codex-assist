@@ -40,7 +40,8 @@ Requirements: Home Assistant `2026.5.0` or newer, HACS, and a ChatGPT account/pl
 - Pick Codex as a normal Home Assistant Assist conversation agent.
 - Let Home Assistant's Assist exposed-entity controls define what the agent can see or control.
 - Ask about exposed entity state and request simple actions in the same Assist chat.
-- Configure model and prompt from the integration options flow.
+- Stream replies in Assist while Codex is answering.
+- Configure model, prompt, reasoning effort, reasoning summary, and text verbosity from the integration options flow.
 
 <p align="center">
   <img src="assets/codex-assist-light-control.png" alt="Codex Assist confirming yard lights are on and turning them off" width="430">
@@ -81,4 +82,4 @@ uv run ruff check .
 uv run pytest
 ```
 
-Current release: `v0.1.8`.
+Current release: `v0.1.9`.

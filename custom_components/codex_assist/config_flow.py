@@ -20,8 +20,14 @@ CONF_ACCESS_TOKEN = "access_token"
 CONF_PROMPT = "prompt"
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_MODEL = "model"
+CONF_REASONING_EFFORT = "reasoning_effort"
+CONF_REASONING_SUMMARY = "reasoning_summary"
+CONF_TEXT_VERBOSITY = "text_verbosity"
 DEFAULT_MODEL = "gpt-5.4"
 DEFAULT_PROMPT = "You are a concise Home Assistant Assist conversation agent."
+DEFAULT_REASONING_EFFORT = "low"
+DEFAULT_REASONING_SUMMARY = "auto"
+DEFAULT_TEXT_VERBOSITY = "medium"
 
 
 class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -93,7 +99,13 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth(self, entry_data: Mapping[str, Any]):
         self._setup_input = {
             key: entry_data[key]
-            for key in (CONF_MODEL, CONF_PROMPT)
+            for key in (
+                CONF_MODEL,
+                CONF_PROMPT,
+                CONF_REASONING_EFFORT,
+                CONF_REASONING_SUMMARY,
+                CONF_TEXT_VERBOSITY,
+            )
             if key in entry_data
         }
         return await self.async_step_reauth_confirm()
@@ -162,6 +174,33 @@ def _settings_schema(
                 CONF_PROMPT,
                 default=defaults.get(CONF_PROMPT, DEFAULT_PROMPT),
             ): str,
+            vol.Optional(
+                CONF_REASONING_EFFORT,
+                default=defaults.get(CONF_REASONING_EFFORT, DEFAULT_REASONING_EFFORT),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=["low", "medium", "high"],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_REASONING_SUMMARY,
+                default=defaults.get(CONF_REASONING_SUMMARY, DEFAULT_REASONING_SUMMARY),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=["auto", "concise", "detailed", "off"],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_TEXT_VERBOSITY,
+                default=defaults.get(CONF_TEXT_VERBOSITY, DEFAULT_TEXT_VERBOSITY),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=["low", "medium", "high"],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
         }
     )
 

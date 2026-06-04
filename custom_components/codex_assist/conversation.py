@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 from homeassistant.components import conversation
+from homeassistant.components.conversation import AssistantContentDeltaDict
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import MATCH_ALL
 from homeassistant.core import HomeAssistant
@@ -15,8 +17,19 @@ from homeassistant.helpers.httpx_client import get_async_client
 
 from . import DOMAIN
 from .codex_auth import CodexAuthClient, CodexTokenSet
-from .codex_client import CodexAuthenticationError, CodexClient
+from .codex_client import (
+    CodexAuthenticationError,
+    CodexClient,
+    CodexStreamDelta,
+    CodexTextDelta,
+    CodexToolCallDelta,
+)
 from .codex_runtime import resolve_runtime_tokens
+from .config_flow import (
+    DEFAULT_REASONING_EFFORT,
+    DEFAULT_REASONING_SUMMARY,
+    DEFAULT_TEXT_VERBOSITY,
+)
 
 MAX_TOOL_ITERATIONS = 5
 LOGGER = logging.getLogger(__name__)
@@ -37,7 +50,7 @@ class CodexAssistConversationEntity(
     _attr_has_entity_name = True
     _attr_name = "Codex Assist"
     _attr_supported_features = conversation.ConversationEntityFeature.CONTROL
-    _attr_supports_streaming = False
+    _attr_supports_streaming = True
 
     def __init__(self, entry: ConfigEntry) -> None:
         self.entry = entry
@@ -66,6 +79,9 @@ class CodexAssistConversationEntity(
             "prompt",
             "You are a concise Home Assistant Assist conversation agent.",
         )
+        reasoning_effort = settings.get("reasoning_effort", DEFAULT_REASONING_EFFORT)
+        reasoning_summary = settings.get("reasoning_summary", DEFAULT_REASONING_SUMMARY)
+        text_verbosity = settings.get("text_verbosity", DEFAULT_TEXT_VERBOSITY)
 
         response = intent.IntentResponse(language=user_input.language)
         try:
@@ -97,11 +113,17 @@ class CodexAssistConversationEntity(
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS):
                 try:
-                    result = await codex.generate_turn(
+                    await _stream_codex_turn_into_chat_log(
+                        chat_log=chat_log,
+                        codex=codex,
+                        entity_id=self.entity_id or "",
                         model=model,
                         instructions=_instructions_from_chat_log(chat_log, prompt),
                         input_items=_codex_input_from_chat_log(chat_log),
                         tools=_codex_tools_from_chat_log(chat_log),
+                        reasoning_effort=reasoning_effort,
+                        reasoning_summary=reasoning_summary,
+                        text_verbosity=text_verbosity,
                     )
                 except CodexAuthenticationError as err:
                     LOGGER.warning(
@@ -131,11 +153,17 @@ class CodexAssistConversationEntity(
                         access_token=tokens.access_token,
                     )
                     try:
-                        result = await codex.generate_turn(
+                        await _stream_codex_turn_into_chat_log(
+                            chat_log=chat_log,
+                            codex=codex,
+                            entity_id=self.entity_id or "",
                             model=model,
                             instructions=_instructions_from_chat_log(chat_log, prompt),
                             input_items=_codex_input_from_chat_log(chat_log),
                             tools=_codex_tools_from_chat_log(chat_log),
+                            reasoning_effort=reasoning_effort,
+                            reasoning_summary=reasoning_summary,
+                            text_verbosity=text_verbosity,
                         )
                     except CodexAuthenticationError as retry_err:
                         LOGGER.warning(
@@ -149,24 +177,7 @@ class CodexAssistConversationEntity(
                             response,
                             user_input,
                         )
-                assistant = conversation.AssistantContent(
-                    agent_id=user_input.agent_id,
-                    content=result.text or None,
-                    tool_calls=[
-                        llm.ToolInput(
-                            id=tool_call.id,
-                            tool_name=tool_call.name,
-                            tool_args=tool_call.arguments,
-                        )
-                        for tool_call in result.tool_calls
-                    ]
-                    or None,
-                )
-
-                async for _tool_result in chat_log.async_add_assistant_content(assistant):
-                    pass
-
-                if not result.tool_calls:
+                if not chat_log.unresponded_tool_results:
                     break
         except (httpx.HTTPError, RuntimeError) as err:
             LOGGER.exception("Codex Assist model request failed")
@@ -188,6 +199,58 @@ class CodexAssistConversationEntity(
             )
 
         return conversation.async_get_result_from_chat_log(user_input, chat_log)
+
+
+async def _stream_codex_turn_into_chat_log(
+    *,
+    chat_log: conversation.ChatLog,
+    codex: CodexClient,
+    entity_id: str,
+    model: str,
+    instructions: str,
+    input_items: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    reasoning_effort: str,
+    reasoning_summary: str,
+    text_verbosity: str,
+) -> None:
+    async for _delta in chat_log.async_add_delta_content_stream(
+        entity_id,
+        _codex_stream_to_assistant_deltas(
+            codex.stream_turn(
+                model=model,
+                instructions=instructions,
+                input_items=input_items,
+                tools=tools,
+                reasoning_effort=reasoning_effort,
+                reasoning_summary=reasoning_summary,
+                text_verbosity=text_verbosity,
+            )
+        ),
+    ):
+        pass
+
+
+async def _codex_stream_to_assistant_deltas(
+    stream: AsyncIterator[CodexStreamDelta],
+) -> AsyncIterator[AssistantContentDeltaDict]:
+    started = False
+    async for delta in stream:
+        if not started:
+            yield {"role": "assistant"}
+            started = True
+        if isinstance(delta, CodexTextDelta):
+            yield {"content": delta.text}
+        elif isinstance(delta, CodexToolCallDelta):
+            yield {
+                "tool_calls": [
+                    llm.ToolInput(
+                        id=delta.tool_call.id,
+                        tool_name=delta.tool_call.name,
+                        tool_args=delta.tool_call.arguments,
+                    )
+                ]
+            }
 
 
 async def _refresh_runtime_tokens(

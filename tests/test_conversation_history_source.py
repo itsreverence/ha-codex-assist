@@ -12,12 +12,12 @@ def test_conversation_uses_home_assistant_chat_log_history():
     assert '"type": "function_call_output"' in source
 
 
-def test_conversation_records_assistant_reply_and_executes_tools_in_chat_log():
+def test_conversation_streams_assistant_reply_and_executes_tools_in_chat_log():
     source = CONVERSATION.read_text()
 
-    assert "async_add_assistant_content(assistant)" in source
-    assert "conversation.AssistantContent" in source
-    assert "agent_id=user_input.agent_id" in source
+    assert "_attr_supports_streaming = True" in source
+    assert "async_add_delta_content_stream" in source
+    assert "_codex_stream_to_assistant_deltas" in source
     assert "llm.ToolInput" in source
 
 

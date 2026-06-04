@@ -23,6 +23,16 @@ def test_options_flow_uses_codex_model_selector_with_custom_slug_fallback():
     assert "custom_value=True" in source
 
 
+def test_options_flow_exposes_advanced_codex_response_controls():
+    source = CONFIG_FLOW.read_text()
+
+    assert "CONF_REASONING_EFFORT" in source
+    assert "CONF_REASONING_SUMMARY" in source
+    assert "CONF_TEXT_VERBOSITY" in source
+    assert '["low", "medium", "high"]' in source
+    assert '["auto", "concise", "detailed", "off"]' in source
+
+
 def test_options_flow_does_not_expose_redundant_safety_mode_choice():
     source = CONFIG_FLOW.read_text()
 
