@@ -41,6 +41,10 @@ Requirements: Home Assistant `2026.5.0` or newer, HACS, and a ChatGPT account/pl
 - Let Home Assistant's Assist exposed-entity controls define what the agent can see or control.
 - Configure model and prompt from the integration options flow.
 
+<p align="center">
+  <img src="assets/codex-assist-options.png" alt="Codex Assist options showing model and system prompt controls" width="640">
+</p>
+
 ## Safety short version
 
 Codex Assist does **not** expose a raw “call any Home Assistant service” bridge. It routes control through Home Assistant's Assist LLM API, so your **Assist exposed entities** list is the practical safety boundary.
@@ -72,4 +76,4 @@ uv run ruff check .
 uv run pytest
 ```
 
-Current release: `v0.1.4`.
+Current release: `v0.1.6`.
