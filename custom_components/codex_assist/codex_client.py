@@ -18,7 +18,7 @@ class AsyncPostClient(Protocol):
 @dataclass(frozen=True)
 class CodexMessage:
     role: str
-    content: str
+    content: str | list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -224,6 +224,33 @@ def _supports_reasoning_options(model: str) -> bool:
 
 def codex_messages_to_input_items(messages: list[CodexMessage]) -> list[dict[str, Any]]:
     return [{"role": message.role, "content": message.content} for message in messages]
+
+
+def codex_user_content_with_images(
+    text: str,
+    images: list[tuple[str, bytes]],
+) -> str | list[dict[str, Any]]:
+    """Build a Codex user content payload with HA-native image attachments.
+
+    The Responses API expects multimodal user content as an ordered list with
+    input_text followed by one input_image item per image. PDFs and other file
+    types are intentionally not handled here; add them only when the integration
+    explicitly supports those HA attachment MIME types.
+    """
+    if not images:
+        return text
+
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": text}]
+    for mime_type, data in images:
+        encoded = base64.b64encode(data).decode("ascii")
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": f"data:{mime_type};base64,{encoded}",
+                "detail": "auto",
+            }
+        )
+    return content
 
 
 def codex_headers(access_token: str) -> dict[str, str]:

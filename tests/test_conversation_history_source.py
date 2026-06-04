@@ -27,3 +27,12 @@ def test_conversation_enables_full_home_assistant_assist_control():
     assert "ConversationEntityFeature.CONTROL" in source
     assert "llm.LLM_API_ASSIST" in source
     assert "_codex_tools_from_chat_log" in source
+
+
+def test_conversation_translates_home_assistant_image_attachments_to_codex_input():
+    source = CONVERSATION.read_text()
+
+    assert "_async_image_attachments_for_codex" in source
+    assert "mime_type.startswith(\"image/\")" in source
+    assert "codex_user_content_with_images" in source
+    assert "MAX_IMAGE_ATTACHMENT_BYTES" in source

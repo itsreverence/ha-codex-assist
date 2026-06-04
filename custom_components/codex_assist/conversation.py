@@ -23,6 +23,7 @@ from .codex_client import (
     CodexStreamDelta,
     CodexTextDelta,
     CodexToolCallDelta,
+    codex_user_content_with_images,
 )
 from .codex_runtime import resolve_runtime_tokens
 from .config_flow import (
@@ -32,6 +33,7 @@ from .config_flow import (
 )
 
 MAX_TOOL_ITERATIONS = 5
+MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 LOGGER = logging.getLogger(__name__)
 
 
@@ -119,7 +121,7 @@ class CodexAssistConversationEntity(
                         entity_id=self.entity_id or "",
                         model=model,
                         instructions=_instructions_from_chat_log(chat_log, prompt),
-                        input_items=_codex_input_from_chat_log(chat_log),
+                        input_items=await _codex_input_from_chat_log(self.hass, chat_log),
                         tools=_codex_tools_from_chat_log(chat_log),
                         reasoning_effort=reasoning_effort,
                         reasoning_summary=reasoning_summary,
@@ -159,7 +161,7 @@ class CodexAssistConversationEntity(
                             entity_id=self.entity_id or "",
                             model=model,
                             instructions=_instructions_from_chat_log(chat_log, prompt),
-                            input_items=_codex_input_from_chat_log(chat_log),
+                            input_items=await _codex_input_from_chat_log(self.hass, chat_log),
                             tools=_codex_tools_from_chat_log(chat_log),
                             reasoning_effort=reasoning_effort,
                             reasoning_summary=reasoning_summary,
@@ -299,7 +301,10 @@ def _instructions_from_chat_log(
     return fallback_prompt
 
 
-def _codex_input_from_chat_log(chat_log: conversation.ChatLog) -> list[dict[str, Any]]:
+async def _codex_input_from_chat_log(
+    hass: HomeAssistant,
+    chat_log: conversation.ChatLog,
+) -> list[dict[str, Any]]:
     input_items: list[dict[str, Any]] = []
     for content in chat_log.content:
         role = getattr(content, "role", None)
@@ -316,7 +321,14 @@ def _codex_input_from_chat_log(chat_log: conversation.ChatLog) -> list[dict[str,
             )
             continue
         if role in {"user", "assistant"} and isinstance(text, str) and text.strip():
-            input_items.append({"role": role, "content": text})
+            item_content: str | list[dict[str, Any]] = text
+            if role == "user":
+                images = await _async_image_attachments_for_codex(
+                    hass,
+                    getattr(content, "attachments", None),
+                )
+                item_content = codex_user_content_with_images(text, images)
+            input_items.append({"role": role, "content": item_content})
 
         tool_calls = getattr(content, "tool_calls", None)
         if role == "assistant" and tool_calls:
@@ -331,6 +343,38 @@ def _codex_input_from_chat_log(chat_log: conversation.ChatLog) -> list[dict[str,
                 )
 
     return input_items[-24:]
+
+
+async def _async_image_attachments_for_codex(
+    hass: HomeAssistant,
+    attachments: Any,
+) -> list[tuple[str, bytes]]:
+    if not attachments:
+        return []
+    return await hass.async_add_executor_job(_image_attachments_for_codex, attachments)
+
+
+def _image_attachments_for_codex(attachments: Any) -> list[tuple[str, bytes]]:
+    images: list[tuple[str, bytes]] = []
+    for attachment in attachments:
+        mime_type = getattr(attachment, "mime_type", "")
+        if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
+            continue
+        path = getattr(attachment, "path", None)
+        if path is None:
+            continue
+        try:
+            if path.stat().st_size > MAX_IMAGE_ATTACHMENT_BYTES:
+                LOGGER.warning(
+                    "Skipping Codex Assist image attachment over %s bytes: %s",
+                    MAX_IMAGE_ATTACHMENT_BYTES,
+                    path,
+                )
+                continue
+            images.append((mime_type, path.read_bytes()))
+        except OSError as err:
+            LOGGER.warning("Skipping unreadable Codex Assist image attachment %s: %s", path, err)
+    return images
 
 
 def _codex_tools_from_chat_log(chat_log: conversation.ChatLog) -> list[dict[str, Any]]:
