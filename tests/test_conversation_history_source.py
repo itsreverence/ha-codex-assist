@@ -18,6 +18,9 @@ def test_conversation_streams_assistant_reply_and_executes_tools_in_chat_log():
     assert "_attr_supports_streaming = True" in source
     assert "async_add_delta_content_stream" in source
     assert "_codex_stream_to_assistant_deltas" in source
+    assert "tool_call_requested = await _stream_codex_turn_into_chat_log" in source
+    assert "if not tool_call_requested:" in source
+    assert "on_tool_call=mark_tool_call_requested" in source
     assert "llm.ToolInput" in source
 
 

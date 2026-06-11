@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import httpx
@@ -115,7 +115,7 @@ class CodexAssistConversationEntity(
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS):
                 try:
-                    await _stream_codex_turn_into_chat_log(
+                    tool_call_requested = await _stream_codex_turn_into_chat_log(
                         chat_log=chat_log,
                         codex=codex,
                         entity_id=self.entity_id or "",
@@ -155,7 +155,7 @@ class CodexAssistConversationEntity(
                         access_token=tokens.access_token,
                     )
                     try:
-                        await _stream_codex_turn_into_chat_log(
+                        tool_call_requested = await _stream_codex_turn_into_chat_log(
                             chat_log=chat_log,
                             codex=codex,
                             entity_id=self.entity_id or "",
@@ -179,7 +179,7 @@ class CodexAssistConversationEntity(
                             response,
                             user_input,
                         )
-                if not chat_log.unresponded_tool_results:
+                if not tool_call_requested:
                     break
         except (httpx.HTTPError, RuntimeError) as err:
             LOGGER.exception("Codex Assist model request failed")
@@ -215,7 +215,13 @@ async def _stream_codex_turn_into_chat_log(
     reasoning_effort: str,
     reasoning_summary: str,
     text_verbosity: str,
-) -> None:
+) -> bool:
+    tool_call_requested = False
+
+    def mark_tool_call_requested() -> None:
+        nonlocal tool_call_requested
+        tool_call_requested = True
+
     async for _delta in chat_log.async_add_delta_content_stream(
         entity_id,
         _codex_stream_to_assistant_deltas(
@@ -227,14 +233,18 @@ async def _stream_codex_turn_into_chat_log(
                 reasoning_effort=reasoning_effort,
                 reasoning_summary=reasoning_summary,
                 text_verbosity=text_verbosity,
-            )
+            ),
+            on_tool_call=mark_tool_call_requested,
         ),
     ):
         pass
+    return tool_call_requested
 
 
 async def _codex_stream_to_assistant_deltas(
     stream: AsyncIterator[CodexStreamDelta],
+    *,
+    on_tool_call: Callable[[], None] | None = None,
 ) -> AsyncIterator[AssistantContentDeltaDict]:
     started = False
     async for delta in stream:
@@ -244,6 +254,8 @@ async def _codex_stream_to_assistant_deltas(
         if isinstance(delta, CodexTextDelta):
             yield {"content": delta.text}
         elif isinstance(delta, CodexToolCallDelta):
+            if on_tool_call is not None:
+                on_tool_call()
             yield {
                 "tool_calls": [
                     llm.ToolInput(
