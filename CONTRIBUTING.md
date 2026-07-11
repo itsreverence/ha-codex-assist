@@ -19,14 +19,12 @@ uv run ruff check .
 uv run pytest -q
 ```
 
-The fast suite under `tests/` uses lightweight Home Assistant fakes. The real Home Assistant harness has separate dependencies:
+The fast suite under `tests/` uses lightweight Home Assistant fakes. Run the real Home Assistant harness in an isolated Python 3.14 environment so it does not reuse the project's normal Python 3.11+ environment:
 
 ```bash
-uv pip install -r requirements_test_ha.txt
-uv run python -m pytest tests_ha -q
+uv run --isolated --python 3.14 --with-requirements requirements_test_ha.txt \
+  python -m pytest tests_ha -q
 ```
-
-The real harness currently requires Python 3.14 or newer.
 
 ## Pull requests
 

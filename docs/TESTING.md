@@ -7,11 +7,11 @@ uv run ruff check .
 uv run pytest -q
 ```
 
-The fast suite under `tests/` uses lightweight Home Assistant fakes. The `tests_ha/` suite uses `pytest-homeassistant-custom-component` to catch upstream API breakage and currently requires Python 3.14 or newer:
+The fast suite under `tests/` uses lightweight Home Assistant fakes. Run the `tests_ha/` suite in an isolated Python 3.14 environment so it does not reuse the normal project environment:
 
 ```bash
-uv pip install -r requirements_test_ha.txt
-uv run python -m pytest tests_ha -q
+uv run --isolated --python 3.14 --with-requirements requirements_test_ha.txt \
+  python -m pytest tests_ha -q
 ```
 
 CI runs both lanes on pushes and pull requests, and runs the Home Assistant harness weekly.
