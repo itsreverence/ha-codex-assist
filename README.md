@@ -74,17 +74,9 @@ The GitHub Wiki is the main user manual:
 
 ## Project docs
 
-Canonical code-tied docs stay in the repository:
-
+- [User support](SUPPORT.md)
 - [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Development workflow](docs/WORKFLOW.md)
-
-## Development checks
-
-```bash
-uv run ruff check .
-uv run pytest
-```
-
-Current release: `v0.3.1`.
+- [Testing](docs/TESTING.md)
+- [Release process](docs/RELEASING.md)

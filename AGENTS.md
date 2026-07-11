@@ -14,6 +14,6 @@ Build a public-quality Home Assistant custom integration that registers a native
 
 ## Verification
 
-- Use tests for token refresh, payload conversion, and conversation response extraction.
-- Run `uv run pytest -q` before claiming success.
-- Run `uv run ruff check .` before public-quality handoff.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull-request expectations.
+- Run `uv run pytest -q` and `uv run ruff check .` before public-quality handoff.
+- Use [docs/TESTING.md](docs/TESTING.md) for live Home Assistant and feature-specific smoke tests.
