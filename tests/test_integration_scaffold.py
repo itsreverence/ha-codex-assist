@@ -10,7 +10,8 @@ def test_manifest_is_hacs_loadable_custom_integration():
     assert manifest["config_flow"] is True
     assert "conversation" in manifest["after_dependencies"]
     assert "ai_task" in manifest["after_dependencies"]
-    assert "httpx" in " ".join(manifest["requirements"])
+    # httpx is provided by Home Assistant core and should not be reinstalled by HACS.
+    assert "requirements" not in manifest
 
 
 def test_integration_declares_conversation_and_ai_task_platform_forwarding():
