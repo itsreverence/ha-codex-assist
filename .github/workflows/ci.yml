@@ -22,7 +22,7 @@ jobs:
 
       - name: Install uv
         # setup-uv v8+ no longer publishes major tags (@v8); pin a full immutable tag.
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
 
