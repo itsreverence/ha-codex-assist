@@ -43,6 +43,7 @@ from .conversation import (
     _refresh_runtime_tokens,
     _stream_codex_turn_into_chat_log,
 )
+from .error_formatting import request_failure_text
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -122,7 +123,9 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
             ) from err
         except (CodexAuthTemporaryError, RuntimeError) as err:
             LOGGER.exception("Codex Assist AI Task authentication failed")
-            raise HomeAssistantError(f"Codex Assist AI Task failed: {err}") from err
+            raise HomeAssistantError(
+                request_failure_text("Codex Assist AI Task failed", err)
+            ) from err
 
         codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
         try:
@@ -155,7 +158,9 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
                     "repairs or the integration page to reauthenticate."
                 ) from err
             LOGGER.exception("Codex Assist AI Task model request failed")
-            raise HomeAssistantError(f"Codex Assist AI Task failed: {err}") from err
+            raise HomeAssistantError(
+                request_failure_text("Codex Assist AI Task failed", err)
+            ) from err
         except (ValueError, TypeError) as err:
             LOGGER.exception("Codex Assist AI Task response handling failed")
             raise HomeAssistantError(
@@ -202,7 +207,9 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
             ) from err
         except (CodexAuthTemporaryError, RuntimeError) as err:
             LOGGER.exception("Codex Assist AI Task authentication failed")
-            raise HomeAssistantError(f"Codex Assist image generation failed: {err}") from err
+            raise HomeAssistantError(
+                request_failure_text("Codex Assist image generation failed", err)
+            ) from err
 
         codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
         try:
@@ -236,7 +243,9 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
                     "repairs or the integration page to reauthenticate."
                 ) from err
             LOGGER.exception("Codex Assist AI Task image request failed")
-            raise HomeAssistantError(f"Codex Assist image generation failed: {err}") from err
+            raise HomeAssistantError(
+                request_failure_text("Codex Assist image generation failed", err)
+            ) from err
         except (ValueError, TypeError) as err:
             LOGGER.exception("Codex Assist AI Task image response handling failed")
             raise HomeAssistantError(f"Codex Assist image response handling failed: {err}") from err

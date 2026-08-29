@@ -42,6 +42,7 @@ from .config_flow import (
     DEFAULT_TEXT_VERBOSITY,
     DEFAULT_WEB_SEARCH,
 )
+from .error_formatting import request_failure_text
 
 MAX_TOOL_ITERATIONS = 5
 MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024
@@ -256,8 +257,7 @@ class CodexAssistConversationEntity(
 
 def _request_failure_text(err: BaseException) -> str:
     """Return a useful user-facing failure even for blank transport errors."""
-    detail = str(err).strip() or type(err).__name__
-    return f"Codex Assist failed: {detail}"
+    return request_failure_text("Codex Assist failed", err)
 
 
 async def _stream_codex_turn_into_chat_log(

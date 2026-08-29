@@ -18,7 +18,7 @@ Codex Assist signs in with Codex-style ChatGPT device-code auth, adds Codex as a
 
 ## Quick install
 
-Requirements: Home Assistant `2026.5.0` or newer, HACS, and a ChatGPT account/plan with Codex access.
+Requirements: Home Assistant `2026.6.0` or newer, HACS, and a ChatGPT account/plan with Codex access.
 
 [![Open HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=itsreverence&repository=ha-codex-assist&category=integration)
 [![Add the Codex Assist integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=codex_assist)
@@ -41,7 +41,7 @@ Codex Assist is included in HACS by default; you do not need to add this GitHub 
 - Let Home Assistant's Assist exposed-entity controls define what the agent can see or control.
 - Ask about exposed entity state and request simple actions in the same Assist chat.
 - Stream replies in Assist while Codex is answering.
-- Optionally enable hosted web search. Search is off by default; displayed results retain validated source links while spoken responses omit the generated source footer.
+- Optionally enable hosted web search. Search is off by default; displayed results retain validated source links in a separate card while spoken responses contain no raw URLs or source block.
 - Configure model, prompt, reasoning effort, reasoning summary, text verbosity, and web search from the integration options flow.
 - Use Home Assistant AI Task for structured data generation, attachment-aware prompts, and subscription-backed image generation with curated image quality and size controls.
 

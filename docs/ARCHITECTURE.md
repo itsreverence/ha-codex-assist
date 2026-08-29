@@ -12,7 +12,7 @@ Codex Assist is a Home Assistant custom integration that registers a native Assi
 - **AI Task entity**: registers a native AI Task provider for structured data generation, attachment-aware prompts, and image generation.
 - **Runtime token coordinator**: serializes refresh-token rotation per config entry so concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another.
 - **Codex client**: sends conversation turns to the Codex-compatible service interface and normalizes its response stream.
-- **Hosted web search**: when explicitly enabled, adds the backend `web_search` tool and converts structured URL annotations into a validated source footer/card. Unsupported or unsafe citation URLs are discarded.
+- **Hosted web search**: when explicitly enabled, adds the backend `web_search` tool and converts structured URL annotations into a validated source card. Unsupported or unsafe citation URLs are discarded.
 - **Assist tool bridge**: maps model-requested actions into Home Assistant's Assist LLM API rather than calling services directly.
 
 ## Request flow
@@ -22,7 +22,7 @@ Codex Assist is a Home Assistant custom integration that registers a native Assi
 3. Codex Assist sends the conversation to the Codex-compatible service interface.
 4. If Codex requests a Home Assistant tool call, Codex Assist maps that request into Home Assistant's Assist LLM API.
 5. Home Assistant validates and executes the allowed Assist tool call using its normal exposed-entity controls.
-6. When hosted search is enabled, Codex Assist preserves validated citations for displayed output and removes only its generated source footer from speech.
+6. When hosted search is enabled, Codex Assist preserves validated citations in a separate displayed card and instructs the model to keep raw URLs and source blocks out of spoken prose.
 7. Codex Assist returns the final response to Home Assistant.
 
 ## AI Task flow

@@ -161,6 +161,85 @@ async def test_stream_turn_yields_function_call_after_arguments_complete():
 
 
 @pytest.mark.asyncio
+async def test_stream_turn_correlates_interleaved_function_call_arguments_by_item_id():
+    response = FakeStreamResponse(
+        200,
+        _event(
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "item-1",
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "HassTurnOn",
+                },
+            }
+        )
+        + _event(
+            {
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "item-2",
+                    "type": "function_call",
+                    "call_id": "call-2",
+                    "name": "HassSetPosition",
+                },
+            }
+        )
+        + _event(
+            {
+                "type": "response.function_call_arguments.delta",
+                "item_id": "item-1",
+                "delta": '{"name":"Kitchen"',
+            }
+        )
+        + _event(
+            {
+                "type": "response.function_call_arguments.delta",
+                "item_id": "item-2",
+                "delta": '{"name":"Shade"',
+            }
+        )
+        + _event(
+            {
+                "type": "response.function_call_arguments.done",
+                "item_id": "item-2",
+                "arguments": '{"name":"Shade","position":50}',
+            }
+        )
+        + _event(
+            {
+                "type": "response.function_call_arguments.done",
+                "item_id": "item-1",
+                "arguments": '{"name":"Kitchen","domain":"light"}',
+            }
+        ),
+    )
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    deltas = [
+        delta
+        async for delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Use tools.",
+            input_items=[{"role": "user", "content": "turn on kitchen and move shade"}],
+            tools=[
+                {"type": "function", "name": "HassTurnOn", "parameters": {}},
+                {"type": "function", "name": "HassSetPosition", "parameters": {}},
+            ],
+        )
+    ]
+
+    tool_calls = [
+        delta.tool_call for delta in deltas if isinstance(delta, CodexToolCallDelta)
+    ]
+    assert [(call.id, call.name, call.arguments) for call in tool_calls] == [
+        ("call-2", "HassSetPosition", {"name": "Shade", "position": 50}),
+        ("call-1", "HassTurnOn", {"name": "Kitchen", "domain": "light"}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_stream_turn_yields_structured_web_citations_and_requests_sources():
     citation = {
         "type": "url_citation",

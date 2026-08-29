@@ -23,17 +23,21 @@ This checklist is for maintainers.
    PY
    ```
 
-5. Run all checks in [TESTING.md](TESTING.md).
-6. Commit the scoped release change and wait for CI to pass.
+5. When hosted-search request or citation handling changed, complete the compatibility checks in [TESTING.md](TESTING.md).
+6. Run all checks in [TESTING.md](TESTING.md).
+7. Commit the scoped release change, open a pull request, and wait for every required check to pass.
+8. Merge through the protected `main` branch and verify the post-merge `main` checks before tagging.
 
 ## Publish
 
 ```bash
-git tag vX.Y.Z
-git push origin main vX.Y.Z
+git fetch origin main
+git tag vX.Y.Z origin/main
+git push origin vX.Y.Z
+gh release create vX.Y.Z --verify-tag --generate-notes
 ```
 
-Create the GitHub release from the tag with user-facing notes. Mark beta or release-candidate builds as prereleases.
+Use reviewed user-facing notes instead of `--generate-notes` when the generated notes are insufficient. Mark beta or release-candidate builds as prereleases.
 
 ## Verify
 

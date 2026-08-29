@@ -19,7 +19,7 @@ uv run ruff check .
 uv run pytest -q
 ```
 
-The fast suite under `tests/` uses lightweight Home Assistant fakes. Run the real Home Assistant harness in an isolated Python 3.14 environment so it does not reuse the project's normal Python 3.11+ environment:
+The fast suite under `tests/` uses lightweight Home Assistant fakes. Run the real Home Assistant harness in an isolated Python 3.14 environment so it does not reuse the project's normal environment:
 
 ```bash
 uv run --isolated --python 3.14 --with-requirements requirements_test_ha.txt \

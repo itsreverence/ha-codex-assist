@@ -1,6 +1,6 @@
 # Codex hosted web-search contract spike
 
-Status: **fixture-backed implementation exists on the feature branch; live Codex-backend acceptance still requires a Codex Assist-owned OAuth grant.**
+Status: **released in v0.4.0 with fixture, real-Home-Assistant contract, and manual Home Assistant acceptance coverage. The standalone sanitized probe still requires a Codex Assist-owned OAuth grant.**
 
 Foundation checkpoint: `d8e2197` (`Harden Codex runtime contracts`)
 
@@ -69,12 +69,13 @@ Do not source that token from Codex CLI, an editor, or another assistant. The pr
 
 - Dry run succeeded and produced the fixed request payload.
 - Privacy/sanitization tests passed.
-- No integration-owned token exists in this checkout/session, so the live network request was **not** run.
+- No integration-owned token exists in the repository checkout, so the standalone live probe was **not** run.
 - No Codex CLI/editor credentials were inspected or copied.
+- The released Home Assistant path completed current-information search, rendered structured citations, and completed short and long spoken-response acceptance checks without a new integration error.
 
 ## Decision
 
-**Proceed with web search, but do not port the fork directly.** The implementation is small at the request seam, default-off, and coexists with HA tools in fixture and real-Home-Assistant contract tests. Before release or claiming backend compatibility, obtain one dedicated Codex Assist OAuth authorization and run the sanitized probe to establish:
+**Keep web search default-off and revalidate the observed contract when its request shape, supported models, or citation handling changes.** The implementation is small at the request seam and coexists with HA tools in fixture, real-Home-Assistant contract, and manual acceptance tests. A dedicated Codex Assist OAuth authorization remains the preferred way to run the standalone sanitized probe and establish:
 
 1. whether the ChatGPT Codex backend accepts `web_search` for supported models/plans;
 2. exact progress/output/annotation events it emits;

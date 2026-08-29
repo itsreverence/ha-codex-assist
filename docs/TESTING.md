@@ -19,10 +19,20 @@ uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt
 ```
 
 CI runs the fast suite plus pinned real-Home-Assistant contract lanes against
-Home Assistant 2026.8.3 and Home Assistant 2026.5.0, the minimum supported
+Home Assistant 2026.8.3 and Home Assistant 2026.6.0, the minimum supported
 version. Update the stable pins in `requirements_test_ha.txt` together when
 advancing that contract. Both lanes also run weekly to catch regressions without
 silently resolving a prerelease or a newly incompatible test harness mid-run.
+
+## Hosted-search compatibility
+
+When the hosted-search payload, model defaults, citation handling, or backend contract changes:
+
+1. Run `uv run python scripts/probe_web_search_contract.py --dry-run` and its tests.
+2. In Home Assistant, enable web search and ask a current-information question that requires search.
+3. Verify the displayed answer includes validated clickable citations and the spoken answer contains no raw URLs or source block.
+4. Verify a long spoken answer completes without a new Codex Assist or audio error.
+5. If an integration-owned OAuth token is available, run the sanitized live probe described in [the contract record](spikes/web-search-contract.md). Never borrow credentials from Codex CLI, an editor, or another assistant.
 
 ## Release-candidate install
 

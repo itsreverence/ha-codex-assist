@@ -178,9 +178,9 @@ class CodexClient:
                     f"Codex request failed with status {response.status_code}: {error.detail}"
                 )
 
-            pending_tool_call: dict[str, Any] | None = None
-            pending_arguments = ""
+            pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
             completed_tool_call_ids: set[str] = set()
+            anonymous_call_index = 0
             async for event in _aiter_sse_events(response):
                 event_type = event.get("type")
                 for citation in _citations_from_event(event):
@@ -188,30 +188,38 @@ class CodexClient:
                 if event_type == "response.output_item.added":
                     item = event.get("item")
                     if isinstance(item, dict) and item.get("type") == "function_call":
-                        pending_tool_call = item
-                        pending_arguments = str(item.get("arguments") or "")
+                        key = _function_call_item_key(item, event)
+                        if key is None:
+                            anonymous_call_index += 1
+                            key = f"anonymous-{anonymous_call_index}"
+                        pending_tool_calls[key] = (item, str(item.get("arguments") or ""))
                     continue
                 if event_type == "response.function_call_arguments.delta":
+                    key = _function_call_event_key(event, pending_tool_calls)
                     delta = event.get("delta")
-                    if isinstance(delta, str):
-                        pending_arguments += delta
+                    if key is not None and isinstance(delta, str):
+                        item, arguments = pending_tool_calls[key]
+                        pending_tool_calls[key] = (item, arguments + delta)
                     continue
                 if event_type == "response.function_call_arguments.done":
-                    arguments = event.get("arguments")
-                    if isinstance(arguments, str):
-                        pending_arguments = arguments
-                    if pending_tool_call is not None:
+                    key = _function_call_event_key(event, pending_tool_calls)
+                    if key is not None:
+                        pending_tool_call, pending_arguments = pending_tool_calls.pop(key)
+                        arguments = event.get("arguments")
+                        if isinstance(arguments, str):
+                            pending_arguments = arguments
                         tool_call = _tool_call_from_item(pending_tool_call, pending_arguments)
                         completed_tool_call_ids.add(tool_call.id)
                         yield CodexToolCallDelta(tool_call)
-                        pending_tool_call = None
-                        pending_arguments = ""
                     continue
                 if event_type == "response.output_item.done":
                     item = event.get("item")
                     call_id = ""
                     if isinstance(item, dict) and item.get("type") == "function_call":
                         call_id = str(item.get("call_id") or item.get("id") or "")
+                        key = _function_call_item_key(item, event)
+                        if key is not None:
+                            pending_tool_calls.pop(key, None)
                     if call_id and call_id in completed_tool_call_ids:
                         continue
                 delta = _stream_delta_from_event(event)
@@ -480,6 +488,40 @@ class CodexResponseError:
     code: str | None = None
 
 
+def _function_call_item_key(
+    item: dict[str, Any], event: dict[str, Any]
+) -> str | None:
+    for value in (
+        item.get("id"),
+        event.get("item_id"),
+        item.get("call_id"),
+        event.get("call_id"),
+    ):
+        if isinstance(value, str) and value:
+            return value
+    output_index = event.get("output_index")
+    if isinstance(output_index, int):
+        return f"output-{output_index}"
+    return None
+
+
+def _function_call_event_key(
+    event: dict[str, Any],
+    pending_tool_calls: dict[str, tuple[dict[str, Any], str]],
+) -> str | None:
+    for value in (event.get("item_id"), event.get("call_id")):
+        if isinstance(value, str) and value in pending_tool_calls:
+            return value
+    output_index = event.get("output_index")
+    if isinstance(output_index, int):
+        key = f"output-{output_index}"
+        if key in pending_tool_calls:
+            return key
+    if len(pending_tool_calls) == 1:
+        return next(iter(pending_tool_calls))
+    return None
+
+
 def extract_streamed_output_text(stream_text: str) -> str:
     return extract_streamed_turn_result(stream_text).text
 
@@ -488,8 +530,9 @@ def extract_streamed_turn_result(stream_text: str) -> CodexTurnResult:
     delta_parts: list[str] = []
     done_parts: list[str] = []
     tool_calls: list[CodexToolCall] = []
-    current_tool_call: dict[str, Any] | None = None
-    current_arguments = ""
+    pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
+    completed_tool_call_ids: set[str] = set()
+    anonymous_call_index = 0
 
     for event in _iter_sse_events(stream_text):
         event_type = event.get("type")
@@ -503,28 +546,42 @@ def extract_streamed_turn_result(stream_text: str) -> CodexTurnResult:
         if event_type == "response.output_item.added":
             item = event.get("item")
             if isinstance(item, dict) and item.get("type") == "function_call":
-                current_tool_call = item
-                current_arguments = str(item.get("arguments") or "")
+                key = _function_call_item_key(item, event)
+                if key is None:
+                    anonymous_call_index += 1
+                    key = f"anonymous-{anonymous_call_index}"
+                pending_tool_calls[key] = (item, str(item.get("arguments") or ""))
             continue
         if event_type == "response.function_call_arguments.delta":
+            key = _function_call_event_key(event, pending_tool_calls)
             delta = event.get("delta")
-            if isinstance(delta, str):
-                current_arguments += delta
+            if key is not None and isinstance(delta, str):
+                item, arguments = pending_tool_calls[key]
+                pending_tool_calls[key] = (item, arguments + delta)
             continue
         if event_type == "response.function_call_arguments.done":
-            arguments = event.get("arguments")
-            if isinstance(arguments, str):
-                current_arguments = arguments
-            if current_tool_call is not None:
-                tool_calls.append(_tool_call_from_item(current_tool_call, current_arguments))
-                current_tool_call = None
-                current_arguments = ""
+            key = _function_call_event_key(event, pending_tool_calls)
+            if key is not None:
+                current_tool_call, current_arguments = pending_tool_calls.pop(key)
+                arguments = event.get("arguments")
+                if isinstance(arguments, str):
+                    current_arguments = arguments
+                tool_call = _tool_call_from_item(current_tool_call, current_arguments)
+                completed_tool_call_ids.add(tool_call.id)
+                tool_calls.append(tool_call)
             continue
         if event_type == "response.output_item.done":
             item = event.get("item")
             if isinstance(item, dict):
                 if item.get("type") == "function_call":
-                    tool_calls.append(_tool_call_from_item(item, str(item.get("arguments") or "")))
+                    call_id = str(item.get("call_id") or item.get("id") or "")
+                    key = _function_call_item_key(item, event)
+                    if key is not None:
+                        pending_tool_calls.pop(key, None)
+                    if not call_id or call_id not in completed_tool_call_ids:
+                        tool_calls.append(
+                            _tool_call_from_item(item, str(item.get("arguments") or ""))
+                        )
                 else:
                     done_parts.append(extract_output_text({"output": [item]}))
 
