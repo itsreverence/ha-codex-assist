@@ -42,7 +42,7 @@ Codex Assist is included in HACS by default. You do not need to add this reposit
 - Streams replies while Codex is answering.
 - Reads and controls only the entities Home Assistant exposes to Assist.
 - Supports simple follow-up actions through Home Assistant's native Assist LLM API.
-- Can optionally use hosted web search. Search is off by default. Visible results keep validated source links in a separate card, while spoken responses omit raw URLs and source blocks.
+- Can optionally use hosted web search. Search is off by default. Visible results keep validated source links in a separate card, while the integration instructs the model to omit raw URLs and source blocks from spoken responses.
 
 ### AI Task
 

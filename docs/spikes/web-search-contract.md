@@ -82,7 +82,7 @@ The observed Home Assistant path now:
 1. accepts `web_search` on the tested model and account;
 2. preserves structured URL citations from the response stream;
 3. validates citation URLs before displaying them in a separate card;
-4. keeps raw URLs and generated source blocks out of spoken output;
+4. instructs the model to keep raw URLs and generated source blocks out of spoken output;
 5. keeps search disabled for schema-constrained AI Tasks.
 
 The standalone sanitized probe remains useful when the backend contract changes. It requires a dedicated Codex Assist OAuth authorization and should establish:
@@ -90,7 +90,7 @@ The standalone sanitized probe remains useful when the backend contract changes.
 1. the exact progress, output, and annotation events emitted by the current backend;
 2. unsupported-model and usage-limit error shapes;
 3. whether request fields still match the tested contract;
-4. whether citation display and citation-free speech still agree.
+4. whether citation display works and the model instruction to omit citations is honored in tested speech.
 
 Keep search opt-in. Never automatically turn Home Assistant state, attachments, location, or tool output into search queries.
 

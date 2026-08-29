@@ -42,7 +42,7 @@ flowchart LR
 3. Codex Assist sends the conversation to the Codex-compatible backend.
 4. If Codex requests a Home Assistant tool call, Codex Assist maps that request into Home Assistant's Assist LLM API.
 5. Home Assistant validates and executes the tool call using its normal exposed-entity controls.
-6. When hosted search is enabled, Codex Assist keeps validated citations in a displayed card and keeps raw URLs and source blocks out of spoken prose.
+6. When hosted search is enabled, Codex Assist keeps validated citations in a displayed card and instructs the model to keep raw URLs and source blocks out of spoken prose.
 7. Codex Assist returns the final response to Home Assistant.
 
 ## AI Task flow
