@@ -5,6 +5,6 @@ pytest-homeassistant-custom-component==0.13.336
 # Runtime requirements declared by Home Assistant 2026.6.0 for the
 # conversation and camera components exercised by these tests.
 hassil==3.5.0
-home-assistant-intents==2026.6.1
+home-assistant-intents==2026.8.25
 PyTurboJPEG==1.8.3
 voluptuous-openapi==0.3.0
