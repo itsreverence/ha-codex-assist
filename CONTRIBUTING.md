@@ -19,9 +19,11 @@ uv run ruff check .
 uv run pytest -q
 ```
 
-The fast suite under `tests/` uses lightweight Home Assistant fakes. Run the real Home Assistant harness in an isolated Python 3.14 environment so it does not reuse the project's normal environment:
+The fast suite under `tests/` uses lightweight Home Assistant fakes. Run both real Home Assistant contract environments in isolated Python 3.14 environments so they do not reuse the project's normal environment:
 
 ```bash
+uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt \
+  python -m pytest tests_ha -q
 uv run --isolated --python 3.14 --with-requirements requirements_test_ha.txt \
   python -m pytest tests_ha -q
 ```
@@ -35,7 +37,7 @@ Keep changes narrowly scoped and explain:
 - tests added or updated;
 - the commands you ran.
 
-Update user documentation when setup, options, compatibility, or safety behavior changes. Do not mix unrelated cleanup into a functional change.
+Update user documentation when setup, options, compatibility, or safety behavior changes. Replace stale screenshots in the same change when practical, and crop every public image so it contains no private hostnames, accounts, dashboards, entities, credentials, or device codes. Do not mix unrelated cleanup into a functional change.
 
 For live Home Assistant verification, see [docs/TESTING.md](docs/TESTING.md). Maintainers use [docs/RELEASING.md](docs/RELEASING.md) for releases.
 

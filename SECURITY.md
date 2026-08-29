@@ -21,13 +21,17 @@ Do not include raw access tokens, refresh tokens, device codes, cookies, full Ho
 
 ## Security stance
 
-Codex Assist uses Home Assistant's normal Assist LLM API and exposed-entity controls. It should not add a custom raw service-call bridge or bypass Home Assistant's Assist exposure model.
+Codex Assist uses Home Assistant's normal Assist LLM API and exposed-entity controls. It does not add a custom raw service-call bridge or bypass Home Assistant's Assist exposure model.
 
-![Codex Assist safety model](assets/codex-assist-safety-model.png)
+The diagram below covers the device-control path. Hosted search and AI Task have separate data paths described after it.
 
-The important boundary is: Codex / ChatGPT may request an action, but Codex Assist must route that request through Home Assistant's Assist LLM API. Home Assistant then limits execution to the entities exposed to Assist.
+![Codex Assist device-control safety model](assets/codex-assist-safety-model.png)
 
-Hosted web search is disabled by default. When enabled, the Codex backend may use the current model turn—including the conversation context already supplied for Assist—to formulate a search. Codex Assist does not add a separate location feed or bypass Home Assistant's exposed-entity boundary. Citation links are accepted only from structured backend annotations and must use validated HTTP(S) URLs before they are displayed.
+Codex or ChatGPT may request an action, but Codex Assist routes that request through Home Assistant's Assist LLM API. Home Assistant limits execution to the entities exposed to Assist.
+
+Hosted web search is disabled by default. When enabled, the Codex backend may use the current model turn, including the conversation context already supplied for Assist, to formulate a search. Codex Assist does not add a separate location feed or bypass Home Assistant's exposed-entity boundary. Citation links are accepted only from structured backend annotations and must use validated HTTP(S) URLs before they are displayed.
+
+AI Task prompts and supported image attachments are sent to the Codex backend when you run those tasks. Attachment handling is limited to image files, at most four files, 10 MiB per file, and 20 MiB total. Generated images are returned through Home Assistant's native AI Task result type. Structured tasks keep hosted web search disabled so citation text cannot corrupt schema-constrained output.
 
 ## Entity exposure guidance
 

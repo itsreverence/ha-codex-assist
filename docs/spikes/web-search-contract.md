@@ -75,13 +75,23 @@ Do not source that token from Codex CLI, an editor, or another assistant. The pr
 
 ## Decision
 
-**Keep web search default-off and revalidate the observed contract when its request shape, supported models, or citation handling changes.** The implementation is small at the request seam and coexists with HA tools in fixture, real-Home-Assistant contract, and manual acceptance tests. A dedicated Codex Assist OAuth authorization remains the preferred way to run the standalone sanitized probe and establish:
+**Keep web search off by default and revalidate the observed contract when its request shape, supported models, or citation handling changes.** The released implementation adds the tool at the existing request seam and coexists with Home Assistant tools in fixture, real-Home-Assistant contract, and manual acceptance tests.
 
-1. whether the ChatGPT Codex backend accepts `web_search` for supported models/plans;
-2. exact progress/output/annotation events it emits;
-3. unsupported-model and usage-limit error shapes;
-4. whether URL citations can be converted into visible HA chat links while the TTS path receives citation-free speech.
+The observed Home Assistant path now:
 
-If live evidence matches the first-party contract, add an explicit citation delta/result type in `CodexClient`, preserve citations for displayed Assist/AI Task output, and clean only the TTS rendering. Keep search opt-in and never automatically turn HA state, attachments, or tool output into search queries.
+1. accepts `web_search` on the tested model and account;
+2. preserves structured URL citations from the response stream;
+3. validates citation URLs before displaying them in a separate card;
+4. keeps raw URLs and generated source blocks out of spoken output;
+5. keeps search disabled for schema-constrained AI Tasks.
 
-Do not hard-code a presumed HTTP status, error code, or retry rule for unsupported models. Classify capability, authentication, quota, and transient failures only from an observed HTTP/SSE payload, and retain the integration's existing bounded retry policy for genuinely transient failures.
+The standalone sanitized probe remains useful when the backend contract changes. It requires a dedicated Codex Assist OAuth authorization and should establish:
+
+1. the exact progress, output, and annotation events emitted by the current backend;
+2. unsupported-model and usage-limit error shapes;
+3. whether request fields still match the tested contract;
+4. whether citation display and citation-free speech still agree.
+
+Keep search opt-in. Never automatically turn Home Assistant state, attachments, location, or tool output into search queries.
+
+Do not hard-code a presumed HTTP status, error code, or retry rule for unsupported models. Classify capability, authentication, quota, and transient failures only from an observed HTTP or SSE payload. Retain the integration's bounded retry policy for genuinely transient failures.

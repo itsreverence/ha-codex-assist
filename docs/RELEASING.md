@@ -27,6 +27,7 @@ This checklist is for maintainers.
 6. Run all checks in [TESTING.md](TESTING.md).
 7. Commit the scoped release change, open a pull request, and wait for every required check to pass.
 8. Merge through the protected `main` branch and verify the post-merge `main` checks before tagging.
+9. If the release changes user-facing behavior, publish the matching wiki updates after the reviewed repository docs and screenshots are on `main`. Open every changed wiki page once to confirm its links and images resolve.
 
 ## Publish
 
