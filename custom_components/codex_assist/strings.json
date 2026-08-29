@@ -3,16 +3,12 @@
     "step": {
       "user": {
         "title": "Codex Assist",
-        "description": "Set the default model and prompt. Setup will then show a Codex sign-in code for your ChatGPT/Codex account.",
+        "description": "Choose the default chat model. Setup will then show a Codex sign-in code for your ChatGPT/Codex account.",
         "data": {
-          "model": "Chat model",
-          "image_model": "Image quality",
-          "image_size": "Image size",
-          "prompt": "System prompt",
-          "reasoning_effort": "Reasoning effort",
-          "reasoning_summary": "Reasoning summary",
-          "text_verbosity": "Text verbosity",
-          "web_search": "Enable hosted web search"
+          "model": "Chat model"
+        },
+        "data_description": {
+          "model": "The model used for Assist conversations and AI Task requests."
         }
       },
       "device": {
@@ -25,17 +21,7 @@
       },
       "reconfigure": {
         "title": "Reconfigure Codex Assist",
-        "description": "Update Codex Assist settings and sign in again with your ChatGPT/Codex account using a new device code.",
-        "data": {
-          "model": "Chat model",
-          "image_model": "Image quality",
-          "image_size": "Image size",
-          "prompt": "System prompt",
-          "reasoning_effort": "Reasoning effort",
-          "reasoning_summary": "Reasoning summary",
-          "text_verbosity": "Text verbosity",
-          "web_search": "Enable hosted web search"
-        }
+        "description": "Sign in again with your ChatGPT/Codex account. Your Codex Assist options will stay unchanged."
       }
     },
     "abort": {
@@ -53,16 +39,43 @@
     "step": {
       "init": {
         "title": "Codex Assist options",
-        "description": "Adjust chat response settings first, then image defaults. Codex Assist uses Home Assistant's normal Assist LLM control tools and respects Home Assistant's exposed-entity settings.",
-        "data": {
-          "model": "Chat model",
-          "image_model": "Image quality",
-          "image_size": "Image size",
-          "prompt": "System prompt",
-          "reasoning_effort": "Reasoning effort",
-          "reasoning_summary": "Reasoning summary",
-          "text_verbosity": "Text verbosity",
-          "web_search": "Enable hosted web search"
+        "description": "Start with the everyday settings. Advanced chat and image-generation defaults stay collapsed until you need them. Device control still follows Home Assistant's Assist exposed-entity settings.",
+        "sections": {
+          "chat_settings": {
+            "name": "Everyday settings",
+            "data": {
+              "model": "Chat model",
+              "text_verbosity": "Response length",
+              "web_search": "Enable hosted web search"
+            },
+            "data_description": {
+              "model": "The model used for Assist conversations and AI Task requests.",
+              "text_verbosity": "How concise or detailed normal text and voice responses should be.",
+              "web_search": "Allow the model to search the web for current information. Search is off by default."
+            }
+          },
+          "advanced_settings": {
+            "name": "Advanced chat settings",
+            "data": {
+              "prompt": "System prompt",
+              "reasoning_effort": "Reasoning effort"
+            },
+            "data_description": {
+              "prompt": "Standing instructions applied to Assist conversations.",
+              "reasoning_effort": "How much reasoning supported models should use before answering."
+            }
+          },
+          "image_settings": {
+            "name": "Image-generation defaults",
+            "data": {
+              "image_model": "Image quality",
+              "image_size": "Image size"
+            },
+            "data_description": {
+              "image_model": "Default quality for images created through Home Assistant AI Task.",
+              "image_size": "Default shape and resolution for generated images."
+            }
+          }
         }
       }
     }

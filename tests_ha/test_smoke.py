@@ -30,6 +30,11 @@ from custom_components.codex_assist.codex_client import (
     CodexToolCall,
     CodexToolCallDelta,
 )
+from custom_components.codex_assist.config_flow import (
+    SECTION_ADVANCED_SETTINGS,
+    SECTION_CHAT_SETTINGS,
+    SECTION_IMAGE_SETTINGS,
+)
 from custom_components.codex_assist.diagnostics import (
     REDACTED,
     async_get_config_entry_diagnostics,
@@ -256,18 +261,28 @@ async def test_options_flow_uses_real_home_assistant_contract(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "init"
+    assert [key.schema for key in result["data_schema"].schema] == [
+        SECTION_CHAT_SETTINGS,
+        SECTION_ADVANCED_SETTINGS,
+        SECTION_IMAGE_SETTINGS,
+    ]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            "model": "gpt-5.4",
-            "prompt": "Keep it short.",
-            "reasoning_effort": "low",
-            "reasoning_summary": "auto",
-            "text_verbosity": "low",
-            "web_search": True,
-            "image_model": "gpt-image-2-medium",
-            "image_size": "1024x1024",
+            SECTION_CHAT_SETTINGS: {
+                "model": "gpt-5.4",
+                "text_verbosity": "low",
+                "web_search": True,
+            },
+            SECTION_ADVANCED_SETTINGS: {
+                "prompt": "Keep it short.",
+                "reasoning_effort": "low",
+            },
+            SECTION_IMAGE_SETTINGS: {
+                "image_model": "gpt-image-2-medium",
+                "image_size": "1024x1024",
+            },
         },
     )
 

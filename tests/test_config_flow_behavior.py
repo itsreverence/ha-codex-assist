@@ -55,7 +55,7 @@ async def test_config_flow_requests_device_code_before_showing_pairing_form(
     auth = FakeAuthClient()
     flow._auth_client = lambda: auth
 
-    result = await flow.async_step_user({"model": "gpt-5.4", "prompt": "Be concise."})
+    result = await flow.async_step_user({"model": "gpt-5.4"})
 
     assert auth.requested == 1
     assert result["type"] == "form"
@@ -76,7 +76,7 @@ async def test_config_flow_creates_entry_only_after_device_token_exchange(
     flow = config_flow_module.CodexAssistConfigFlow()
     auth = FakeAuthClient()
     flow._auth_client = lambda: auth
-    flow._setup_input = {"model": "gpt-5.4", "prompt": "Be concise."}
+    flow._setup_input = {"model": "gpt-5.4"}
     flow._device_code = auth.device_code
     flow.source = "user"
 
@@ -91,7 +91,6 @@ async def test_config_flow_creates_entry_only_after_device_token_exchange(
         "title": "Codex Assist",
         "data": {
             "model": "gpt-5.4",
-            "prompt": "Be concise.",
             "access_token": "access-1",
             "refresh_token": "refresh-1",
         },
@@ -146,14 +145,23 @@ def _schema_defaults(data_schema) -> dict[str, object]:
     }
 
 
+def _section_defaults(data_schema, section_name) -> dict[str, object]:
+    sections = {
+        field.key: validator
+        for field, validator in data_schema.schema.items()
+    }
+    return _schema_defaults(sections[section_name].schema)
+
+
 def test_web_search_option_is_default_off_and_preserves_opt_in(config_flow_module):
     default_schema = config_flow_module._settings_schema({}, model_options=["gpt-5.4"])
     enabled_schema = config_flow_module._settings_schema(
         {"web_search": True}, model_options=["gpt-5.4"]
     )
 
-    assert _schema_defaults(default_schema)["web_search"] is False
-    assert _schema_defaults(enabled_schema)["web_search"] is True
+    section_name = config_flow_module.SECTION_CHAT_SETTINGS
+    assert _section_defaults(default_schema, section_name)["web_search"] is False
+    assert _section_defaults(enabled_schema, section_name)["web_search"] is True
 
 
 def _reconfigure_entry(**overrides):
@@ -176,7 +184,7 @@ def _reconfigure_entry(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_reconfigure_shows_form_prefilled_from_entry(config_flow_module):
+async def test_reconfigure_only_asks_user_to_sign_in_again(config_flow_module):
     flow = config_flow_module.CodexAssistConfigFlow()
     flow.source = "reconfigure"
     flow.reconfigure_entry = _reconfigure_entry()
@@ -185,16 +193,7 @@ async def test_reconfigure_shows_form_prefilled_from_entry(config_flow_module):
 
     assert result["type"] == "form"
     assert result["step_id"] == "reconfigure"
-    assert _schema_defaults(result["data_schema"]) == {
-        "model": "gpt-5.4",
-        "prompt": "Saved prompt.",
-        "reasoning_effort": "high",
-        "reasoning_summary": "detailed",
-        "text_verbosity": "low",
-        "web_search": True,
-        "image_model": "gpt-image-2-high",
-        "image_size": "1536x1024",
-    }
+    assert _schema_defaults(result["data_schema"]) == {}
 
 
 @pytest.mark.asyncio
@@ -204,16 +203,7 @@ async def test_reconfigure_updates_existing_entry_after_device_token_exchange(
     flow = config_flow_module.CodexAssistConfigFlow()
     auth = FakeAuthClient()
     flow._auth_client = lambda: auth
-    flow._setup_input = {
-        "model": "gpt-5.4",
-        "prompt": "Updated prompt.",
-        "reasoning_effort": "medium",
-        "reasoning_summary": "auto",
-        "text_verbosity": "medium",
-        "web_search": True,
-        "image_model": "gpt-image-2-medium",
-        "image_size": "1024x1024",
-    }
+    flow._setup_input = {}
     flow._device_code = auth.device_code
     flow.source = "reconfigure"
     flow.reconfigure_entry = _reconfigure_entry()
@@ -224,14 +214,6 @@ async def test_reconfigure_updates_existing_entry_after_device_token_exchange(
     assert result["reason"] == "reconfigure_successful"
     assert result["entry"] is flow.reconfigure_entry
     assert result["data_updates"] == {
-        "model": "gpt-5.4",
-        "prompt": "Updated prompt.",
-        "reasoning_effort": "medium",
-        "reasoning_summary": "auto",
-        "text_verbosity": "medium",
-        "web_search": True,
-        "image_model": "gpt-image-2-medium",
-        "image_size": "1024x1024",
         "access_token": "access-1",
         "refresh_token": "refresh-1",
     }
@@ -250,29 +232,9 @@ async def test_reconfigure_device_code_request_failure_shows_error(config_flow_m
     flow.source = "reconfigure"
     flow.reconfigure_entry = _reconfigure_entry()
 
-    result = await flow.async_step_reconfigure(
-        {
-            "model": "gpt-5.4",
-            "prompt": "Updated prompt.",
-            "reasoning_effort": "medium",
-            "reasoning_summary": "auto",
-            "text_verbosity": "medium",
-            "web_search": True,
-            "image_model": "gpt-image-2-medium",
-            "image_size": "1024x1024",
-        }
-    )
+    result = await flow.async_step_reconfigure({})
 
     assert result["type"] == "form"
     assert result["step_id"] == "reconfigure"
     assert result["errors"] == {"base": "device_code_request_failed"}
-    assert _schema_defaults(result["data_schema"]) == {
-        "model": "gpt-5.4",
-        "prompt": "Saved prompt.",
-        "reasoning_effort": "high",
-        "reasoning_summary": "detailed",
-        "text_verbosity": "low",
-        "web_search": True,
-        "image_model": "gpt-image-2-high",
-        "image_size": "1536x1024",
-    }
+    assert _schema_defaults(result["data_schema"]) == {}

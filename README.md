@@ -53,10 +53,10 @@ Codex Assist is included in HACS by default. You do not need to add this reposit
 
 ### Options
 
-Choose the model, system prompt, reasoning effort, reasoning summary, text verbosity, hosted web search, image quality, and image size from the integration options flow.
+The options flow keeps **Everyday settings** open and leaves **Advanced chat settings** and **Image-generation defaults** collapsed until needed. Everyday controls include the chat model, response length, and hosted web search. Advanced controls hold the system prompt and reasoning effort.
 
 <p align="center">
-  <img src="assets/codex-assist-options.png" alt="Codex Assist options for model, reasoning, web search, and image generation" width="430">
+  <img src="assets/codex-assist-settings-overview.png" alt="Diagram of Codex Assist settings grouped into everyday, advanced chat, and image-generation sections" width="620">
 </p>
 
 <p align="center">

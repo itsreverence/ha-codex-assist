@@ -13,6 +13,7 @@ def install_homeassistant_fakes(monkeypatch):
     conversation = types.ModuleType("homeassistant.components.conversation")
     ai_task = types.ModuleType("homeassistant.components.ai_task")
     config_entries = types.ModuleType("homeassistant.config_entries")
+    data_entry_flow = types.ModuleType("homeassistant.data_entry_flow")
     const = types.ModuleType("homeassistant.const")
     core = types.ModuleType("homeassistant.core")
     exceptions = types.ModuleType("homeassistant.exceptions")
@@ -140,6 +141,14 @@ def install_homeassistant_fakes(monkeypatch):
     class SelectSelector:
         config: SelectSelectorConfig
 
+    class Section:
+        def __init__(self, schema, options=None):
+            self.schema = schema
+            self.options = {"collapsed": False, **(options or {})}
+
+        def __call__(self, value):
+            return self.schema(value)
+
     class Schema:
         def __init__(self, schema):
             self.schema = schema
@@ -165,11 +174,15 @@ def install_homeassistant_fakes(monkeypatch):
                 and self.default == other.default
             )
 
+    class Required(Optional):
+        pass
+
     config_entries.ConfigFlow = ConfigFlow
     config_entries.ConfigEntry = ConfigEntry
     config_entries.OptionsFlow = OptionsFlow
     config_entries.SOURCE_REAUTH = "reauth"
     config_entries.SOURCE_RECONFIGURE = "reconfigure"
+    data_entry_flow.section = Section  # type: ignore[attr-defined]
     conversation.AbstractConversationAgent = AbstractConversationAgent
     conversation.AssistantContent = AssistantContent
     conversation.AssistantContentDeltaDict = dict
@@ -213,9 +226,11 @@ def install_homeassistant_fakes(monkeypatch):
     vol.Invalid = Invalid
     vol.Schema = Schema
     vol.Optional = Optional
+    vol.Required = Required  # type: ignore[attr-defined]
 
     ha.components = components
     ha.config_entries = config_entries
+    ha.data_entry_flow = data_entry_flow  # type: ignore[attr-defined]
     components.conversation = conversation
     components.ai_task = ai_task
     helpers.entity_platform = entity_platform
@@ -231,6 +246,7 @@ def install_homeassistant_fakes(monkeypatch):
         "homeassistant.components.ai_task": ai_task,
         "homeassistant.components.conversation": conversation,
         "homeassistant.config_entries": config_entries,
+        "homeassistant.data_entry_flow": data_entry_flow,
         "homeassistant.const": const,
         "homeassistant.core": core,
         "homeassistant.exceptions": exceptions,
