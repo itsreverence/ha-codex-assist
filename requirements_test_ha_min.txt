@@ -1,5 +1,5 @@
 # Minimum supported Home Assistant contract (Python 3.14+).
-homeassistant==2026.6.0
+homeassistant==2026.8.3
 pytest-homeassistant-custom-component==0.13.336
 
 # Runtime requirements declared by Home Assistant 2026.6.0 for the
