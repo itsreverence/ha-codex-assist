@@ -4,7 +4,25 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      python-runtime:
+        patterns:
+          - "*"
+    # These define the oldest/current Home Assistant contract lanes and must be
+    # advanced together with docs and real-HA tests, not as independent bumps.
+    ignore:
+      - dependency-name: homeassistant
+      - dependency-name: pytest-homeassistant-custom-component
+      - dependency-name: hassil
+      - dependency-name: home-assistant-intents
+      - dependency-name: PyTurboJPEG
+      - dependency-name: voluptuous-openapi
+      - dependency-name: gazetteer-matcher
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      ci-actions:
+        patterns:
+          - "*"
