@@ -1,6 +1,6 @@
 # Minimum supported Home Assistant contract (Python 3.14+).
 homeassistant==2026.6.0
-pytest-homeassistant-custom-component==0.13.336
+pytest-homeassistant-custom-component==0.13.357
 
 # Runtime requirements declared by Home Assistant 2026.6.0 for the
 # conversation and camera components exercised by these tests.
