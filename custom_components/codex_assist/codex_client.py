@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -68,7 +69,14 @@ class CodexCitationDelta:
     citation: CodexCitation
 
 
-CodexStreamDelta = CodexTextDelta | CodexToolCallDelta | CodexCitationDelta
+@dataclass(frozen=True)
+class CodexResponseItemDelta:
+    item: dict[str, Any]
+
+
+CodexStreamDelta = (
+    CodexTextDelta | CodexToolCallDelta | CodexCitationDelta | CodexResponseItemDelta
+)
 
 
 class CodexClient:
@@ -214,6 +222,8 @@ class CodexClient:
                     continue
                 if event_type == "response.output_item.done":
                     item = event.get("item")
+                    if isinstance(item, dict):
+                        yield CodexResponseItemDelta(copy.deepcopy(item))
                     call_id = ""
                     if isinstance(item, dict) and item.get("type") == "function_call":
                         call_id = str(item.get("call_id") or item.get("id") or "")

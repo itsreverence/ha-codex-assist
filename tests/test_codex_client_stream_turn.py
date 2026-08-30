@@ -7,6 +7,7 @@ from custom_components.codex_assist.codex_client import (
     CodexCitationDelta,
     CodexClient,
     CodexRateLimitError,
+    CodexResponseItemDelta,
     CodexTextDelta,
     CodexToolCallDelta,
 )
@@ -408,3 +409,55 @@ async def test_stream_turn_raises_for_incomplete_stream_event():
             input_items=[{"role": "user", "content": "hello"}],
         ):
             pass
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_preserves_completed_response_items_exactly():
+    output_items = [
+        {
+            "id": "rs_1",
+            "type": "reasoning",
+            "encrypted_content": "encrypted-state",
+            "summary": [],
+        },
+        {
+            "id": "fc_1",
+            "type": "function_call",
+            "call_id": "call-1",
+            "name": "HassTurnOn",
+            "arguments": '{"name":"Kitchen"}',
+            "status": "completed",
+        },
+        {
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "phase": "final_answer",
+            "content": [{"type": "output_text", "text": "Done.", "annotations": []}],
+            "status": "completed",
+        },
+    ]
+    response = FakeStreamResponse(
+        200,
+        sum(
+            (
+                _event({"type": "response.output_item.done", "item": item})
+                for item in output_items
+            ),
+            [],
+        ),
+    )
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    deltas = [
+        delta
+        async for delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Use tools.",
+            input_items=[{"role": "user", "content": "turn on kitchen"}],
+        )
+    ]
+
+    assert [
+        delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)
+    ] == output_items
