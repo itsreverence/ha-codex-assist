@@ -246,7 +246,9 @@ def _settings_schema(
                         vol.Optional(
                             CONF_PROMPT,
                             default=defaults.get(CONF_PROMPT, DEFAULT_PROMPT),
-                        ): str,
+                        ): selector.TextSelector(
+                            selector.TextSelectorConfig(multiline=True)
+                        ),
                         vol.Optional(
                             CONF_REASONING_EFFORT,
                             default=defaults.get(
