@@ -330,8 +330,24 @@ async def test_ai_task_uses_one_tools_disabled_turn_after_five_tool_rounds(
 
     monkeypatch.setattr(ai_task_module, "_stream_codex_turn_into_chat_log", stream_turn)
 
+    tool = type(
+        "Tool",
+        (),
+        {
+            "name": "HassTurnOn",
+            "description": "Turn on an exposed Home Assistant entity.",
+            "parameters": ai_task_module.vol.Schema({}),
+        },
+    )()
+    llm_api = type(
+        "LLMApi",
+        (),
+        {"tools": [tool], "custom_serializer": None},
+    )()
     chat_log = type(
-        "ChatLog", (), {"unresponded_tool_results": True, "content": [], "llm_api": None}
+        "ChatLog",
+        (),
+        {"unresponded_tool_results": True, "content": [], "llm_api": llm_api},
     )()
     await ai_task_module._run_codex_ai_task_chat_log(
         hass=object(),
@@ -349,4 +365,5 @@ async def test_ai_task_uses_one_tools_disabled_turn_after_five_tool_rounds(
     )
 
     assert [call["allow_tools"] for call in calls] == [True, True, True, True, True, False]
-    assert all(call["tools"] == [] for call in calls)
+    assert [bool(call["tools"]) for call in calls] == [True, True, True, True, True, False]
+    assert all(call["tools"][0]["name"] == "HassTurnOn" for call in calls[:5])
