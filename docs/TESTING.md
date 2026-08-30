@@ -32,7 +32,16 @@ When the hosted-search payload, model defaults, citation handling, or backend co
 2. In Home Assistant, enable web search and ask a current-information question that requires search.
 3. Verify the displayed answer includes validated clickable citations and the spoken answer contains no raw URLs or source block.
 4. Verify a long spoken answer completes without a new Codex Assist or audio error.
-5. If an integration-owned OAuth token is available, run the sanitized live probe described in [the contract record](spikes/web-search-contract.md). Never borrow credentials from Codex CLI, an editor, or another assistant.
+5. If an integration-owned OAuth token is available, run the sanitized live probe:
+
+   ```bash
+   CODEX_ASSIST_ACCESS_TOKEN='[ephemeral integration-owned token]' \
+     uv run python scripts/probe_web_search_contract.py
+   ```
+
+   The probe emits event names and key shapes, not response text, search queries,
+   URLs, identifiers, or credentials. Never borrow credentials from Codex CLI,
+   an editor, or another assistant.
 
 ## Release-candidate install
 

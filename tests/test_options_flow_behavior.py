@@ -109,6 +109,45 @@ def test_options_schema_groups_everyday_advanced_and_image_controls(monkeypatch)
     assert "safety_mode" not in all_fields
 
 
+@pytest.mark.asyncio
+async def test_options_flow_uses_multiline_prompt_selector_and_preserves_markdown(
+    monkeypatch,
+):
+    install_homeassistant_fakes(monkeypatch)
+    module = importlib.reload(
+        importlib.import_module("custom_components.codex_assist.config_flow")
+    )
+    prompt = "# House rules\n\n- **Never** unlock doors.\n- Reply concisely."
+    schema = module._settings_schema({}, model_options=["gpt-5.4"])
+    prompt_selector = _section_fields(schema, module.SECTION_ADVANCED_SETTINGS)[
+        module.CONF_PROMPT
+    ]
+    flow = module.CodexAssistOptionsFlow()
+    flow.config_entry = SimpleNamespace(data={}, options={})
+
+    result = await flow.async_step_init(
+        {
+            module.SECTION_CHAT_SETTINGS: {
+                "model": "gpt-5.4",
+                "text_verbosity": "medium",
+                "web_search": False,
+            },
+            module.SECTION_ADVANCED_SETTINGS: {
+                "prompt": prompt,
+                "reasoning_effort": "low",
+            },
+            module.SECTION_IMAGE_SETTINGS: {
+                "image_model": "gpt-image-2-medium",
+                "image_size": "1024x1024",
+            },
+        }
+    )
+
+    assert isinstance(prompt_selector, module.selector.TextSelector)
+    assert prompt_selector.config.multiline is True
+    assert result["data"][module.CONF_PROMPT] == prompt
+
+
 def test_section_input_is_flattened_for_existing_runtime_settings(monkeypatch):
     install_homeassistant_fakes(monkeypatch)
     module = importlib.reload(

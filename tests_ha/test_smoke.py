@@ -16,7 +16,7 @@ from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import llm
+from homeassistant.helpers import llm, selector
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -31,6 +31,7 @@ from custom_components.codex_assist.codex_client import (
     CodexToolCallDelta,
 )
 from custom_components.codex_assist.config_flow import (
+    CONF_PROMPT,
     SECTION_ADVANCED_SETTINGS,
     SECTION_CHAT_SETTINGS,
     SECTION_IMAGE_SETTINGS,
@@ -266,6 +267,19 @@ async def test_options_flow_uses_real_home_assistant_contract(
         SECTION_ADVANCED_SETTINGS,
         SECTION_IMAGE_SETTINGS,
     ]
+    advanced_section = next(
+        value
+        for key, value in result["data_schema"].schema.items()
+        if key.schema == SECTION_ADVANCED_SETTINGS
+    )
+    prompt_selector = next(
+        value
+        for key, value in advanced_section.schema.schema.items()
+        if key.schema == CONF_PROMPT
+    )
+    assert isinstance(prompt_selector, selector.TextSelector)
+    assert prompt_selector.config["multiline"] is True
+    prompt = "# House rules\n\n- **Never** unlock doors.\n- Reply concisely."
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -276,7 +290,7 @@ async def test_options_flow_uses_real_home_assistant_contract(
                 "web_search": True,
             },
             SECTION_ADVANCED_SETTINGS: {
-                "prompt": "Keep it short.",
+                "prompt": prompt,
                 "reasoning_effort": "low",
             },
             SECTION_IMAGE_SETTINGS: {
@@ -289,7 +303,7 @@ async def test_options_flow_uses_real_home_assistant_contract(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["text_verbosity"] == "low"
     assert result["data"]["web_search"] is True
-    assert entry.options["prompt"] == "Keep it short."
+    assert entry.options["prompt"] == prompt
 
 
 def test_structured_output_uses_real_home_assistant_schema_converter() -> None:
