@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -143,7 +143,8 @@ class CodexAssistConversationEntity(
 
         codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
         try:
-            for _iteration in range(MAX_TOOL_ITERATIONS):
+            for _iteration in range(MAX_TOOL_ITERATIONS + 1):
+                allow_tools = _iteration < MAX_TOOL_ITERATIONS
                 try:
                     tool_call_requested = await _stream_codex_turn_into_chat_log(
                         chat_log=chat_log,
@@ -154,10 +155,15 @@ class CodexAssistConversationEntity(
                             chat_log, prompt, web_search=web_search
                         ),
                         input_items=await _codex_input_from_chat_log(self.hass, chat_log),
-                        tools=_codex_tools_from_chat_log(chat_log, enable_web_search=web_search),
+                        tools=(
+                            _codex_tools_from_chat_log(chat_log, enable_web_search=web_search)
+                            if allow_tools
+                            else []
+                        ),
                         reasoning_effort=reasoning_effort,
                         reasoning_summary=reasoning_summary,
                         text_verbosity=text_verbosity,
+                        allow_tools=allow_tools,
                         citation_sink=citations,
                     )
                 except CodexAuthenticationError as err:
@@ -197,12 +203,15 @@ class CodexAssistConversationEntity(
                                 chat_log, prompt, web_search=web_search
                             ),
                             input_items=await _codex_input_from_chat_log(self.hass, chat_log),
-                            tools=_codex_tools_from_chat_log(
-                                chat_log, enable_web_search=web_search
+                            tools=(
+                                _codex_tools_from_chat_log(chat_log, enable_web_search=web_search)
+                                if allow_tools
+                                else []
                             ),
                             reasoning_effort=reasoning_effort,
                             reasoning_summary=reasoning_summary,
                             text_verbosity=text_verbosity,
+                            allow_tools=allow_tools,
                             citation_sink=citations,
                         )
                     except CodexAuthenticationError as retry_err:
@@ -260,6 +269,22 @@ def _request_failure_text(err: BaseException) -> str:
     return request_failure_text("Codex Assist failed", err)
 
 
+async def _run_tool_rounds(
+    *,
+    max_tool_rounds: int,
+    run_iteration: Callable[[int, bool], Awaitable[bool]],
+) -> None:
+    """Run bounded tool rounds, then exactly one tools-disabled final turn."""
+    for round_number in range(1, max_tool_rounds + 1):
+        if not await run_iteration(round_number, True):
+            return
+    LOGGER.info(
+        "Codex Assist exhausted %d tool-capable rounds; forcing final synthesis",
+        max_tool_rounds,
+    )
+    await run_iteration(max_tool_rounds + 1, False)
+
+
 async def _stream_codex_turn_into_chat_log(
     *,
     chat_log: conversation.ChatLog,
@@ -273,6 +298,7 @@ async def _stream_codex_turn_into_chat_log(
     reasoning_summary: str,
     text_verbosity: str,
     text_format: dict[str, Any] | None = None,
+    allow_tools: bool = True,
     citation_sink: list[CodexCitation] | None = None,
 ) -> bool:
     tool_call_requested = False
@@ -295,6 +321,7 @@ async def _stream_codex_turn_into_chat_log(
                 text_format=text_format,
             ),
             on_tool_call=mark_tool_call_requested,
+            allow_tools=allow_tools,
             citation_sink=citation_sink,
         ),
     ):
@@ -306,6 +333,7 @@ async def _codex_stream_to_assistant_deltas(
     stream: AsyncIterator[CodexStreamDelta],
     *,
     on_tool_call: Callable[[], None] | None = None,
+    allow_tools: bool = True,
     citation_sink: list[CodexCitation] | None = None,
 ) -> AsyncIterator[AssistantContentDeltaDict]:
     started = False
@@ -326,6 +354,10 @@ async def _codex_stream_to_assistant_deltas(
         if isinstance(delta, CodexTextDelta):
             yield {"content": delta.text}
         elif isinstance(delta, CodexToolCallDelta):
+            if not allow_tools:
+                raise RuntimeError(
+                    "Codex Assist final synthesis returned a tool call while tools are disabled"
+                )
             if on_tool_call is not None:
                 on_tool_call()
             yield {
