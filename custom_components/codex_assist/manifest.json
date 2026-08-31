@@ -7,5 +7,5 @@
   "documentation": "https://github.com/itsreverence/ha-codex-assist",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/itsreverence/ha-codex-assist/issues",
-  "version": "0.4.2"
+  "version": "0.4.3-rc.1"
 }
