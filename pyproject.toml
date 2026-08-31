@@ -1,6 +1,6 @@
 [project]
 name = "ha-codex-assist"
-version = "0.4.3-rc.1"
+version = "0.4.3"
 description = "Home Assistant Assist conversation agent backed by OpenAI Codex OAuth"
 readme = "README.md"
 requires-python = ">=3.14"
