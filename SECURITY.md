@@ -33,7 +33,7 @@ Hosted web search is disabled by default. When enabled, the Codex backend may us
 
 AI Task prompts and supported image attachments are sent to the Codex backend when you run those tasks. Attachment handling is limited to image files, at most four files, 10 MiB per file, and 20 MiB total. Generated images are returned through Home Assistant's native AI Task result type. Structured tasks keep hosted web search disabled so citation text cannot corrupt schema-constrained output.
 
-Stateless Assist conversations may retain completed provider output items, including encrypted reasoning state, in Home Assistant's in-memory chat log so they can be replayed to the same backend on later turns. Codex Assist does not decrypt this state or add it to integration diagnostics or persistent configuration. Native state is deep-copy isolated and redacted from normal debug formatting, delta listeners, and conversation trace serialization. Treat Home Assistant process memory and backups as sensitive even though this integration does not add a persistence path for native transcript state.
+Stateless Assist conversations may retain completed provider output items, including encrypted reasoning state, in Home Assistant's in-memory chat log so they can be replayed to the same backend on later turns. Codex Assist does not decrypt this state or add it to integration diagnostics or persistent configuration. Native state is deep-copy isolated and redacted from normal debug formatting, delta listeners, and conversation trace serialization. Treat Home Assistant process memory and any diagnostic or memory-dump artifacts as sensitive even though this integration does not add a persistence path for native transcript state.
 
 ## Entity exposure guidance
 

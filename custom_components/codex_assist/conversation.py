@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -506,7 +505,7 @@ async def _codex_input_from_chat_log(
             continue
         native = getattr(content, "native", None)
         if role == "assistant" and isinstance(native, CodexNativeState):
-            input_items.extend(copy.deepcopy(native.items))
+            input_items.extend(native.items)
             continue
         if role in {"user", "assistant"} and isinstance(text, str) and text.strip():
             item_content: str | list[dict[str, Any]] = text

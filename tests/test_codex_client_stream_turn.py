@@ -412,7 +412,7 @@ async def test_stream_turn_raises_for_incomplete_stream_event():
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_preserves_completed_response_items_exactly():
+async def test_stream_turn_preserves_output_item_done_payloads_exactly():
     output_items = [
         {
             "id": "rs_1",

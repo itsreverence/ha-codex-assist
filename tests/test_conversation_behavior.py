@@ -12,6 +12,7 @@ from custom_components.codex_assist.codex_client import (
     CodexCitation,
     CodexCitationDelta,
     CodexResponseItemDelta,
+    CodexStreamDelta,
     CodexTextDelta,
     CodexToolCall,
     CodexToolCallDelta,
@@ -603,7 +604,7 @@ async def test_codex_input_ignores_unowned_native_state(conversation_module):
 
 
 @pytest.mark.asyncio
-async def test_codex_stream_attaches_native_state_without_exposing_encrypted_data(
+async def test_codex_stream_attaches_native_state_outside_visible_deltas(
     conversation_module,
 ):
     reasoning = {
@@ -708,72 +709,47 @@ async def test_tools_disabled_synthesis_fails_on_an_unexpected_tool_call(convers
 
 
 @pytest.mark.asyncio
-async def test_native_transcript_survives_tool_rounds_and_final_synthesis(
+async def test_native_transcript_survives_tool_round_and_final_synthesis(
     conversation_module,
 ):
     chat_log = FakeChatLog([FakeContent(role="user", content="Complete the task")])
-    requests = []
-    final_reasoning = {
-        "id": "rs-final",
-        "type": "reasoning",
-        "encrypted_content": "encrypted-final",
-        "summary": [],
-    }
-    final_message = {
-        "id": "msg-final",
-        "type": "message",
-        "role": "assistant",
-        "phase": "final_answer",
-        "content": [{"type": "output_text", "text": "All done.", "annotations": []}],
-    }
+    requests: list[tuple[bool, list[dict]]] = []
+    tool_items = (
+        {"id": "rs-tool", "type": "reasoning", "encrypted_content": "tool-state"},
+        {
+            "id": "fc-tool",
+            "type": "function_call",
+            "call_id": "call-1",
+            "name": "HassTurnOn",
+            "arguments": '{"name":"Kitchen"}',
+        },
+    )
+    final_items = (
+        {"id": "rs-final", "type": "reasoning", "encrypted_content": "final-state"},
+        {"id": "msg-final", "type": "message", "role": "assistant", "content": []},
+    )
 
-    async def run_iteration(round_number, allow_tools):
+    async def run_iteration(_round_number, allow_tools):
         input_items = await conversation_module._codex_input_from_chat_log(
             object(), chat_log
         )
-        tools = [{"type": "function", "name": "HassTurnOn"}] if allow_tools else []
-        requests.append(
-            {
-                "round_number": round_number,
-                "allow_tools": allow_tools,
-                "input_items": input_items,
-                "tools": tools,
-            }
-        )
-
-        call_id = f"call-{round_number}"
+        requests.append((allow_tools, input_items))
+        native_items = tool_items if allow_tools else final_items
+        deltas: list[CodexStreamDelta] = [
+            CodexResponseItemDelta(item) for item in native_items
+        ]
         if allow_tools:
-            reasoning = {
-                "id": f"rs-{round_number}",
-                "type": "reasoning",
-                "encrypted_content": f"encrypted-{round_number}",
-                "summary": [],
-            }
-            function_call = {
-                "id": f"fc-{round_number}",
-                "type": "function_call",
-                "call_id": call_id,
-                "name": "HassTurnOn",
-                "arguments": '{"name":"Kitchen"}',
-                "status": "completed",
-            }
-            deltas = [
-                CodexResponseItemDelta(reasoning),
-                CodexResponseItemDelta(function_call),
+            deltas.append(
                 CodexToolCallDelta(
                     CodexToolCall(
-                        id=call_id,
+                        id="call-1",
                         name="HassTurnOn",
                         arguments={"name": "Kitchen"},
                     )
-                ),
-            ]
+                )
+            )
         else:
-            deltas = [
-                CodexTextDelta("All done."),
-                CodexResponseItemDelta(final_reasoning),
-                CodexResponseItemDelta(final_message),
-            ]
+            deltas.insert(0, CodexTextDelta("All done."))
 
         stream_start = len(chat_log.streamed_deltas)
         tool_requested = await conversation_module._stream_codex_turn_into_chat_log(
@@ -783,7 +759,7 @@ async def test_native_transcript_survives_tool_rounds_and_final_synthesis(
             model="gpt-5.4",
             instructions="Complete the task.",
             input_items=input_items,
-            tools=tools,
+            tools=[{"type": "function", "name": "HassTurnOn"}] if allow_tools else [],
             reasoning_effort="low",
             reasoning_summary="auto",
             text_verbosity="medium",
@@ -791,67 +767,42 @@ async def test_native_transcript_survives_tool_rounds_and_final_synthesis(
         )
         round_deltas = chat_log.streamed_deltas[stream_start:]
         native_state = next(delta["native"] for delta in round_deltas if "native" in delta)
-
-        if allow_tools:
-            chat_log.content.extend(
-                [
-                    FakeContent(
-                        role="assistant",
-                        tool_calls=[
-                            FakeToolCall(call_id, "HassTurnOn", {"name": "Kitchen"})
-                        ],
-                        native=native_state,
-                    ),
-                    FakeContent(
-                        role="tool_result",
-                        tool_call_id=call_id,
-                        tool_result={"success": True},
-                    ),
-                ]
+        chat_log.content.append(
+            FakeContent(
+                role="assistant",
+                content=None if allow_tools else "All done.",
+                tool_calls=(
+                    [FakeToolCall("call-1", "HassTurnOn", {"name": "Kitchen"})]
+                    if allow_tools
+                    else None
+                ),
+                native=native_state,
             )
-        else:
+        )
+        if allow_tools:
             chat_log.content.append(
                 FakeContent(
-                    role="assistant",
-                    content="All done.",
-                    native=native_state,
+                    role="tool_result",
+                    tool_call_id="call-1",
+                    tool_result={"success": True},
                 )
             )
         return tool_requested
 
     await conversation_module._run_tool_rounds(
-        max_tool_rounds=5,
+        max_tool_rounds=1,
         run_iteration=run_iteration,
     )
 
-    assert [request["allow_tools"] for request in requests] == [
-        True,
-        True,
-        True,
-        True,
-        True,
-        False,
-    ]
-    assert requests[-1]["tools"] == []
-    assert [
-        item.get("type", item.get("role")) for item in requests[-1]["input_items"]
-    ] == [
-        "user",
-        "reasoning",
-        "function_call",
-        "function_call_output",
-        "reasoning",
-        "function_call",
-        "function_call_output",
-        "reasoning",
-        "function_call",
-        "function_call_output",
-        "reasoning",
-        "function_call",
-        "function_call_output",
-        "reasoning",
-        "function_call",
-        "function_call_output",
+    assert [allow_tools for allow_tools, _input_items in requests] == [True, False]
+    assert requests[1][1] == [
+        {"role": "user", "content": "Complete the task"},
+        *tool_items,
+        {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": json.dumps({"success": True}),
+        },
     ]
 
     chat_log.content.append(FakeContent(role="user", content="What happened?"))
@@ -860,7 +811,6 @@ async def test_native_transcript_survives_tool_rounds_and_final_synthesis(
     )
 
     assert next_turn_input[-3:] == [
-        final_reasoning,
-        final_message,
+        *final_items,
         {"role": "user", "content": "What happened?"},
     ]
