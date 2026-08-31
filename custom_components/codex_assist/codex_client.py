@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import json
@@ -7,10 +8,13 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import httpx
+
 from .codex_image import image_model_quality, validate_image_size
 
 CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex"
-CODEX_STREAM_TIMEOUT = 300
+CODEX_STREAM_DEADLINE = 15 * 60
+CODEX_STREAM_TIMEOUT = httpx.Timeout(connect=10, read=None, write=30, pool=10)
 
 
 class AsyncPostClient(Protocol):
@@ -77,6 +81,10 @@ class CodexResponseItemDelta:
 CodexStreamDelta = (
     CodexTextDelta | CodexToolCallDelta | CodexCitationDelta | CodexResponseItemDelta
 )
+
+
+class CodexStreamTimeoutError(RuntimeError):
+    """Raised when a complete Codex response stream exceeds its deadline."""
 
 
 class CodexClient:
@@ -189,7 +197,7 @@ class CodexClient:
             pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
             completed_tool_call_ids: set[str] = set()
             anonymous_call_index = 0
-            async for event in _aiter_sse_events(response):
+            async for event in _aiter_sse_events_with_deadline(response):
                 event_type = event.get("type")
                 for citation in _citations_from_event(event):
                     yield CodexCitationDelta(citation)
@@ -805,6 +813,19 @@ async def _aiter_sse_events(response: Any) -> AsyncIterator[dict[str, Any]]:
     payload = _parse_sse_payload(data_lines, event_name)
     if payload is not None:
         yield payload
+
+
+async def _aiter_sse_events_with_deadline(
+    response: Any,
+) -> AsyncIterator[dict[str, Any]]:
+    try:
+        async with asyncio.timeout(CODEX_STREAM_DEADLINE):
+            async for event in _aiter_sse_events(response):
+                yield event
+    except TimeoutError as err:
+        raise CodexStreamTimeoutError(
+            f"Codex response stream exceeded {CODEX_STREAM_DEADLINE} seconds"
+        ) from err
 
 
 def _parse_sse_payload(
