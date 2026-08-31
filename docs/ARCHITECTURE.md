@@ -32,6 +32,7 @@ flowchart LR
 - **AI Task entity** registers a native provider for text, structured data, supported image attachments, and image generation.
 - **Runtime token coordinator** serializes refresh-token rotation per config entry. Concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another.
 - **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream.
+- **Native transcript state** retains completed provider output items for stateless replay. The state is deep-copy isolated and remains opaque to normal Home Assistant logs, listeners, and conversation traces, which receive only redacted metadata.
 - **Hosted web search** is an explicit option. When enabled, it adds the backend `web_search` tool and converts structured URL annotations into a validated source card. Unsupported or unsafe citation URLs are discarded.
 - **Assist tool bridge** maps model-requested device actions into Home Assistant's Assist LLM API. It does not call services directly.
 
@@ -44,6 +45,8 @@ flowchart LR
 5. Home Assistant validates and executes the tool call using its normal exposed-entity controls.
 6. When hosted search is enabled, Codex Assist keeps validated citations in a displayed card and instructs the model to keep raw URLs and source blocks out of spoken prose.
 7. Codex Assist returns the final response to Home Assistant.
+
+For stateless multi-turn requests, Codex Assist keeps completed provider output items in Home Assistant's in-memory chat log and replays them before later user or function-output items. This can include encrypted reasoning state and assistant message phase. The integration does not decrypt that state. Native state is removed from normal delta listeners, uses redacted debug formatting, and serializes as an item count rather than provider content in conversation traces.
 
 ## AI Task flow
 

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 import voluptuous as vol
 from homeassistant.components import conversation
+from homeassistant.components.conversation import trace as conversation_trace
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -119,6 +120,7 @@ async def test_conversation_replays_native_codex_output_on_next_turn(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    conversation_trace.async_clear_traces()
     await _setup_entry(hass)
     caplog.set_level(logging.DEBUG, logger=conversation.ChatLog.__module__)
     reasoning = {
@@ -175,6 +177,11 @@ async def test_conversation_replays_native_codex_output_on_next_turn(
     ]
     assert "encrypted-state" not in caplog.text
     assert "CodexNativeState(item_count=2)" in caplog.text
+    serialized_traces = [trace.as_dict() for trace in conversation_trace.async_get_traces()]
+    serialized_trace_text = str(serialized_traces)
+    assert "encrypted-state" not in serialized_trace_text
+    assert "'redacted': True" in serialized_trace_text
+    assert "'item_count': 2" in serialized_trace_text
 
 
 async def test_web_search_citations_are_displayable_but_not_spoken(
