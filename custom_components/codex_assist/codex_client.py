@@ -5,6 +5,7 @@ import base64
 import copy
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -175,13 +176,14 @@ class CodexClient:
             text_format=text_format,
         )
 
-        async with self._http_client.stream(
+        stream_context = self._http_client.stream(
             "POST",
             f"{self._base_url}/responses",
             headers=codex_headers(self._access_token),
             json=payload,
             timeout=CODEX_STREAM_TIMEOUT,
-        ) as response:
+        )
+        async with _response_stream_with_deadline(stream_context) as response:
             if response.status_code != 200:
                 error = await _stream_response_error(response)
                 if response.status_code == 401 or error.code == "token_invalidated":
@@ -197,7 +199,7 @@ class CodexClient:
             pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
             completed_tool_call_ids: set[str] = set()
             anonymous_call_index = 0
-            async for event in _aiter_sse_events_with_deadline(response):
+            async for event in _aiter_sse_events(response):
                 event_type = event.get("type")
                 for citation in _citations_from_event(event):
                     yield CodexCitationDelta(citation)
@@ -815,14 +817,16 @@ async def _aiter_sse_events(response: Any) -> AsyncIterator[dict[str, Any]]:
         yield payload
 
 
-async def _aiter_sse_events_with_deadline(
-    response: Any,
-) -> AsyncIterator[dict[str, Any]]:
+@asynccontextmanager
+async def _response_stream_with_deadline(stream_context: Any) -> AsyncIterator[Any]:
+    deadline = asyncio.timeout(CODEX_STREAM_DEADLINE)
     try:
-        async with asyncio.timeout(CODEX_STREAM_DEADLINE):
-            async for event in _aiter_sse_events(response):
-                yield event
+        async with deadline:
+            async with stream_context as response:
+                yield response
     except TimeoutError as err:
+        if not deadline.expired():
+            raise
         raise CodexStreamTimeoutError(
             f"Codex response stream exceeded {CODEX_STREAM_DEADLINE} seconds"
         ) from err
