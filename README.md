@@ -53,7 +53,7 @@ Codex Assist is included in HACS by default. You do not need to add this reposit
 
 ### Options
 
-The options flow keeps **Everyday settings** open and leaves **Advanced chat settings** and **Image-generation defaults** collapsed until needed. Everyday controls include the chat model, response length, and hosted web search. Advanced controls hold the system prompt and reasoning effort.
+The options flow keeps **Everyday settings** open and leaves **Advanced chat settings** and **Image-generation defaults** collapsed until needed. Everyday controls include the chat model, response length, and hosted web search. Advanced controls hold reasoning effort and a multiline system-prompt editor for longer Markdown instructions.
 
 <p align="center">
   <img src="assets/codex-assist-settings-overview.png" alt="Native Home Assistant options dialog for Codex Assist, with everyday, advanced chat, and image-generation sections" width="430">

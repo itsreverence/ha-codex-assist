@@ -314,3 +314,56 @@ async def test_ai_task_image_retry_reauths_when_refreshed_token_is_rejected(
             image_model="gpt-image-2-medium",
             image_size="1024x1024",
         )
+
+
+@pytest.mark.asyncio
+async def test_ai_task_uses_one_tools_disabled_turn_after_five_tool_rounds(
+    ai_task_module,
+    monkeypatch,
+):
+    calls = []
+
+    async def stream_turn(**kwargs):
+        calls.append(kwargs)
+        chat_log.unresponded_tool_results = kwargs["allow_tools"]
+        return kwargs["allow_tools"]
+
+    monkeypatch.setattr(ai_task_module, "_stream_codex_turn_into_chat_log", stream_turn)
+
+    tool = type(
+        "Tool",
+        (),
+        {
+            "name": "HassTurnOn",
+            "description": "Turn on an exposed Home Assistant entity.",
+            "parameters": ai_task_module.vol.Schema({}),
+        },
+    )()
+    llm_api = type(
+        "LLMApi",
+        (),
+        {"tools": [tool], "custom_serializer": None},
+    )()
+    chat_log = type(
+        "ChatLog",
+        (),
+        {"unresponded_tool_results": True, "content": [], "llm_api": llm_api},
+    )()
+    await ai_task_module._run_codex_ai_task_chat_log(
+        hass=object(),
+        entry=object(),
+        auth_client=object(),
+        tokens=CodexTokenSet("access-1", "refresh-1"),
+        codex=object(),
+        chat_log=chat_log,
+        entity_id="ai_task.codex_assist",
+        model="gpt-5.4",
+        prompt="Be concise.",
+        reasoning_effort="low",
+        reasoning_summary="auto",
+        text_verbosity="medium",
+    )
+
+    assert [call["allow_tools"] for call in calls] == [True, True, True, True, True, False]
+    assert [bool(call["tools"]) for call in calls] == [True, True, True, True, True, False]
+    assert all(call["tools"][0]["name"] == "HassTurnOn" for call in calls[:5])

@@ -41,6 +41,7 @@ from .conversation import (
     _codex_tools_from_chat_log,
     _instructions_from_chat_log,
     _refresh_runtime_tokens,
+    _run_tool_rounds,
     _stream_codex_turn_into_chat_log,
 )
 from .error_formatting import request_failure_text
@@ -287,7 +288,8 @@ async def _run_codex_ai_task_chat_log(
     web_search: bool = False,
 ) -> None:
     """Run Codex over an AI Task chat log with one auth refresh retry."""
-    for _iteration in range(MAX_TOOL_ITERATIONS):
+    async def run_tool_round(_round_number: int, allow_tools: bool) -> bool:
+        nonlocal codex, tokens
         try:
             await _stream_codex_turn_into_chat_log(
                 chat_log=chat_log,
@@ -296,14 +298,19 @@ async def _run_codex_ai_task_chat_log(
                 model=model,
                 instructions=_instructions_from_chat_log(chat_log, prompt),
                 input_items=await _codex_input_from_chat_log(hass, chat_log),
-                tools=_codex_tools_from_chat_log(
-                    chat_log,
-                    enable_web_search=_web_search_enabled(web_search, text_format=text_format),
+                tools=(
+                    _codex_tools_from_chat_log(
+                        chat_log,
+                        enable_web_search=_web_search_enabled(web_search, text_format=text_format),
+                    )
+                    if allow_tools
+                    else []
                 ),
                 reasoning_effort=reasoning_effort,
                 reasoning_summary=reasoning_summary,
                 text_verbosity=text_verbosity,
                 text_format=text_format,
+                allow_tools=allow_tools,
             )
         except CodexAuthenticationError as err:
             LOGGER.warning(
@@ -326,21 +333,32 @@ async def _run_codex_ai_task_chat_log(
                     model=model,
                     instructions=_instructions_from_chat_log(chat_log, prompt),
                     input_items=await _codex_input_from_chat_log(hass, chat_log),
-                    tools=_codex_tools_from_chat_log(
-                        chat_log,
-                        enable_web_search=_web_search_enabled(web_search, text_format=text_format),
+                    tools=(
+                        _codex_tools_from_chat_log(
+                            chat_log,
+                            enable_web_search=_web_search_enabled(
+                                web_search, text_format=text_format
+                            ),
+                        )
+                        if allow_tools
+                        else []
                     ),
                     reasoning_effort=reasoning_effort,
                     reasoning_summary=reasoning_summary,
                     text_verbosity=text_verbosity,
                     text_format=text_format,
+                    allow_tools=allow_tools,
                 )
             except CodexAuthenticationError as retry_err:
                 raise CodexReauthRequiredError(
                     "Codex access token was rejected after refresh"
                 ) from retry_err
-        if not chat_log.unresponded_tool_results:
-            break
+        return bool(chat_log.unresponded_tool_results)
+
+    await _run_tool_rounds(
+        max_tool_rounds=MAX_TOOL_ITERATIONS,
+        run_iteration=run_tool_round,
+    )
 
 
 async def _generate_codex_ai_task_image(
