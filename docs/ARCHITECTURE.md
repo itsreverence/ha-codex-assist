@@ -31,7 +31,7 @@ flowchart LR
 - **Conversation agent** registers `conversation.codex_assist` for Home Assistant Assist pipelines.
 - **AI Task entity** registers a native provider for text, structured data, supported image attachments, and image generation.
 - **Runtime token coordinator** serializes refresh-token rotation per config entry. Concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another.
-- **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream.
+- **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream. Response streams allow quiet reasoning periods without an idle-read cutoff, while a response-stream deadline still bounds abandoned requests.
 - **Native transcript state** retains completed provider output items for stateless replay. The state is deep-copy isolated and remains opaque to normal Home Assistant logs, listeners, and conversation traces, which receive only redacted metadata.
 - **Hosted web search** is an explicit option. When enabled, it adds the backend `web_search` tool and converts structured URL annotations into a validated source card. Unsupported or unsafe citation URLs are discarded.
 - **Assist tool bridge** maps model-requested device actions into Home Assistant's Assist LLM API. It does not call services directly.

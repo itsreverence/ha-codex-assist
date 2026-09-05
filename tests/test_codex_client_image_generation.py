@@ -99,6 +99,7 @@ async def test_generate_image_uses_codex_responses_image_generation_tool():
     assert method == "POST"
     assert url == "https://chatgpt.com/backend-api/codex/responses"
     assert kwargs["headers"]["Accept"] == "text/event-stream"
+    assert kwargs["timeout"] == 300
     assert payload["model"] == "gpt-5.4"
     assert payload["stream"] is True
     assert payload["tools"] == [

@@ -1,13 +1,17 @@
+import asyncio
 import json
 
 import pytest
 
+from custom_components.codex_assist import codex_client as codex_client_module
 from custom_components.codex_assist.codex_client import (
+    CODEX_STREAM_DEADLINE,
     CODEX_STREAM_TIMEOUT,
     CodexCitationDelta,
     CodexClient,
     CodexRateLimitError,
     CodexResponseItemDelta,
+    CodexStreamTimeoutError,
     CodexTextDelta,
     CodexToolCallDelta,
 )
@@ -46,6 +50,35 @@ class FakeHttpClient:
         return self.response
 
 
+class BlockingStreamResponse(FakeStreamResponse):
+    def __init__(self):
+        super().__init__(200, [])
+        self.started = asyncio.Event()
+
+    async def aiter_lines(self):
+        self.started.set()
+        await asyncio.Event().wait()
+        yield  # pragma: no cover
+
+
+class BlockingStreamContext:
+    def __init__(self):
+        self.started = asyncio.Event()
+
+    async def __aenter__(self):
+        self.started.set()
+        await asyncio.Event().wait()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+
+class BuiltinTimeoutStreamResponse(FakeStreamResponse):
+    async def aiter_lines(self):
+        raise TimeoutError("synthetic iterator timeout")
+        yield  # pragma: no cover
+
+
 def _event(payload):
     return ["data: " + json.dumps(payload), ""]
 
@@ -81,6 +114,84 @@ async def test_stream_turn_yields_text_deltas_and_posts_advanced_options():
     assert payload["include"] == ["reasoning.encrypted_content"]
     assert payload["text"] == {"verbosity": "low"}
     assert http.calls[0][2]["timeout"] == CODEX_STREAM_TIMEOUT
+
+
+def test_stream_timeout_allows_quiet_reads_but_bounds_connection_operations():
+    assert CODEX_STREAM_TIMEOUT.connect == 10
+    assert CODEX_STREAM_TIMEOUT.read is None
+    assert CODEX_STREAM_TIMEOUT.write == 30
+    assert CODEX_STREAM_TIMEOUT.pool == 10
+    assert CODEX_STREAM_DEADLINE == 15 * 60
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_enforces_deadline_after_response_headers(monkeypatch):
+    response = BlockingStreamResponse()
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+    monkeypatch.setattr(codex_client_module, "CODEX_STREAM_DEADLINE", 0.01)
+
+    with pytest.raises(CodexStreamTimeoutError, match="exceeded 0.01 seconds"):
+        async for _delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Think carefully.",
+            input_items=[{"role": "user", "content": "hard question"}],
+        ):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_enforces_deadline_before_response_headers(monkeypatch):
+    stream_context = BlockingStreamContext()
+    client = CodexClient(
+        http_client=FakeHttpClient(stream_context),
+        access_token="token-1",
+    )
+    monkeypatch.setattr(codex_client_module, "CODEX_STREAM_DEADLINE", 0.01)
+
+    with pytest.raises(CodexStreamTimeoutError, match="exceeded 0.01 seconds"):
+        async for _delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Think carefully.",
+            input_items=[{"role": "user", "content": "hard question"}],
+        ):
+            pass
+
+    assert stream_context.started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_preserves_unrelated_builtin_timeout():
+    response = BuiltinTimeoutStreamResponse(200, [])
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    with pytest.raises(TimeoutError, match="synthetic iterator timeout"):
+        async for _delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Think carefully.",
+            input_items=[{"role": "user", "content": "hard question"}],
+        ):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_preserves_caller_cancellation():
+    response = BlockingStreamResponse()
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    async def consume_stream():
+        async for _delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Think carefully.",
+            input_items=[{"role": "user", "content": "hard question"}],
+        ):
+            pass
+
+    task = asyncio.create_task(consume_stream())
+    await response.started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 @pytest.mark.asyncio

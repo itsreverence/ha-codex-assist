@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
+
+import httpx
 
 from .codex_image import image_model_quality, validate_image_size
 
 CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex"
-CODEX_STREAM_TIMEOUT = 300
+CODEX_STREAM_DEADLINE = 15 * 60
+CODEX_STREAM_TIMEOUT = httpx.Timeout(connect=10, read=None, write=30, pool=10)
 
 
 class AsyncPostClient(Protocol):
@@ -77,6 +82,10 @@ class CodexResponseItemDelta:
 CodexStreamDelta = (
     CodexTextDelta | CodexToolCallDelta | CodexCitationDelta | CodexResponseItemDelta
 )
+
+
+class CodexStreamTimeoutError(RuntimeError):
+    """Raised when a complete Codex response stream exceeds its deadline."""
 
 
 class CodexClient:
@@ -167,13 +176,14 @@ class CodexClient:
             text_format=text_format,
         )
 
-        async with self._http_client.stream(
+        stream_context = self._http_client.stream(
             "POST",
             f"{self._base_url}/responses",
             headers=codex_headers(self._access_token),
             json=payload,
             timeout=CODEX_STREAM_TIMEOUT,
-        ) as response:
+        )
+        async with _response_stream_with_deadline(stream_context) as response:
             if response.status_code != 200:
                 error = await _stream_response_error(response)
                 if response.status_code == 401 or error.code == "token_invalidated":
@@ -805,6 +815,21 @@ async def _aiter_sse_events(response: Any) -> AsyncIterator[dict[str, Any]]:
     payload = _parse_sse_payload(data_lines, event_name)
     if payload is not None:
         yield payload
+
+
+@asynccontextmanager
+async def _response_stream_with_deadline(stream_context: Any) -> AsyncIterator[Any]:
+    deadline = asyncio.timeout(CODEX_STREAM_DEADLINE)
+    try:
+        async with deadline:
+            async with stream_context as response:
+                yield response
+    except TimeoutError as err:
+        if not deadline.expired():
+            raise
+        raise CodexStreamTimeoutError(
+            f"Codex response stream exceeded {CODEX_STREAM_DEADLINE} seconds"
+        ) from err
 
 
 def _parse_sse_payload(
