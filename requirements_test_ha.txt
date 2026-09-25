@@ -1,6 +1,6 @@
 # Current stable Home Assistant contract (Python 3.14+).
 # Update these pins together when advancing the supported stable contract.
-homeassistant==2026.9.0
+homeassistant==2026.7.0
 pytest-homeassistant-custom-component==0.13.363
 
 # Runtime requirements declared by the Home Assistant conversation and camera
