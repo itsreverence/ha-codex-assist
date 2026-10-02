@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
@@ -15,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.httpx_client import get_async_client
+from homeassistant.helpers.json import json_dumps
 
 from . import DOMAIN
 from .codex_auth import (
@@ -500,7 +500,7 @@ async def _codex_input_from_chat_log(
                 {
                     "type": "function_call_output",
                     "call_id": content.tool_call_id,
-                    "output": json.dumps(content.tool_result),
+                    "output": json_dumps(content.tool_result),
                 }
             )
             continue
@@ -525,7 +525,7 @@ async def _codex_input_from_chat_log(
                     {
                         "type": "function_call",
                         "name": tool_call.tool_name,
-                        "arguments": json.dumps(tool_call.tool_args),
+                        "arguments": json_dumps(tool_call.tool_args),
                         "call_id": tool_call.id,
                     }
                 )

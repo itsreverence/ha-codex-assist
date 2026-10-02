@@ -8,7 +8,9 @@ calls are stubbed.
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -121,6 +123,99 @@ async def test_conversation_turn_streams_codex_reply(
 
     speech = result.response.speech["plain"]["speech"]
     assert speech == "The porch light is on."
+
+
+async def test_conversation_serializes_ha_state_tool_result(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replay a State-valued tool result through HA's real conversation loop."""
+    await _setup_entry(hass)
+    hass.states.async_set("lock.test_door", "locked", {"friendly_name": "Test door"})
+    state = hass.states.get("lock.test_door")
+    assert state is not None
+    tool_calls = []
+
+    class FakeApiInstance:
+        api_prompt = "A read-only test tool is available."
+        tools = [
+            SimpleNamespace(
+                name="HassTestState", description="Read a test state", parameters=vol.Schema({})
+            )
+        ]
+        custom_serializer = None
+
+        async def async_call_tool(self, tool_input: llm.ToolInput):
+            tool_calls.append(tool_input)
+            return {"state": state}
+
+    async def fake_get_api(*args: object, **kwargs: object):
+        return FakeApiInstance()
+
+    monkeypatch.setattr(llm, "async_get_api", fake_get_api)
+    calls = []
+
+    async def fake_stream_turn(self: CodexClient, **kwargs: object):
+        calls.append(kwargs["input_items"])
+        if len(calls) == 1:
+            yield CodexToolCallDelta(
+                CodexToolCall(id="state-query-1", name="HassTestState", arguments={})
+            )
+            return
+        yield CodexTextDelta("The test door is locked.")
+
+    monkeypatch.setattr(CodexClient, "stream_turn", fake_stream_turn)
+
+    result = await conversation.async_converse(
+        hass,
+        "Is the test door locked?",
+        None,
+        Context(),
+        agent_id="conversation.codex_assist",
+    )
+
+    assert result.response.speech["plain"]["speech"] == "The test door is locked."
+    assert len(tool_calls) == 1
+    assert tool_calls[0].tool_name == "HassTestState"
+    assert len(calls) == 2
+    tool_outputs = [item for item in calls[1] if item.get("type") == "function_call_output"]
+    assert len(tool_outputs) == 1
+    assert tool_outputs[0]["call_id"] == "state-query-1"
+    output = json.loads(tool_outputs[0]["output"])
+    assert output["state"]["entity_id"] == state.entity_id
+    assert output["state"]["state"] == "locked"
+    assert output["state"]["attributes"] == {"friendly_name": "Test door"}
+    assert output["state"]["last_changed"] == state.last_changed.isoformat()
+
+
+@pytest.mark.parametrize("content_type", ["tool_result", "tool_args"])
+async def test_chat_log_serializes_timestamps_with_real_ha_helper(
+    hass: HomeAssistant,
+    content_type: str,
+) -> None:
+    from custom_components.codex_assist.conversation import _codex_input_from_chat_log
+
+    payload = {"updated_at": datetime(2026, 9, 30, 12, 0, tzinfo=UTC), "count": 1}
+    if content_type == "tool_result":
+        content = conversation.ToolResultContent(
+            agent_id="conversation.codex_assist",
+            tool_call_id="call-1",
+            tool_name="HassTestTool",
+            tool_result=payload,
+        )
+        field = "output"
+    else:
+        content = conversation.AssistantContent(
+            agent_id="conversation.codex_assist",
+            tool_calls=[llm.ToolInput(id="call-1", tool_name="HassTestTool", tool_args=payload)],
+        )
+        field = "arguments"
+
+    items = await _codex_input_from_chat_log(hass, SimpleNamespace(content=[content]))
+
+    assert len(items) == 1
+    assert items[0]["call_id"] == "call-1"
+    assert json.loads(items[0][field]) == {"updated_at": "2026-09-30T12:00:00+00:00", "count": 1}
 
 
 async def test_conversation_replays_native_codex_output_on_next_turn(

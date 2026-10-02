@@ -20,6 +20,7 @@ def install_homeassistant_fakes(monkeypatch):
     helpers = types.ModuleType("homeassistant.helpers")
     entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
     httpx_client = types.ModuleType("homeassistant.helpers.httpx_client")
+    helpers_json = types.ModuleType("homeassistant.helpers.json")
     intent = types.ModuleType("homeassistant.helpers.intent")
     llm = types.ModuleType("homeassistant.helpers.llm")
     selector = types.ModuleType("homeassistant.helpers.selector")
@@ -240,6 +241,8 @@ def install_homeassistant_fakes(monkeypatch):
     selector.TextSelector = TextSelector
     selector.TextSelectorConfig = TextSelectorConfig
     util_json.json_loads = __import__("json").loads
+    # HA-specific values are covered with the real serializer in tests_ha/.
+    helpers_json.json_dumps = __import__("json").dumps
     util.slugify = lambda value: value.lower().replace(" ", "_")
     voluptuous_openapi.convert = lambda schema, custom_serializer=None: getattr(
         schema, "schema", schema
@@ -259,6 +262,7 @@ def install_homeassistant_fakes(monkeypatch):
     components.ai_task = ai_task
     helpers.entity_platform = entity_platform
     helpers.httpx_client = httpx_client
+    helpers.json = helpers_json
     helpers.intent = intent
     helpers.llm = llm
     helpers.selector = selector
@@ -277,6 +281,7 @@ def install_homeassistant_fakes(monkeypatch):
         "homeassistant.helpers": helpers,
         "homeassistant.helpers.entity_platform": entity_platform,
         "homeassistant.helpers.httpx_client": httpx_client,
+        "homeassistant.helpers.json": helpers_json,
         "homeassistant.helpers.intent": intent,
         "homeassistant.helpers.llm": llm,
         "homeassistant.helpers.selector": selector,
