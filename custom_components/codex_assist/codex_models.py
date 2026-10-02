@@ -13,7 +13,7 @@ from .codex_client import codex_headers
 
 CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0"
 # Only used when this session has no successful account discovery result.
-# Reviewed 2026-09-07 against https://learn.chatgpt.com/docs/models.
+# Reviewed 2026-10-02 against https://learn.chatgpt.com/docs/models.
 # See docs/RELEASING.md before updating these unverified suggestions.
 DEFAULT_CODEX_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
 MODEL_CACHE_SECONDS = 6 * 60 * 60
