@@ -57,6 +57,46 @@ The tool-result regression runs a real conversation and checks the outgoing
 Codex payload. On modern HA it removes only the deprecated property to prove
 the integration does not rely on that compatibility shim.
 
+`tests_ha/test_ai_task_delivery.py` owns AI Task delivery. It calls HA's public
+`async_generate_data` API and `ai_task.generate_data` / `ai_task.generate_image`
+services with only external Codex HTTP replaced by a synthetic SSE transport.
+HA supplies the real task objects, chat logs, service selector schemas, results,
+attachment resolution, image persistence, and signed media representation.
+The cases cover plain text, structured data (including optional null omission
+and disabling hosted search), a local PNG attachment reaching backend HTTP,
+and image bytes plus configured metadata reaching HA's media store. They do
+not establish live authentication, backend image generation, camera contents,
+or device behavior. The synthetic PNG is not evidence that a backend honored
+the requested image dimensions.
+
+These delivery cases also enforce all three feature flags through HA's
+admission checks, replacing the fast test's numeric flag assertion. Its
+entry-scoped identity assertions remain. Schema edge cases and auth/retry
+coverage remain separate; this is not a broad test-pruning pass.
+
+#### AI Task mutation evidence
+
+The following temporary source mutations were actually run against HA
+2026.10.0, one focused test at a time. Each produced **1 failed**, exit code 1,
+for the indicated contract. Both production files were restored byte-for-byte
+and checked with `git diff --exit-code` before the unmutated validation runs.
+No mutation or test-only production seam is retained.
+
+The test names below are in `tests_ha/test_ai_task_delivery.py`; each probe used
+`python -m pytest -c pyproject.toml <file>::<test_name> -q --tb=short` in the
+current HA environment described above.
+
+| Temporary mutation | Test | Observed failure |
+| --- | --- | --- |
+| Remove `GENERATE_DATA` from the entity flags | `test_generate_data_returns_native_plain_text_result` | HA rejects generating data |
+| Remove `SUPPORT_ATTACHMENTS` from the entity flags | `test_generate_data_service_sends_local_image_attachment` | HA rejects attachments |
+| Remove `GENERATE_IMAGE` from the entity flags | `test_generate_image_service_persists_native_result_as_media` | HA rejects generating images |
+| Return empty `GenDataTaskResult.data` | `test_generate_data_returns_native_plain_text_result` | Delivered text differs |
+| Set the data path's `text_format` to `None` | `test_generate_data_service_delivers_selector_validated_structure` | Backend request lacks `format` |
+| Pass `None` instead of user attachments to conversion | `test_generate_data_service_sends_local_image_attachment` | Backend receives string content instead of multimodal content |
+| Return `dict` instead of native `GenImageTaskResult` | `test_generate_image_service_persists_native_result_as_media` | HA cannot call `as_dict` |
+| Set native image result's `image_data` to empty bytes | `test_generate_image_service_persists_native_result_as_media` | Persisted bytes differ |
+
 The older lanes also run with `probatio==0.11.2` installed alongside
 `voluptuous-openapi`. This catches converter/serializer mismatches when both
 packages are available. Codex Assist selects the converter used by Home
