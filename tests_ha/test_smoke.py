@@ -208,6 +208,84 @@ async def test_conversation_serializes_ha_tool_result(
         assert output == ({"error": "test_failure"} if result_kind == "error" else {})
 
 
+@pytest.mark.parametrize("final_reply", ["answer", "unexpected_tool"])
+async def test_conversation_finishes_after_tool_limit(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    final_reply: str,
+) -> None:
+    """Exercise the bounded conversation through real HA tool execution and replay."""
+    await _setup_entry(hass)
+    executed_calls = []
+    requests = []
+
+    class ReadOnlyTool(llm.Tool):
+        name = "HassTestReading"
+        description = "Return a harmless test reading."
+        integration = DOMAIN
+        parameters = vol.Schema({})
+
+        async def async_call(self, hass, tool_input, llm_context):
+            executed_calls.append(tool_input.id)
+            return _ha_tool_result({"reading": len(executed_calls)})
+
+    class ReadingAPI(llm.API):
+        async def async_get_api_instance(self, llm_context):
+            return llm.APIInstance(
+                api=self,
+                api_prompt="A read-only test tool is available.",
+                llm_context=llm_context,
+                tools=[ReadOnlyTool()],
+            )
+
+    async def get_api(hass, api_id, llm_context):
+        return await ReadingAPI(
+            hass=hass, id="test_reading", name="Test reading"
+        ).async_get_api_instance(llm_context)
+
+    monkeypatch.setattr(llm, "async_get_api", get_api)
+
+    async def stream_turn(self: CodexClient, **kwargs):
+        requests.append(kwargs)
+        turn = len(requests)
+        if turn <= 5 or final_reply == "unexpected_tool":
+            yield CodexToolCallDelta(
+                CodexToolCall(id=f"call-{turn}", name="HassTestReading", arguments={})
+            )
+        else:
+            yield CodexTextDelta("I collected five readings.")
+
+    monkeypatch.setattr(CodexClient, "stream_turn", stream_turn)
+
+    result = await conversation.async_converse(
+        hass,
+        "Collect the test readings.",
+        None,
+        Context(),
+        agent_id="conversation.codex_assist",
+    )
+    await hass.async_block_till_done()
+
+    assert executed_calls == [f"call-{index}" for index in range(1, 6)]
+    assert len(requests) == 6
+    assert all(
+        any(tool.get("name") == "HassTestReading" for tool in request["tools"])
+        for request in requests[:5]
+    )
+    assert requests[-1]["tools"] == []
+    outputs = [
+        item for item in requests[-1]["input_items"] if item.get("type") == "function_call_output"
+    ]
+    assert [(item["call_id"], json.loads(item["output"])) for item in outputs] == [
+        (f"call-{index}", {"reading": index}) for index in range(1, 6)
+    ]
+    speech = result.response.speech["plain"]["speech"]
+    if final_reply == "answer":
+        assert speech == "I collected five readings."
+    else:
+        assert "tool call while tools are disabled" in speech
+
+
 @pytest.mark.parametrize("content_type", ["tool_result", "tool_args"])
 async def test_chat_log_serializes_timestamps_with_real_ha_helper(
     hass: HomeAssistant,

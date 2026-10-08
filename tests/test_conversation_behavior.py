@@ -682,33 +682,6 @@ async def test_five_tool_rounds_force_one_tools_disabled_final_synthesis(convers
 
 
 @pytest.mark.asyncio
-async def test_tools_disabled_synthesis_fails_on_an_unexpected_tool_call(conversation_module):
-    chat_log = FakeChatLog()
-    codex = FakeCodex(
-        [
-            CodexToolCallDelta(
-                CodexToolCall(id="call-1", name="HassTurnOn", arguments={})
-            )
-        ]
-    )
-
-    with pytest.raises(RuntimeError, match="tools are disabled"):
-        await conversation_module._stream_codex_turn_into_chat_log(
-            chat_log=chat_log,
-            codex=codex,
-            entity_id="conversation.codex_assist",
-            model="gpt-5.4",
-            instructions="Give the final answer.",
-            input_items=[],
-            tools=[],
-            reasoning_effort="low",
-            reasoning_summary="auto",
-            text_verbosity="medium",
-            allow_tools=False,
-        )
-
-
-@pytest.mark.asyncio
 async def test_native_transcript_survives_tool_round_and_final_synthesis(
     conversation_module,
 ):
