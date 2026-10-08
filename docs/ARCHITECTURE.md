@@ -95,6 +95,14 @@ The converter must match the helper's serializer and unsupported-value sentinel,
 even when both libraries are installed. Home Assistant supplies the matching
 library; Codex Assist does not install a separate schema converter.
 
+## Tool-result compatibility
+
+Conversation and AI Task replay share the chat-log conversion path. On HA
+2026.10 and newer, it reads `ToolResultContent.result.data`. Older supported
+versions expose the same payload as `tool_result`. Codex receives the data
+as JSON in `function_call_output`, not the Home Assistant wrapper. Both paths
+use Home Assistant's serializer for values such as states and timestamps.
+
 ## Security boundary
 
 Codex or ChatGPT may suggest an action, but Home Assistant remains the execution boundary. Device control goes through Home Assistant's Assist LLM API and is limited to entities exposed to Assist.

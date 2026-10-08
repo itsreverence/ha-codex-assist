@@ -1,0 +1,4 @@
+# Temporary test-only override: plugin 0.13.370 pins HA 2026.10.0b4.
+# Exercise the stable HA release instead. Remove this file and its installer
+# flags when a plugin release pins 2026.10.0 or the next chosen stable target.
+homeassistant==2026.10.0

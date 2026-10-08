@@ -11,18 +11,51 @@ uv run pytest -q
 The fast suite under `tests/` uses lightweight Home Assistant fakes. Run the `tests_ha/` suite in an isolated Python 3.14 environment so it does not reuse the normal project environment:
 
 ```bash
-uv run --isolated --python 3.14 --with-requirements requirements_test_ha.txt \
-  python -m pytest tests_ha -q
+uv venv --python 3.14 .venv-ha
+uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt \
+  --override requirements_test_ha_overrides.txt
+.venv-ha/bin/python -m pytest tests_ha -q
 
 uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt \
   python -m pytest tests_ha -q
 ```
 
-CI runs the fast suite plus pinned real-Home-Assistant contract lanes against
-Home Assistant 2026.9.0, Home Assistant 2026.8.3 (before the schema converter
-transition), and Home Assistant 2026.6.0, the minimum supported version. Update the stable pins in `requirements_test_ha.txt` together when
-advancing that contract. All lanes also run weekly to catch regressions without
-silently resolving a prerelease or a newly incompatible test harness mid-run.
+### Home Assistant version selection
+
+CI tests compatibility boundaries rather than every monthly or patch release:
+
+- **2026.6.0** is the minimum supported version.
+- **2026.8.3** exercises the legacy converter immediately before the Probatio transition.
+- **2026.9.0** exercises Probatio with the old tool-result API.
+- **2026.10.0** exercises the current stable release with `ToolResult` and no converter exports.
+
+These checks do not establish that every omitted release, including 2026.7,
+has been tested. Add a version when a relevant API change or reported regression
+makes it a distinct compatibility case. Keep the minimum and latest stable
+targets, and retain an intermediate target while it covers a separate supported
+API contract. Review the matrix with each monthly HA release and update the
+stable pins together. All lanes also run weekly, but pinned weekly runs do not
+discover new HA releases automatically.
+
+The current test plugin, `pytest-homeassistant-custom-component==0.13.370`,
+pins HA `2026.10.0b4`. The test-only override installs `2026.10.0` instead.
+Remove that override when an aligned plugin version is available and verified;
+do not silently test a beta while claiming stable coverage.
+
+### Test ownership
+
+Before adding a test, identify its observable contract, a credible regression,
+and why existing coverage cannot catch it. Prefer extending a case at the
+owning boundary over duplicating it at several layers. Do not add production
+exports or wrappers solely for tests. Demonstrate regression tests failing on
+the old code for the intended reason before fixing it.
+
+The fast suite covers local behavior with lightweight fakes. The HA contract
+suite exercises real framework types and lifecycle calls with external backend
+responses stubbed. It does not establish live authentication or device behavior.
+The tool-result regression runs a real conversation and checks the outgoing
+Codex payload. On modern HA it removes only the deprecated property to prove
+the integration does not rely on that compatibility shim.
 
 The older lanes also run with `probatio==0.11.2` installed alongside
 `voluptuous-openapi`. This catches converter/serializer mismatches when both
@@ -30,6 +63,9 @@ packages are available. Codex Assist selects the converter used by Home
 Assistant's LLM helper, rather than inferring it from installed packages.
 
 ```bash
+uv run --isolated --python 3.14 --with-requirements requirements_test_ha_202609.txt \
+  python -m pytest tests_ha -q
+
 uv run --isolated --python 3.14 --with-requirements requirements_test_ha_previous.txt \
   python -m pytest tests_ha -q
 

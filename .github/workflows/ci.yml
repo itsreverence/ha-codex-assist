@@ -53,10 +53,34 @@ jobs:
           python-version: "3.14"
 
       - name: Install Home Assistant test environment
-        run: pip install -r requirements_test_ha.txt
+        run: pip install -r requirements_test_ha_202609.txt
 
       - name: Run smoke tests against real Home Assistant
         run: python -m pytest tests_ha -q
+
+  ha-current:
+    name: Home Assistant 2026.10 stable contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install current Home Assistant test environment
+        run: |
+          uv venv --python 3.14 .venv-ha
+          uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt \
+            --override requirements_test_ha_overrides.txt
+
+      - name: Verify current Home Assistant
+        run: .venv-ha/bin/python -m pytest tests_ha -q
 
   ha-minimum:
     name: Home Assistant 2026.6 contract tests
