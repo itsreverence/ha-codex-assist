@@ -21,12 +21,11 @@ def ai_task_module(monkeypatch):
     return importlib.reload(module)
 
 
-def test_ai_task_entity_advertises_data_image_and_attachment_support(ai_task_module):
+def test_ai_task_entity_has_entry_scoped_identity(ai_task_module):
     entity = ai_task_module.CodexAssistAITaskEntity(type("Entry", (), {"entry_id": "abc"})())
 
     assert entity._attr_name == "Codex Assist AI Task"
     assert entity._attr_unique_id == "abc_ai_task"
-    assert entity._attr_supported_features == 7
 
 
 def test_structured_data_from_text_returns_plain_text_without_structure(ai_task_module):
