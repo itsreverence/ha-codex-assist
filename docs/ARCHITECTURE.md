@@ -87,6 +87,10 @@ Image-generation model choices remain a separate curated set. See
 Assist tool parameters and structured AI Task output use the converter exposed
 by Home Assistant's LLM helper. Home Assistant 2026.9 uses Probatio's
 `to_openapi`; older supported versions use `convert` from voluptuous-openapi.
+Home Assistant 2026.10 no longer exposes a converter on the helper, so Codex
+Assist then falls back to `probatio.to_openapi`, which Home Assistant core calls
+directly. The helper lookups come first, so an older release with Probatio also
+installed still uses its own converter.
 The converter must match the helper's serializer and unsupported-value sentinel,
 even when both libraries are installed. Home Assistant supplies the matching
 library; Codex Assist does not install a separate schema converter.
