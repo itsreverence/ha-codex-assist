@@ -2,8 +2,8 @@
 
 These verify the integration wires into real HA APIs (config entries,
 conversation platform, AI Task platform, chat log streaming) instead of the
-lightweight fakes used by the main test suite. Only the Codex backend HTTP
-calls are stubbed.
+lightweight fakes used by the main test suite. The Codex backend and selected
+tool, authentication, and discovery responses are stubbed.
 """
 
 from __future__ import annotations
@@ -125,16 +125,33 @@ async def test_conversation_turn_streams_codex_reply(
     assert speech == "The porch light is on."
 
 
-async def test_conversation_serializes_ha_state_tool_result(
+def _ha_tool_result(data, *, error=False):
+    """Return the tool response type required by the installed HA version."""
+    if hasattr(llm, "ToolResult"):
+        return llm.ToolResult(data=data, error=error)
+    return data
+
+
+@pytest.mark.parametrize("result_kind", ["state", "error", "empty"])
+async def test_conversation_serializes_ha_tool_result(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
+    result_kind: str,
 ) -> None:
-    """Replay a State-valued tool result through HA's real conversation loop."""
+    """Replay tool data through HA's conversation loop without the removed shim."""
     await _setup_entry(hass)
+    if hasattr(llm, "ToolResult"):
+        # Simulate removal of the deprecated property, not the new result contract.
+        monkeypatch.delattr(conversation.ToolResultContent, "tool_result", raising=False)
     hass.states.async_set("lock.test_door", "locked", {"friendly_name": "Test door"})
     state = hass.states.get("lock.test_door")
     assert state is not None
     tool_calls = []
+    payload = (
+        {"state": state}
+        if result_kind == "state"
+        else ({"error": "test_failure"} if result_kind == "error" else {})
+    )
 
     class FakeApiInstance:
         api_prompt = "A read-only test tool is available."
@@ -147,7 +164,7 @@ async def test_conversation_serializes_ha_state_tool_result(
 
         async def async_call_tool(self, tool_input: llm.ToolInput):
             tool_calls.append(tool_input)
-            return {"state": state}
+            return _ha_tool_result(payload, error=result_kind == "error")
 
     async def fake_get_api(*args: object, **kwargs: object):
         return FakeApiInstance()
@@ -182,10 +199,13 @@ async def test_conversation_serializes_ha_state_tool_result(
     assert len(tool_outputs) == 1
     assert tool_outputs[0]["call_id"] == "state-query-1"
     output = json.loads(tool_outputs[0]["output"])
-    assert output["state"]["entity_id"] == state.entity_id
-    assert output["state"]["state"] == "locked"
-    assert output["state"]["attributes"] == {"friendly_name": "Test door"}
-    assert output["state"]["last_changed"] == state.last_changed.isoformat()
+    if result_kind == "state":
+        assert output["state"]["entity_id"] == state.entity_id
+        assert output["state"]["state"] == "locked"
+        assert output["state"]["attributes"] == {"friendly_name": "Test door"}
+        assert output["state"]["last_changed"] == state.last_changed.isoformat()
+    else:
+        assert output == ({"error": "test_failure"} if result_kind == "error" else {})
 
 
 @pytest.mark.parametrize("content_type", ["tool_result", "tool_args"])
@@ -201,7 +221,11 @@ async def test_chat_log_serializes_timestamps_with_real_ha_helper(
             agent_id="conversation.codex_assist",
             tool_call_id="call-1",
             tool_name="HassTestTool",
-            tool_result=payload,
+            **(
+                {"result": _ha_tool_result(payload)}
+                if hasattr(llm, "ToolResult")
+                else {"tool_result": payload}
+            ),
         )
         field = "output"
     else:
@@ -341,9 +365,9 @@ async def test_multi_turn_web_search_sources_are_not_spoken_after_ha_tool_call(
         tools = [fake_tool]
         custom_serializer = None
 
-        async def async_call_tool(self, tool_input: llm.ToolInput) -> dict[str, bool]:
+        async def async_call_tool(self, tool_input: llm.ToolInput):
             assert tool_input.tool_name == "HassTestTool"
-            return {"success": True}
+            return _ha_tool_result({"success": True})
 
     async def fake_get_api(*args: object, **kwargs: object) -> FakeApiInstance:
         return FakeApiInstance()

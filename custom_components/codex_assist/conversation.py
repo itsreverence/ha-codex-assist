@@ -496,11 +496,14 @@ async def _codex_input_from_chat_log(
         if role == "system":
             continue
         if role == "tool_result":
+            # HA 2026.10 wraps tool data in ToolResult; older versions expose it directly.
+            result = getattr(content, "result", None)
+            tool_data = result.data if result is not None else content.tool_result
             input_items.append(
                 {
                     "type": "function_call_output",
                     "call_id": content.tool_call_id,
-                    "output": json_dumps(content.tool_result),
+                    "output": json_dumps(tool_data),
                 }
             )
             continue

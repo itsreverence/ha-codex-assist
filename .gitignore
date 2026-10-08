@@ -4,6 +4,7 @@ skills-lock.json
 .pytest_cache/
 .ruff_cache/
 .venv/
+.venv-ha/
 *.pyc
 .env
 .DS_Store
