@@ -202,7 +202,7 @@ async def test_stream_turn_runs_search_and_hides_search_round_from_caller():
 
     assert not any(isinstance(delta, CodexToolCallDelta) for delta in deltas)
     assert [delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)] == [
-        _message("IANA maintains them.")
+        *second_input[1:], _message("IANA maintains them.")
     ]
     assert [
         (delta.citation.title, delta.citation.url)
@@ -250,7 +250,7 @@ async def test_stream_turn_discards_search_round_text_and_annotations(search_fir
     deltas = await _collect(client, [{"type": "web_search"}])
 
     assert [delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)] == [
-        final_reasoning, _message(final_text)
+        *http.stream_calls[1][2]["json"]["input"][1:], final_reasoning, _message(final_text)
     ]
     assert not any(isinstance(delta, CodexToolCallDelta) for delta in deltas)
     assert [delta.text for delta in deltas if isinstance(delta, CodexTextDelta)] == [final_text]
@@ -272,10 +272,12 @@ async def test_stream_turn_lets_home_assistant_tool_win_over_search_in_same_roun
     ha_call = _function_call("call-h1", "HassTurnOn", {"name": "Kitchen"})
     calls = [search_call, ha_call] if search_first else [ha_call, search_call]
     message = _message("Using a Home Assistant tool.")
+    reasoning = {"type": "reasoning", "encrypted_content": "mixed-round"}
     http = FakeHttpClient(
         [
             FakeStreamResponse(
-                _text_round("Using a Home Assistant tool.")._lines + _round(*calls)._lines
+                _round(reasoning)._lines
+                + _text_round("Using a Home Assistant tool.")._lines + _round(*calls)._lines
             )
         ]
     )
@@ -292,7 +294,11 @@ async def test_stream_turn_lets_home_assistant_tool_win_over_search_in_same_roun
         "HassTurnOn"
     ]
     assert [delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)] == [
-        message, ha_call
+        reasoning, message, *calls,
+        {
+            "type": "function_call_output", "call_id": "call-s1",
+            "output": "Web search skipped because Home Assistant tools take priority.",
+        },
     ]
     assert [delta.text for delta in deltas if isinstance(delta, CodexTextDelta)] == [
         "Using a Home Assistant tool."
@@ -332,7 +338,7 @@ async def test_stream_turn_drops_search_tool_after_round_limit(unexpected_search
     ]
     assert not any(isinstance(delta, CodexToolCallDelta) for delta in deltas)
     assert [delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)] == [
-        _message("Best answer so far.")
+        *http.stream_calls[-1][2]["json"]["input"][1:], _message("Best answer so far.")
     ]
 
 
@@ -361,6 +367,33 @@ async def test_web_search_sends_open_urls_and_limits_output_and_citations():
     assert [citation.url for citation in result.citations] == [
         result["url"] for result in results[:MAX_SEARCH_CITATIONS]
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload", [{}, {"output": None}, {"output": []}, {"output": 3}, [], "text"]
+)
+async def test_web_search_rejects_malformed_success_payload(payload):
+    http = FakeHttpClient([], [FakeSearchResponse(200, payload)])
+    client = CodexClient(http_client=http, access_token="token-1")
+    result = await client.web_search("gpt-test", {"queries": ["a"]}, {})
+    assert result.text == "Web search failed: invalid response output."
+    assert "found nothing" not in result.text
+    assert result.citations == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("results", [None, []])
+@pytest.mark.parametrize("output", ["Output-only evidence.", "", "  "])
+async def test_web_search_accepts_valid_output_without_result_cards(output, results):
+    payload = {"output": output}
+    if results is not None:
+        payload["results"] = results
+    http = FakeHttpClient([], [FakeSearchResponse(200, payload)])
+    client = CodexClient(http_client=http, access_token="token-1")
+    result = await client.web_search("gpt-test", {"queries": ["a"]}, {})
+    assert result.text == (output if output.strip() else "Web search found nothing.")
+    assert result.citations == ()
 
 
 @pytest.mark.asyncio
@@ -453,8 +486,11 @@ async def test_stream_turn_streams_only_when_round_is_known_to_be_terminal(path)
 
     assert response.closed
     assert [delta.text for delta in deltas if isinstance(delta, CodexTextDelta)] == ["Hel", "lo"]
+    expected_native = [*http.stream_calls[-1][2]["json"]["input"], _message("Hello")]
+    if path == "ha_tool":
+        expected_native.append(ha_call)
     assert [delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)] == (
-        [_message("Hello"), ha_call] if path == "ha_tool" else [_message("Hello")]
+        expected_native
     )
 
 

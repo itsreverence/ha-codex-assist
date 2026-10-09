@@ -49,7 +49,7 @@ WEB_SEARCH_FUNCTION = {
             "open_urls": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "URLs to read in full",
+                "description": "URLs to read for additional page text; results may be truncated",
             },
         },
         "required": ["queries"],
@@ -257,10 +257,18 @@ class CodexClient:
             if not searches or other_tool_call:
                 for buffered_delta in buffered_deltas:
                     yield buffered_delta
-                # Done, or Home Assistant runs its own tools next: return the items it can replay.
-                for item in round_items:
-                    if not _is_search_call_item(item):
-                        yield CodexResponseItemDelta(item)
+                # Retain the complete ordinary-function transcript privately, not as
+                # visible text. Earlier search evidence is needed after HA handoff
+                # and on later user turns, even when the final message omits it.
+                for item in [*items[len(input_items):], *round_items]:
+                    yield CodexResponseItemDelta(item)
+                # HA has priority in a mixed round. Close skipped search calls with
+                # explicit feedback rather than deleting calls tied to reasoning.
+                for call in searches.values():
+                    yield CodexResponseItemDelta({
+                        "type": "function_call_output", "call_id": call.id,
+                        "output": "Web search skipped because Home Assistant tools take priority.",
+                    })
                 return
             if search_calls + len(searches) > MAX_SEARCH_CALLS:
                 raise RuntimeError("Codex exceeded the web search call budget")
@@ -316,7 +324,9 @@ class CodexClient:
         except ValueError:
             return CodexSearchResult("Web search returned no readable result.")
         output = payload.get("output") if isinstance(payload, dict) else None
-        if not isinstance(output, str) or not output.strip():
+        if not isinstance(output, str):
+            return CodexSearchResult("Web search failed: invalid response output.")
+        if not output.strip():
             return CodexSearchResult("Web search found nothing.")
         return CodexSearchResult(
             _SEARCH_MARKUP.sub("", output)[:MAX_SEARCH_OUTPUT_CHARS],
@@ -512,10 +522,6 @@ def _non_empty_strings(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str) and item.strip()]
-
-
-def _is_search_call_item(item: dict[str, Any]) -> bool:
-    return item.get("type") == "function_call" and item.get("name") == WEB_SEARCH_TOOL_NAME
 
 
 def _responses_payload(

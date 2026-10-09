@@ -126,7 +126,11 @@ paths that cannot start another internal search round.
 `tests_ha/test_web_search_delivery.py` exercises the real conversation and AI Task
 owners with backend HTTP substituted. It checks search followed by URL opening,
 final-only speech and task data, safe source cards, next-turn native replay,
-HA tool handoff, and search-endpoint 401 refresh. These tests do not establish
+HA tool handoff, and search-endpoint 401 refresh. The handoff and next-user-turn
+checks require a unique searched fact and URL in the outgoing model payload,
+without repeating either in the final answer. They also check complete search
+call/output pairs, preserved reasoning, a single HA execution, and private-state
+redaction in HA logs, subscriptions, and traces. These tests do not establish
 live endpoint acceptance or account/model compatibility.
 
 Before releasing a search-path change, test the exact candidate against the real
@@ -139,6 +143,24 @@ credentials. Keep tokens and raw native state out of test reports.
 Replace `MODEL_ID` below with a model from the integration’s account-discovered
 list. The probe requires an explicit model so it cannot silently test a retired
 hardcoded default.
+
+To exercise the integration's client-side search path, run:
+
+```bash
+uv run python scripts/probe_client_search.py --model MODEL_ID --dry-run
+```
+
+With separate live authorization and `CODEX_ASSIST_ACCESS_TOKEN` already set to
+an integration-owned token, omit `--dry-run`. This probe performs a direct query,
+a direct URL open, a model-selected search, and native replay. Its output contains
+sanitized counts and booleans, not answers, URLs, tokens, or raw native state.
+The probe requires every direct and model-selected search to return HTTP 200
+with usable, nonempty normalized output. Errors, malformed output, and empty
+results fail the gate even if the model still answers; direct-stage successes
+cannot substitute for model-selected search success. Completion proves exercised
+transport paths, not semantic answer accuracy.
+The probe does not connect to HA or verify device effects, speech, source cards,
+or other UI behavior. Test those boundaries separately through the real owners.
 
 When the hosted-search payload, model defaults, citation handling, or backend contract changes:
 

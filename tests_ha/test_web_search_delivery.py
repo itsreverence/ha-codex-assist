@@ -6,6 +6,7 @@ availability, authentication, device effects or model choice of sources.
 from __future__ import annotations
 
 import json
+import logging
 from collections import deque
 from urllib.parse import parse_qs
 
@@ -13,6 +14,8 @@ import httpx
 import pytest
 import voluptuous as vol
 from homeassistant.components import ai_task, conversation
+from homeassistant.components.conversation import trace as conversation_trace
+from homeassistant.components.conversation.chat_log import async_subscribe_chat_logs
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
@@ -143,10 +146,16 @@ async def test_search_delivers_only_final_text_through_real_ha(
         assert followup.response.speech["plain"]["speech"] == "A follow-up answer."
         replay = requests[-1][1]["input"]
         assert replay == [
-            {"role": "user", "content": "Look up the documentation."},
+            *requests[-2][1]["input"],
             message("The verified final answer."),
             {"role": "user", "content": "Summarize that."},
         ]
+        assert [item["call_id"] for item in replay if item.get("type") == "function_call"] == [
+            "search-1", "search-2",
+        ]
+        assert [
+            item["call_id"] for item in replay if item.get("type") == "function_call_output"
+        ] == ["search-1", "search-2"]
     else:
         result = await ai_task.async_generate_data(
             hass, task_name="Search task", instructions="Look up the documentation.",
@@ -164,11 +173,18 @@ async def test_search_delivers_only_final_text_through_real_ha(
     assert any(tool.get("name") == "web_search" for tool in first_model["tools"])
 
 
+@pytest.mark.parametrize("replay_boundary", ["ha_handoff", "next_user"])
 async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
-    hass: HomeAssistant, search_entry, backend, monkeypatch,
+    hass: HomeAssistant, search_entry, backend, monkeypatch, replay_boundary, caplog, request,
 ):
     """Real HA executes a registered harmless tool, not a mocked chat-log stream."""
     executed = []
+    conversation_trace.async_clear_traces()
+    caplog.set_level(logging.DEBUG, logger=conversation.ChatLog.__module__)
+    public_events = []
+    request.addfinalizer(async_subscribe_chat_logs(
+        hass, lambda conversation_id, event_type, data: public_events.append(data),
+    ))
 
     class Reading(llm.Tool):
         name = "HassTestReading"
@@ -194,26 +210,77 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
 
     monkeypatch.setattr(llm, "async_get_api", get_api)
     planned, requests = backend
-    model_round(planned, [call_event("search-1", "web_search", {"queries": ["synthetic"]})])
-    search_reply(planned)
-    ha_call = call_event("reading-1", "HassTestReading", {})
+    search_call = call_event("search-1", "web_search", {"queries": ["synthetic"]})
+    search_reasoning = {"type": "reasoning", "encrypted_content": "private-search-reasoning"}
+    hidden_text = "An unverified search preamble."
     model_round(planned, [
-        call_event("skipped-search", "web_search", {"queries": ["unneeded"]}), ha_call,
+        {"type": "response.output_item.done", "item": search_reasoning},
+        *text_events(hidden_text), search_call,
     ])
-    model_round(planned, text_events("The reading is seven."))
+    fact = "Synthetic calibration constant: violet-otter-193."
+    url = "https://example.com/calibration/retained-evidence"
+    output = f"Calibration ({url})\n{fact}"
+    planned.append(("/backend-api/codex/alpha/search", 200, {
+        "output": output, "results": [{"title": "Calibration", "url": url}],
+    }))
+    ha_call = call_event("reading-1", "HassTestReading", {})
+    skipped_call = call_event("skipped-search", "web_search", {"queries": ["unneeded"]})
+    mixed_reasoning = {"type": "reasoning", "encrypted_content": "private-mixed-reasoning"}
+    model_round(planned, [
+        {"type": "response.output_item.done", "item": mixed_reasoning}, skipped_call, ha_call,
+    ])
+    # Neither the fact nor the URL is repeated by the handoff or final message.
+    final_text = "The reading is seven."
+    model_round(planned, text_events(final_text))
     result = await conversation.async_converse(
         hass, "Search and get the test reading.", None, Context(),
         agent_id="conversation.codex_assist",
     )
-    assert result.response.speech["plain"]["speech"] == "The reading is seven."
-    assert "https://example.com/docs" in result.response.card["simple"]["content"]
+    assert result.response.speech["plain"]["speech"] == final_text
+    assert url in result.response.card["simple"]["content"]
+    handoff = requests[-1][1]["input"]
+    model_round(planned, text_events("A follow-up answer."))
+    followup = await conversation.async_converse(
+        hass, "Compare that with the calibration.", result.conversation_id, Context(),
+        agent_id="conversation.codex_assist",
+    )
+    assert followup.response.speech["plain"]["speech"] == "A follow-up answer."
     assert executed == ["reading-1"]
-    assert len(requests) == 4
-    assert requests[-1][1]["input"][-2:] == [
-        ha_call["item"],
-        {"type": "function_call_output", "call_id": "reading-1", "output": '{"reading":7}'},
+    assert len(requests) == 5
+    replay = handoff if replay_boundary == "ha_handoff" else requests[-1][1]["input"]
+    searched_output = {"type": "function_call_output", "call_id": "search-1", "output": output}
+    assert searched_output in replay, "Searched fact and URL must survive the owner replay boundary"
+    assert replay[:7] == [
+        {"role": "user", "content": "Search and get the test reading."},
+        search_reasoning, message(hidden_text), search_call["item"], searched_output,
+        mixed_reasoning, skipped_call["item"],
     ]
-    assert "skipped-search" not in json.dumps(requests[-1][1]["input"])
+    assert replay[7] == ha_call["item"]
+    skipped_output = replay[8]
+    assert skipped_output["type"] == "function_call_output"
+    assert skipped_output["call_id"] == "skipped-search"
+    assert "skipped" in skipped_output["output"].lower()
+    assert replay[9] == {
+        "type": "function_call_output", "call_id": "reading-1", "output": '{"reading":7}',
+    }
+    assert replay[10:] == ([] if replay_boundary == "ha_handoff" else [
+        message(final_text), {"role": "user", "content": "Compare that with the calibration."},
+    ])
+    calls = [item["call_id"] for item in replay if item.get("type") == "function_call"]
+    outputs = [item["call_id"] for item in replay if item.get("type") == "function_call_output"]
+    assert calls == outputs == ["search-1", "skipped-search", "reading-1"]
+    assert fact not in final_text and url not in final_text
+    assert hidden_text not in result.response.speech["plain"]["speech"]
+    assert public_events
+    traces = str([trace.as_dict() for trace in conversation_trace.async_get_traces()])
+    assert "'redacted': True" in traces
+    native_count = len(handoff) - 2  # User and HA result are outside native state.
+    assert f"'item_count': {native_count}" in traces
+    assert f"CodexNativeState(item_count={native_count})" in caplog.text
+    for private_text in (fact, hidden_text, "private-search-reasoning", "private-mixed-reasoning"):
+        assert private_text not in caplog.text
+        assert private_text not in traces
+        assert private_text not in str(public_events)
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
