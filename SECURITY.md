@@ -29,7 +29,7 @@ The diagram below covers the device-control path. Hosted search and AI Task have
 
 Codex or ChatGPT may request an action, but Codex Assist routes that request through Home Assistant's Assist LLM API. Home Assistant limits execution to the entities exposed to Assist.
 
-Hosted web search is disabled by default. When enabled, the Codex backend may use the current model turn, including the conversation context already supplied for Assist, to formulate a search. Codex Assist does not add a separate location feed or bypass Home Assistant's exposed-entity boundary. Citation links are accepted only from structured backend annotations and must use validated HTTP(S) URLs before they are displayed.
+Hosted web search is disabled by default. When enabled, the Codex backend may use the current model turn, including the conversation context already supplied for Assist, to formulate a search. The model's search queries go to the same backend. Codex Assist adds only the Home Assistant country setting as an approximate search location (no city, coordinates, or zone), and does not bypass Home Assistant's exposed-entity boundary. Citation links are accepted only from structured backend search results or annotations and must use validated HTTP(S) URLs before they are displayed.
 
 AI Task prompts and supported image attachments are sent to the Codex backend when you run those tasks. Attachment handling is limited to image files, at most four files, 10 MiB per file, and 20 MiB total. Generated images are returned through Home Assistant's native AI Task result type. Structured tasks keep hosted web search disabled so citation text cannot corrupt schema-constrained output.
 

@@ -211,6 +211,15 @@ def test_codex_tools_adds_opt_in_web_search_without_ha_tools(conversation_module
     ) == [{"type": "web_search"}]
 
 
+def test_codex_tools_pass_home_country_to_web_search(conversation_module):
+    chat_log = FakeChatLog()
+    chat_log.hass = type("Hass", (), {"config": type("Config", (), {"country": "US"})()})()
+
+    assert conversation_module._codex_tools_from_chat_log(chat_log, enable_web_search=True) == [
+        {"type": "web_search", "user_location": {"type": "approximate", "country": "US"}}
+    ]
+
+
 @pytest.mark.asyncio
 async def test_codex_stream_captures_citations_without_streaming_urls(conversation_module):
     async def stream():

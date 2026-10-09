@@ -241,7 +241,7 @@ async def test_stream_turn_correlates_interleaved_function_call_arguments_by_ite
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_yields_structured_web_citations_and_requests_sources():
+async def test_stream_turn_yields_structured_url_citations():
     citation = {
         "type": "url_citation",
         "title": "IANA Reserved Domains",
@@ -282,7 +282,6 @@ async def test_stream_turn_yields_structured_web_citations_and_requests_sources(
             model="gpt-5.4",
             instructions="Use search.",
             input_items=[{"role": "user", "content": "Who maintains Example Domains?"}],
-            tools=[{"type": "web_search"}],
             reasoning_effort="low",
         )
     ]
@@ -291,10 +290,6 @@ async def test_stream_turn_yields_structured_web_citations_and_requests_sources(
     assert [(citation.title, citation.url) for citation in citations] == [
         ("IANA Reserved Domains", "https://www.iana.org/help/example-domains"),
         ("IANA Reserved Domains", "https://www.iana.org/help/example-domains"),
-    ]
-    assert http.calls[0][2]["json"]["include"] == [
-        "reasoning.encrypted_content",
-        "web_search_call.action.sources",
     ]
 
 

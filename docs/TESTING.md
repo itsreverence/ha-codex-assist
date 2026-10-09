@@ -125,6 +125,9 @@ hardcoded default.
 When the hosted-search payload, model defaults, citation handling, or backend contract changes:
 
 1. Run `uv run python scripts/probe_web_search_contract.py --model MODEL_ID --dry-run` and its tests.
+   The probe checks the backend's built-in `web_search` tool. The integration does not use that
+   tool (it runs search on `alpha/search`, see [ARCHITECTURE.md](ARCHITECTURE.md)), so the probe
+   shows whether the built-in tool works again, not whether integration search works.
 2. In Home Assistant, enable web search and ask a current-information question that requires search.
 3. Verify the displayed answer includes validated clickable citations and the spoken answer contains no raw URLs or source block.
 4. Verify a long spoken answer completes without a new Codex Assist or audio error.

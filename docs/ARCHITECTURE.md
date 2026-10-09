@@ -15,7 +15,7 @@ flowchart LR
     Bridge --> Exposed[Entities exposed to Assist]
 
     Codex --> Reply[Streamed conversation reply]
-    Codex --> Search[Optional hosted web search]
+    Codex --> Search[Optional web search on the Codex search endpoint]
     Search --> Citations[Validated visual citations]
     Codex --> TaskResult[Text, structured data, or generated image]
 
@@ -33,7 +33,7 @@ flowchart LR
 - **Runtime token coordinator** serializes refresh-token rotation per config entry. Concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another.
 - **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream.
 - **Native transcript state** retains completed provider output items for stateless replay. The state is deep-copy isolated and remains opaque to normal Home Assistant logs, listeners, and conversation traces, which receive only redacted metadata.
-- **Hosted web search** is an explicit option. When enabled, it adds the backend `web_search` tool and converts structured URL annotations into a validated source card. Unsupported or unsafe citation URLs are discarded.
+- **Hosted web search** is an explicit option. The Codex backend fails responses that use its built-in `web_search` tool, so the Codex client runs search the way Codex CLI does: it offers the model a `web_search` function, sends each call to the backend's `alpha/search` endpoint (undocumented; Codex CLI depends on it), and returns the result text to the model in a follow-up round, at most 4 search rounds per turn. Search rounds stay inside the client; Home Assistant sees only the final round. Results follow the Home Assistant country setting. The top results of each search become a validated source card. Unsupported or unsafe citation URLs are discarded.
 - **Assist tool bridge** maps model-requested device actions into Home Assistant's Assist LLM API. It does not call services directly.
 
 ## Assist conversation flow

@@ -82,7 +82,7 @@ Codex Assist does **not** expose a raw “call any Home Assistant service” bri
 
 Start with harmless lights or read-only questions. Keep locks, alarms, garage doors, water shutoff valves, covers, and other sensitive devices unexposed unless you deliberately want Assist control there.
 
-Hosted web search sends the current model turn to the Codex backend when enabled. AI Task prompts and supported attachments are also sent to the backend when you run those tasks. See the [security policy](SECURITY.md) for the full data and control boundaries.
+Hosted web search sends the current model turn and the model's search queries to the Codex backend when enabled. AI Task prompts and supported attachments are also sent to the backend when you run those tasks. See the [security policy](SECURITY.md) for the full data and control boundaries.
 
 ## User guide
 
