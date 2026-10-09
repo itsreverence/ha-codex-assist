@@ -13,14 +13,15 @@ from .codex_image import image_model_quality, validate_image_size
 
 CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex"
 CODEX_STREAM_TIMEOUT = 300
-# Web search runs client side, like the Codex CLI: the hosted {"type": "web_search"} tool fails on
-# the Codex backend (response.failed, server_error, after the search ran; seen 2026-10-09), and the
-# CLI moved to the standalone alpha/search endpoint. The model calls a `web_search` function; the
-# client runs it there and feeds the result back, so callers never see the search rounds.
+# Bridge model function calls to the standalone endpoint also used by Codex CLI.
+# This avoids the hosted web_search server_error reported on the Codex backend,
+# without claiming all models have retired hosted search or exact CLI protocol parity.
+# Internal search-round text is withheld from the caller.
 CODEX_SEARCH_PATH = "alpha/search"
 CODEX_SEARCH_TIMEOUT = 60
 WEB_SEARCH_TOOL_NAME = "web_search"
 MAX_SEARCH_ROUNDS = 4
+MAX_SEARCH_CALLS = 4
 MAX_SEARCH_OUTPUT_CHARS = 24000
 # Each search call adds its top results to the displayed source card.
 MAX_SEARCH_CITATIONS = 5
@@ -35,7 +36,7 @@ WEB_SEARCH_FUNCTION = {
     "description": (
         "Search the web for current information. Returns the result pages as text with their URLs. "
         "Use 1-4 specific queries; pass URLs from earlier results in open_urls to read a page "
-        "in full."
+        "for additional page text. Results may be truncated."
     ),
     "parameters": {
         "type": "object",
@@ -222,31 +223,50 @@ class CodexClient:
             return
 
         items = list(input_items)
+        search_calls = 0
         for round_number in range(MAX_SEARCH_ROUNDS + 1):
-            round_tools = tools if round_number < MAX_SEARCH_ROUNDS else [
+            search_allowed = round_number < MAX_SEARCH_ROUNDS and search_calls < MAX_SEARCH_CALLS
+            round_tools = tools if search_allowed else [
                 tool for tool in tools if tool.get("name") != WEB_SEARCH_TOOL_NAME
             ]
             searches: dict[str, CodexToolCall] = {}
             other_tool_call = False
             round_items: list[dict[str, Any]] = []
+            buffered_deltas: list[CodexStreamDelta] = []
             async for delta in self._stream_once(input_items=items, tools=round_tools, **options):
                 if isinstance(delta, CodexResponseItemDelta):
                     round_items.append(delta.item)
                     continue
                 if isinstance(delta, CodexToolCallDelta):
                     if delta.tool_call.name == WEB_SEARCH_TOOL_NAME:
+                        if not search_allowed:
+                            raise RuntimeError(
+                                "Codex returned a search call while search is disabled"
+                            )
                         searches[delta.tool_call.id] = delta.tool_call
                         continue
                     other_tool_call = True
-                yield delta
-            if not searches or other_tool_call or round_number == MAX_SEARCH_ROUNDS:
+                # Until the round ends, even early text may belong to an internal search.
+                # HA tools or the search-disabled last round make the handoff certain,
+                # so those paths can still stream without waiting for the response to end.
+                buffered_deltas.append(delta)
+                if other_tool_call or not search_allowed:
+                    for buffered_delta in buffered_deltas:
+                        yield buffered_delta
+                    buffered_deltas.clear()
+            if not searches or other_tool_call:
+                for buffered_delta in buffered_deltas:
+                    yield buffered_delta
                 # Done, or Home Assistant runs its own tools next: return the items it can replay.
                 for item in round_items:
                     if not _is_search_call_item(item):
                         yield CodexResponseItemDelta(item)
                 return
+            if search_calls + len(searches) > MAX_SEARCH_CALLS:
+                raise RuntimeError("Codex exceeded the web search call budget")
             items.extend(round_items)
             for call in searches.values():
+                search_calls += 1
                 result = await self.web_search(model, call.arguments, search_settings)
                 for citation in result.citations:
                     yield CodexCitationDelta(citation)

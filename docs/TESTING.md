@@ -118,6 +118,24 @@ uv run --isolated --python 3.14 --with-requirements requirements_test_ha_previou
 
 ## Hosted-search compatibility
 
+`tests/test_codex_client_web_search.py` covers the standalone search loop through
+synthetic HTTP and SSE responses. It checks intermediate-text suppression,
+search-call budgets, cancellation, auth and rate-limit errors, and streaming on
+paths that cannot start another internal search round.
+
+`tests_ha/test_web_search_delivery.py` exercises the real conversation and AI Task
+owners with backend HTTP substituted. It checks search followed by URL opening,
+final-only speech and task data, safe source cards, next-turn native replay,
+HA tool handoff, and search-endpoint 401 refresh. These tests do not establish
+live endpoint acceptance or account/model compatibility.
+
+Before releasing a search-path change, test the exact candidate against the real
+backend with integration-owned authentication: a search, a direct URL open, a
+follow-up question, and a search followed by a harmless HA tool. Confirm that
+speech and task data contain only the final answer, and inspect retained history
+for backend rejection on the follow-up. Do not borrow another application's
+credentials. Keep tokens and raw native state out of test reports.
+
 Replace `MODEL_ID` below with a model from the integration’s account-discovered
 list. The probe requires an explicit model so it cannot silently test a retired
 hardcoded default.
