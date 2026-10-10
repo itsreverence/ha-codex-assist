@@ -169,7 +169,10 @@ When the hosted-search payload, model defaults, citation handling, or backend co
    tool (it runs search on `alpha/search`, see [ARCHITECTURE.md](ARCHITECTURE.md)), so the probe
    shows whether the built-in tool works again, not whether integration search works.
 2. In Home Assistant, enable web search and ask a current-information question that requires search.
-3. Verify the displayed answer includes validated clickable citations and the spoken answer contains no raw URLs or source block.
+3. Check the spoken answer for raw URLs or a source block. Citation metadata in the
+   response does not prove a client renders links. The previously inspected stock
+   Assist browser ignored the Sources card; test any target client's rendering
+   separately rather than treating backend card presence as a UI pass.
 4. Verify a long spoken answer completes without a new Codex Assist or audio error.
 5. If an integration-owned OAuth token is available, run the sanitized live probe:
 
