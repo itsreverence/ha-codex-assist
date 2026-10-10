@@ -48,7 +48,7 @@ for this issue and older Home Assistant compatibility errors.
 - Streams replies while Codex is answering.
 - Reads and controls only the entities Home Assistant exposes to Assist.
 - Supports simple follow-up actions through Home Assistant's native Assist LLM API.
-- Can optionally use hosted web search. Search is off by default. Visible results keep validated source links in a separate card, while the integration instructs the model to omit raw URLs and source blocks from spoken responses.
+- Can optionally search through Codex's standalone search endpoint. Search is off by default. The integration asks the model to omit raw URLs and source blocks from spoken responses, but this is not guaranteed. It includes validated source metadata in the response; the previously inspected stock Assist browser did not render that card.
 
 ### AI Task
 

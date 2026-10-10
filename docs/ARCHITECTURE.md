@@ -43,7 +43,7 @@ flowchart LR
 3. Codex Assist sends the conversation to the Codex-compatible backend.
 4. If Codex requests a Home Assistant tool call, Codex Assist maps that request into Home Assistant's Assist LLM API.
 5. Home Assistant validates and executes the tool call using its normal exposed-entity controls.
-6. When hosted search is enabled, Codex Assist keeps validated citations in a displayed card and instructs the model to keep raw URLs and source blocks out of spoken prose.
+6. When search is enabled, Codex Assist includes validated source metadata in the response. The previously inspected stock Assist browser did not render the Sources card. The integration asks the model to keep raw URLs and source blocks out of speech, without guaranteeing that it will.
 7. Codex Assist returns the final response to Home Assistant.
 
 For stateless multi-turn requests, Codex Assist keeps completed provider output items in Home Assistant's in-memory chat log and replays them before later user or function-output items. This can include encrypted reasoning state and assistant message phase. The integration does not decrypt that state. Native state is removed from normal delta listeners, uses redacted debug formatting, and serializes as an item count rather than provider content in conversation traces.
