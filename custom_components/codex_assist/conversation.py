@@ -639,7 +639,12 @@ def _codex_tools_from_chat_log(
             for tool in chat_log.llm_api.tools
         )
     if enable_web_search:
-        tools.append({"type": "web_search"})
+        search: dict[str, Any] = {"type": "web_search"}
+        # Search results follow the home country; codex_client runs search on alpha/search.
+        country = getattr(getattr(getattr(chat_log, "hass", None), "config", None), "country", None)
+        if isinstance(country, str) and country:
+            search["user_location"] = {"type": "approximate", "country": country}
+        tools.append(search)
     return tools
 
 

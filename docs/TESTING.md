@@ -118,13 +118,56 @@ uv run --isolated --python 3.14 --with-requirements requirements_test_ha_previou
 
 ## Hosted-search compatibility
 
+`tests/test_codex_client_web_search.py` covers the standalone search loop through
+synthetic HTTP and SSE responses. It checks intermediate-text suppression,
+search-call budgets, cancellation, auth and rate-limit errors, and streaming on
+paths that cannot start another internal search round.
+
+`tests_ha/test_web_search_delivery.py` exercises the real conversation and AI Task
+owners with backend HTTP substituted. It checks search followed by URL opening,
+final-only speech and task data, safe source cards, next-turn native replay,
+HA tool handoff, and search-endpoint 401 refresh. The handoff and next-user-turn
+checks require a unique searched fact and URL in the outgoing model payload,
+without repeating either in the final answer. They also check complete search
+call/output pairs, preserved reasoning, a single HA execution, and private-state
+redaction in HA logs, subscriptions, and traces. These tests do not establish
+live endpoint acceptance or account/model compatibility.
+
+Before releasing a search-path change, test the exact candidate against the real
+backend with integration-owned authentication: a search, a direct URL open, a
+follow-up question, and a search followed by a harmless HA tool. Confirm that
+speech and task data contain only the final answer, and inspect retained history
+for backend rejection on the follow-up. Do not borrow another application's
+credentials. Keep tokens and raw native state out of test reports.
+
 Replace `MODEL_ID` below with a model from the integration’s account-discovered
 list. The probe requires an explicit model so it cannot silently test a retired
 hardcoded default.
 
+To exercise the integration's client-side search path, run:
+
+```bash
+uv run python scripts/probe_client_search.py --model MODEL_ID --dry-run
+```
+
+With separate live authorization and `CODEX_ASSIST_ACCESS_TOKEN` already set to
+an integration-owned token, omit `--dry-run`. This probe performs a direct query,
+a direct URL open, a model-selected search, and native replay. Its output contains
+sanitized counts and booleans, not answers, URLs, tokens, or raw native state.
+The probe requires every direct and model-selected search to return HTTP 200
+with usable, nonempty normalized output. Errors, malformed output, and empty
+results fail the gate even if the model still answers; direct-stage successes
+cannot substitute for model-selected search success. Completion proves exercised
+transport paths, not semantic answer accuracy.
+The probe does not connect to HA or verify device effects, speech, source cards,
+or other UI behavior. Test those boundaries separately through the real owners.
+
 When the hosted-search payload, model defaults, citation handling, or backend contract changes:
 
 1. Run `uv run python scripts/probe_web_search_contract.py --model MODEL_ID --dry-run` and its tests.
+   The probe checks the backend's built-in `web_search` tool. The integration does not use that
+   tool (it runs search on `alpha/search`, see [ARCHITECTURE.md](ARCHITECTURE.md)), so the probe
+   shows whether the built-in tool works again, not whether integration search works.
 2. In Home Assistant, enable web search and ask a current-information question that requires search.
 3. Verify the displayed answer includes validated clickable citations and the spoken answer contains no raw URLs or source block.
 4. Verify a long spoken answer completes without a new Codex Assist or audio error.

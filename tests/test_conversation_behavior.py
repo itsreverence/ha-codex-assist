@@ -211,6 +211,15 @@ def test_codex_tools_adds_opt_in_web_search_without_ha_tools(conversation_module
     ) == [{"type": "web_search"}]
 
 
+def test_codex_tools_pass_home_country_to_web_search(conversation_module):
+    chat_log = FakeChatLog()
+    chat_log.hass = type("Hass", (), {"config": type("Config", (), {"country": "US"})()})()
+
+    assert conversation_module._codex_tools_from_chat_log(chat_log, enable_web_search=True) == [
+        {"type": "web_search", "user_location": {"type": "approximate", "country": "US"}}
+    ]
+
+
 @pytest.mark.asyncio
 async def test_codex_stream_captures_citations_without_streaming_urls(conversation_module):
     async def stream():
@@ -585,6 +594,50 @@ async def test_codex_input_replays_owned_native_items_without_reconstruction(
             "call_id": "call-1",
             "output": json.dumps({"success": True}),
         },
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("search_count", [4, 8])
+async def test_search_native_history_keeps_complete_pairs_at_24_item_trim(
+    conversation_module, search_count,
+):
+    """Trim whole user turns, never amputate reasoning or search call/output pairs."""
+    def search_history(prefix, count):
+        items = []
+        for index in range(count):
+            call_id = f"{prefix}-{index}"
+            items.extend([
+                {"type": "reasoning", "encrypted_content": f"reasoning-{call_id}"},
+                {
+                    "type": "function_call", "name": "web_search", "call_id": call_id,
+                    "arguments": '{"queries":["synthetic"]}',
+                },
+                {
+                    "type": "function_call_output", "call_id": call_id,
+                    "output": f"Fact {call_id} https://example.com/{call_id}",
+                },
+            ])
+        items.append({"type": "message", "role": "assistant", "content": []})
+        return items
+
+    old_native = search_history("old", 4)
+    newest_native = search_history("new", search_count)
+    chat_log = FakeChatLog([
+        FakeContent(role="user", content="old request"),
+        FakeContent(role="assistant", native=CodexNativeState(old_native)),
+        FakeContent(role="user", content="new request"),
+        FakeContent(role="assistant", native=CodexNativeState(newest_native)),
+    ])
+    if search_count == 8:
+        with pytest.raises(ValueError, match="contains 26 items; maximum is 24"):
+            await conversation_module._codex_input_from_chat_log(object(), chat_log)
+        return
+    replay = await conversation_module._codex_input_from_chat_log(object(), chat_log)
+    assert replay == [{"role": "user", "content": "new request"}, *newest_native]
+    assert len(replay) <= 24
+    assert [item["call_id"] for item in replay if item.get("type") == "function_call"] == [
+        item["call_id"] for item in replay if item.get("type") == "function_call_output"
     ]
 
 

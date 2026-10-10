@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import re
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -11,6 +13,49 @@ from .codex_image import image_model_quality, validate_image_size
 
 CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex"
 CODEX_STREAM_TIMEOUT = 300
+# Bridge model function calls to the standalone endpoint also used by Codex CLI.
+# This avoids the hosted web_search server_error reported on the Codex backend,
+# without claiming all models have retired hosted search or exact CLI protocol parity.
+# Internal search-round text is withheld from the caller.
+CODEX_SEARCH_PATH = "alpha/search"
+CODEX_SEARCH_TIMEOUT = 60
+WEB_SEARCH_TOOL_NAME = "web_search"
+MAX_SEARCH_ROUNDS = 4
+MAX_SEARCH_CALLS = 4
+MAX_SEARCH_OUTPUT_CHARS = 24000
+# Each search call adds its top results to the displayed source card.
+MAX_SEARCH_CITATIONS = 5
+# The search text tags each result with a citation marker (U+E200 "cite" U+E202 ref U+E201) and
+# "[wordlim: N]"; a model that sees them copies them into its answer, so both are removed.
+_SEARCH_MARKUP = re.compile(
+    "\ue200cite\ue202[^\ue201]*\ue201 ?|\\[wordlim: \\d+\\] ?|[\ue200-\ue202]"
+)
+WEB_SEARCH_FUNCTION = {
+    "type": "function",
+    "name": WEB_SEARCH_TOOL_NAME,
+    "description": (
+        "Search the web for current information. Returns the result pages as text with their URLs. "
+        "Use 1-4 specific queries; pass URLs from earlier results in open_urls to read a page "
+        "for additional page text. Results may be truncated."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "1-4 search queries",
+            },
+            "open_urls": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "URLs to read for additional page text; results may be truncated",
+            },
+        },
+        "required": ["queries"],
+    },
+    "strict": False,
+}
 
 
 class AsyncPostClient(Protocol):
@@ -67,6 +112,12 @@ class CodexCitation:
 @dataclass(frozen=True)
 class CodexCitationDelta:
     citation: CodexCitation
+
+
+@dataclass(frozen=True)
+class CodexSearchResult:
+    text: str
+    citations: tuple[CodexCitation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -145,6 +196,144 @@ class CodexClient:
         )
 
     async def stream_turn(
+        self,
+        *,
+        model: str,
+        instructions: str,
+        input_items: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        reasoning_effort: str | None = None,
+        reasoning_summary: str | None = None,
+        text_verbosity: str | None = None,
+        text_format: dict[str, Any] | None = None,
+    ) -> AsyncIterator[CodexStreamDelta]:
+        """Stream one turn; a hosted web_search tool becomes a client-side search loop."""
+        tools, search_settings = _client_side_search_tools(tools)
+        options = {
+            "model": model,
+            "instructions": instructions,
+            "reasoning_effort": reasoning_effort,
+            "reasoning_summary": reasoning_summary,
+            "text_verbosity": text_verbosity,
+            "text_format": text_format,
+        }
+        if search_settings is None:
+            async for delta in self._stream_once(input_items=input_items, tools=tools, **options):
+                yield delta
+            return
+
+        items = list(input_items)
+        search_calls = 0
+        for round_number in range(MAX_SEARCH_ROUNDS + 1):
+            search_allowed = round_number < MAX_SEARCH_ROUNDS and search_calls < MAX_SEARCH_CALLS
+            round_tools = tools if search_allowed else [
+                tool for tool in tools if tool.get("name") != WEB_SEARCH_TOOL_NAME
+            ]
+            searches: dict[str, CodexToolCall] = {}
+            other_tool_call = False
+            round_items: list[dict[str, Any]] = []
+            buffered_deltas: list[CodexStreamDelta] = []
+            async for delta in self._stream_once(input_items=items, tools=round_tools, **options):
+                if isinstance(delta, CodexResponseItemDelta):
+                    round_items.append(delta.item)
+                    continue
+                if isinstance(delta, CodexToolCallDelta):
+                    if delta.tool_call.name == WEB_SEARCH_TOOL_NAME:
+                        if not search_allowed:
+                            raise RuntimeError(
+                                "Codex returned a search call while search is disabled"
+                            )
+                        searches[delta.tool_call.id] = delta.tool_call
+                        continue
+                    other_tool_call = True
+                # Until the round ends, even early text may belong to an internal search.
+                # HA tools or the search-disabled last round make the handoff certain,
+                # so those paths can still stream without waiting for the response to end.
+                buffered_deltas.append(delta)
+                if other_tool_call or not search_allowed:
+                    for buffered_delta in buffered_deltas:
+                        yield buffered_delta
+                    buffered_deltas.clear()
+            if not searches or other_tool_call:
+                for buffered_delta in buffered_deltas:
+                    yield buffered_delta
+                # Retain the complete ordinary-function transcript privately, not as
+                # visible text. Earlier search evidence is needed after HA handoff
+                # and on later user turns, even when the final message omits it.
+                for item in [*items[len(input_items):], *round_items]:
+                    yield CodexResponseItemDelta(item)
+                # HA has priority in a mixed round. Close skipped search calls with
+                # explicit feedback rather than deleting calls tied to reasoning.
+                for call in searches.values():
+                    yield CodexResponseItemDelta({
+                        "type": "function_call_output", "call_id": call.id,
+                        "output": "Web search skipped because Home Assistant tools take priority.",
+                    })
+                return
+            if search_calls + len(searches) > MAX_SEARCH_CALLS:
+                raise RuntimeError("Codex exceeded the web search call budget")
+            items.extend(round_items)
+            for call in searches.values():
+                search_calls += 1
+                result = await self.web_search(model, call.arguments, search_settings)
+                for citation in result.citations:
+                    yield CodexCitationDelta(citation)
+                items.append(
+                    {"type": "function_call_output", "call_id": call.id, "output": result.text}
+                )
+
+    async def web_search(
+        self, model: str, arguments: dict[str, Any], settings: dict[str, Any]
+    ) -> CodexSearchResult:
+        """Run one web_search call on the Codex search endpoint; return text for the model."""
+        queries = _non_empty_strings(arguments.get("queries"))[:4]
+        urls = _non_empty_strings(arguments.get("open_urls"))[:3]
+        if not queries and not urls:
+            return CodexSearchResult("web_search needs at least one query.")
+        commands: dict[str, Any] = {}
+        if queries:
+            commands["search_query"] = [{"q": q} for q in queries]
+        if urls:
+            commands["open"] = [{"ref_id": u} for u in urls]
+        body = {
+            "id": f"ha-{uuid.uuid4().hex}",
+            "model": model,
+            "commands": commands,
+            "settings": {"search_context_size": "medium", "external_web_access": True, **settings},
+            "max_output_tokens": 2500,
+        }
+        response = await self._http_client.post(
+            f"{self._base_url}/{CODEX_SEARCH_PATH}",
+            headers={**codex_headers(self._access_token), "Accept": "application/json"},
+            json=body,
+            timeout=CODEX_SEARCH_TIMEOUT,
+        )
+        if response.status_code != 200:
+            error = _response_error(response)
+            if response.status_code == 401 or error.code == "token_invalidated":
+                raise CodexAuthenticationError(f"Codex authentication failed: {error.detail}")
+            if _is_rate_limit_response(response.status_code, error):
+                raise CodexRateLimitError(
+                    f"Codex usage limit or rate limit reached: {error.detail}"
+                )
+            return CodexSearchResult(
+                f"Web search failed (HTTP {response.status_code}): {error.detail}"
+            )
+        try:
+            payload = response.json()
+        except ValueError:
+            return CodexSearchResult("Web search returned no readable result.")
+        output = payload.get("output") if isinstance(payload, dict) else None
+        if not isinstance(output, str):
+            return CodexSearchResult("Web search failed: invalid response output.")
+        if not output.strip():
+            return CodexSearchResult("Web search found nothing.")
+        return CodexSearchResult(
+            _SEARCH_MARKUP.sub("", output)[:MAX_SEARCH_OUTPUT_CHARS],
+            _citations_from_search_results(payload.get("results")),
+        )
+
+    async def _stream_once(
         self,
         *,
         model: str,
@@ -297,6 +486,42 @@ class CodexClient:
             model=image_model,
             revised_prompt="".join(text_parts).strip() or None,
         )
+
+
+def _client_side_search_tools(
+    tools: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Swap a hosted web_search tool for the client-side function; return tools and settings."""
+    out: list[dict[str, Any]] = []
+    settings: dict[str, Any] | None = None
+    for tool in tools or []:
+        if tool.get("type") == "web_search":
+            settings = {}
+            if isinstance(tool.get("user_location"), dict):
+                settings["user_location"] = tool["user_location"]
+            out.append(copy.deepcopy(WEB_SEARCH_FUNCTION))
+        else:
+            out.append(tool)
+    return out, settings
+
+
+def _citations_from_search_results(results: Any) -> tuple[CodexCitation, ...]:
+    citations: list[CodexCitation] = []
+    for result in results if isinstance(results, list) else []:
+        if len(citations) >= MAX_SEARCH_CITATIONS:
+            break
+        if not isinstance(result, dict):
+            continue
+        title, url = result.get("title"), result.get("url")
+        if isinstance(title, str) and title.strip() and isinstance(url, str) and url:
+            citations.append(CodexCitation(title=title, url=url))
+    return tuple(citations)
+
+
+def _non_empty_strings(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
 
 
 def _responses_payload(

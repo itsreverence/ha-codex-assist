@@ -15,7 +15,7 @@ flowchart LR
     Bridge --> Exposed[Entities exposed to Assist]
 
     Codex --> Reply[Streamed conversation reply]
-    Codex --> Search[Optional hosted web search]
+    Codex --> Search[Optional web search on the Codex search endpoint]
     Search --> Citations[Validated visual citations]
     Codex --> TaskResult[Text, structured data, or generated image]
 
@@ -33,7 +33,7 @@ flowchart LR
 - **Runtime token coordinator** serializes refresh-token rotation per config entry. Concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another.
 - **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream.
 - **Native transcript state** retains completed provider output items for stateless replay. The state is deep-copy isolated and remains opaque to normal Home Assistant logs, listeners, and conversation traces, which receive only redacted metadata.
-- **Hosted web search** is an explicit option. When enabled, it adds the backend `web_search` tool and converts structured URL annotations into a validated source card. Unsupported or unsafe citation URLs are discarded.
+- **Hosted web search** is an explicit option. To avoid reported failures of the built-in search tool on the Codex backend, the client offers a `web_search` function and sends its calls to `alpha/search`, an undocumented endpoint also used by Codex CLI. This is a restricted query/direct-URL adapter, not an implementation of the CLI's complete search protocol. Each `stream_turn` invocation allows at most four search calls across four rounds, then removes the search tool for synthesis; a batch exceeding the remaining call budget or a search call after removal fails explicitly. A Home Assistant tool handoff ends that invocation. Search-only rounds stay inside the client: their text and annotations are withheld from visible output, while their complete ordinary function-call/output history, messages, and reasoning items are retained privately in `CodexNativeState`. That evidence is replayed after an HA tool handoff and on later user turns even when the final answer omits searched facts or URLs. In mixed search and HA rounds, HA tools take priority: search calls are not executed but receive explicit skipped outputs, preserving call/output closure and the round's reasoning. Consequently, search-enabled answer text waits for the round to finish unless an HA tool establishes the handoff. Results use the Home Assistant country setting. The source card lists retrieved top results, not necessarily sources supporting individual claims; unsafe URLs are discarded. Native search-reference continuation and full-page extraction are not promised.
 - **Assist tool bridge** maps model-requested device actions into Home Assistant's Assist LLM API. It does not call services directly.
 
 ## Assist conversation flow
@@ -47,6 +47,12 @@ flowchart LR
 7. Codex Assist returns the final response to Home Assistant.
 
 For stateless multi-turn requests, Codex Assist keeps completed provider output items in Home Assistant's in-memory chat log and replays them before later user or function-output items. This can include encrypted reasoning state and assistant message phase. The integration does not decrypt that state. Native state is removed from normal delta listeners, uses redacted debug formatting, and serializes as an item count rather than provider content in conversation traces.
+
+Replay keeps whole user turns within the existing 24-item input limit. Older
+turns are dropped as complete groups, including their search and HA tool pairs.
+If the current turn alone exceeds that limit, the owner fails explicitly rather
+than dropping evidence, splitting tool pairs, or stripping reasoning. Search
+retention does not implement the CLI's encrypted search-output or ref-ID protocol.
 
 ## AI Task flow
 
