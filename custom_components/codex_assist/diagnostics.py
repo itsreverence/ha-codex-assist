@@ -27,5 +27,4 @@ async def async_get_config_entry_diagnostics(
 
 
 def redact_sensitive(data: dict[str, Any]) -> dict[str, Any]:
-    """Replace sensitive values with a redaction marker, keeping the keys."""
     return {key: REDACTED if key in TO_REDACT else value for key, value in data.items()}
