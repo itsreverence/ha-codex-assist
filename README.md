@@ -34,6 +34,9 @@ Requirements: Home Assistant `2026.6.0` or newer, HACS, and a ChatGPT account or
 
 Codex Assist is included in HACS by default. You do not need to add this repository as a custom repository. If it does not appear immediately after a release or catalog change, refresh HACS data and try again later.
 
+Codex Assist supports one integration entry. To reconnect or change the signed-in
+account, reconfigure the existing entry. Adding a second entry stops before sign-in.
+
 For Home Assistant 2026.10, use Codex Assist `0.4.7` or newer. Earlier versions
 fail to load the conversation agent and AI Task entity. Update through HACS and
 restart Home Assistant. You can keep your existing sign-in and settings.
