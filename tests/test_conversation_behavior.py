@@ -949,7 +949,11 @@ async def test_history_materializes_only_retained_images(conversation_module, tm
     assert result == [
         {"role": "user", "content": [
             {"type": "input_text", "text": f"Turn {i}"},
-            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=", "detail": "auto"},
+            {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,aW1hZ2U=",
+                "detail": "auto",
+            },
         ]}
         for i in range(6, 30)
     ]

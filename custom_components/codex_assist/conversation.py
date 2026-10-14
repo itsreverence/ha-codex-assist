@@ -490,6 +490,7 @@ async def _codex_input_from_chat_log(
     chat_log: conversation.ChatLog,
 ) -> list[dict[str, Any]]:
     input_items: list[dict[str, Any]] = []
+    attachments_by_item: dict[int, Any] = {}
     for content in chat_log.content:
         role = getattr(content, "role", None)
         text = getattr(content, "content", None)
@@ -512,14 +513,10 @@ async def _codex_input_from_chat_log(
             input_items.extend(native.items)
             continue
         if role in {"user", "assistant"} and isinstance(text, str) and text.strip():
-            item_content: str | list[dict[str, Any]] = text
+            item: dict[str, Any] = {"role": role, "content": text}
+            input_items.append(item)
             if role == "user":
-                images = await _async_image_attachments_for_codex(
-                    hass,
-                    getattr(content, "attachments", None),
-                )
-                item_content = codex_user_content_with_images(text, images)
-            input_items.append({"role": role, "content": item_content})
+                attachments_by_item[id(item)] = getattr(content, "attachments", None)
 
         tool_calls = getattr(content, "tool_calls", None)
         if role == "assistant" and tool_calls:
@@ -533,7 +530,12 @@ async def _codex_input_from_chat_log(
                     }
                 )
 
-    return _trim_codex_input_items(input_items, max_items=24)
+    retained = _trim_codex_input_items(input_items, max_items=24)
+    for item in retained:
+        if id(item) in attachments_by_item:
+            images = await _async_image_attachments_for_codex(hass, attachments_by_item[id(item)])
+            item["content"] = codex_user_content_with_images(item["content"], images)
+    return retained
 
 
 def _trim_codex_input_items(

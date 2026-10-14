@@ -71,10 +71,9 @@ so owner logs do not expose filenames. The four-image count, 20 MiB aggregate li
 bounded reads, and file-growth checks apply before conversion returns any images.
 Both AI Task owners and the conversation owner report rejection before a model request.
 
-History conversion still reads attachments before trimming whole turns to 24 items.
-An unreadable historical image can therefore fail a request even when its turn
-would later be discarded. Selecting retained turns before reading attachments is
-a separate followup that must preserve the existing replay semantics.
+History conversion selects whole turns within the 24-item limit before reading
+images. Discarded attachments are never opened. Retained attachments follow the
+same rejection rules, and complete native reasoning and tool groups stay together.
 
 ## Model discovery lifecycle
 

@@ -1,11 +1,3 @@
-"""AI Task delivery through real HA APIs, services, and local media.
-
-External Codex HTTP is stubbed; unreadable-file cases also inject an OS error.
-HA owns task creation, feature admission,
-chat logs, selector conversion, result serialization, and image persistence.
-These contracts do not prove live authentication, backend, or device behavior.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -17,12 +9,14 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 from homeassistant.components import ai_task, media_source
+from homeassistant.components.conversation.chat_log import Attachment, ChatLog, UserContent
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.codex_assist import DOMAIN
+from custom_components.codex_assist.conversation import _codex_input_from_chat_log
 
 ENTITY_ID = "ai_task.codex_assist_ai_task"
 # A synthetic 1x1 PNG, not a camera snapshot or a real backend output.
@@ -258,7 +252,6 @@ async def test_ai_task_service_rejects_unusable_image_before_backend_request(
     service: str,
     failure: str,
 ) -> None:
-    """Real media resolution and conversion must reject images without leaking paths."""
     marker = "synthetic-private-attachment"
     path = tmp_path / f"{marker}.png"
     payload = PNG_BYTES if failure == "unreadable" else b"x" * (10 * 1024 * 1024 + 1)
@@ -321,3 +314,23 @@ async def test_ai_task_service_rejects_unusable_image_before_backend_request(
         lambda: list((tmp_path / "ai_task" / "image").glob("*"))
     )
     assert stored_images == []
+
+
+async def test_real_chat_log_discards_unreadable_old_attachment(hass, tmp_path):
+    old = UserContent(
+        content="Discarded turn",
+        attachments=[Attachment(
+            media_content_id="synthetic-old-image",
+            mime_type="image/png",
+            path=tmp_path / "missing-old-image.png",
+        )],
+    )
+    log = ChatLog(hass=hass, conversation_id="synthetic-history", content=[
+        old, *[UserContent(content=f"Retained {i}") for i in range(24)]
+    ])
+
+    assert await _codex_input_from_chat_log(hass, log) == [
+        {"role": "user", "content": f"Retained {i}"} for i in range(24)
+    ]
+    assert log.content[0] is old
+    assert len(log.content) == 25
