@@ -53,6 +53,20 @@ the old code for the intended reason before fixing it.
 The fast suite covers local behavior with lightweight fakes. The HA contract
 suite exercises real framework types and lifecycle calls with external backend
 responses stubbed. It does not establish live authentication or device behavior.
+
+`tests/test_codex_stream_completion.py` checks the shared response completion
+contract through an HTTPX byte stream. It covers EOF and `[DONE]` without
+completion, text delivery before completion, held tool calls, image previews,
+explicit backend failures, and stopping at completion without waiting for EOF.
+Successful SSE fixtures must include `response.completed` explicitly; generic
+fake transports must not add it automatically.
+
+`tests_ha/test_stream_completion.py` checks incomplete conversation and AI Task
+delivery, rejection of incomplete images without persisted media, native tool
+execution only after completion, and auth retry only before visible output.
+The existing search delivery cases check that hidden search rounds still allow
+the single auth-refresh retry. Run these with both HA contract environments.
+
 The tool-result regression runs a real conversation and checks the outgoing
 Codex payload. On modern HA it removes only the deprecated property to prove
 the integration does not rely on that compatibility shim.

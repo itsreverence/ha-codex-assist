@@ -315,6 +315,8 @@ async def _run_codex_ai_task_chat_log(
                 allow_tools=allow_tools,
             )
         except CodexAuthenticationError as err:
+            if not err.retry_allowed:
+                raise
             LOGGER.warning(
                 "Codex Assist AI Task access token was rejected; refreshing and retrying once: %s",
                 err,

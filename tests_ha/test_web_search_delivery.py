@@ -23,6 +23,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.codex_assist import DOMAIN
 
+COMPLETED = {"type": "response.completed", "response": {"status": "completed"}}
+
 
 @pytest.fixture
 async def search_entry(hass: HomeAssistant):
@@ -117,6 +119,7 @@ async def test_search_delivers_only_final_text_through_real_ha(
     model_round(planned, [
         *text_events("An unverified preliminary answer. "),
         call_event("search-1", "web_search", {"queries": ["synthetic documentation"]}),
+        COMPLETED,
     ])
     search_reply(planned)
     model_round(planned, [
@@ -124,9 +127,10 @@ async def test_search_delivers_only_final_text_through_real_ha(
         call_event("search-2", "web_search", {
             "queries": [], "open_urls": ["https://example.com/docs"],
         }),
+        COMPLETED,
     ])
     search_reply(planned)
-    model_round(planned, text_events("The verified final answer."))
+    model_round(planned, text_events("The verified final answer.") + [COMPLETED])
 
     if surface == "conversation":
         result = await conversation.async_converse(
@@ -138,7 +142,7 @@ async def test_search_delivers_only_final_text_through_real_ha(
             "title": "Sources",
             "content": "- Example Documentation — <https://example.com/docs>",
         }
-        model_round(planned, text_events("A follow-up answer."))
+        model_round(planned, text_events("A follow-up answer.") + [COMPLETED])
         followup = await conversation.async_converse(
             hass, "Summarize that.", result.conversation_id, Context(),
             agent_id="conversation.codex_assist",
@@ -216,6 +220,7 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     model_round(planned, [
         {"type": "response.output_item.done", "item": search_reasoning},
         *text_events(hidden_text), search_call,
+        COMPLETED,
     ])
     fact = "Synthetic calibration constant: violet-otter-193."
     url = "https://example.com/calibration/retained-evidence"
@@ -228,10 +233,11 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     mixed_reasoning = {"type": "reasoning", "encrypted_content": "private-mixed-reasoning"}
     model_round(planned, [
         {"type": "response.output_item.done", "item": mixed_reasoning}, skipped_call, ha_call,
+        COMPLETED,
     ])
     # Neither the fact nor the URL is repeated by the handoff or final message.
     final_text = "The reading is seven."
-    model_round(planned, text_events(final_text))
+    model_round(planned, text_events(final_text) + [COMPLETED])
     result = await conversation.async_converse(
         hass, "Search and get the test reading.", None, Context(),
         agent_id="conversation.codex_assist",
@@ -239,7 +245,7 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     assert result.response.speech["plain"]["speech"] == final_text
     assert url in result.response.card["simple"]["content"]
     handoff = requests[-1][1]["input"]
-    model_round(planned, text_events("A follow-up answer."))
+    model_round(planned, text_events("A follow-up answer.") + [COMPLETED])
     followup = await conversation.async_converse(
         hass, "Compare that with the calibration.", result.conversation_id, Context(),
         agent_id="conversation.codex_assist",
@@ -293,14 +299,16 @@ async def test_search_401_refreshes_once_through_real_owner(
         *text_events("An interrupted preliminary answer. "),
         call_event("search-rejected", "web_search", {"queries": ["synthetic"]}),
     ]
-    model_round(planned, first)
+    model_round(planned, first + [COMPLETED])
     planned.append(("/backend-api/codex/alpha/search", 401, {"detail": "expired access token"}))
     planned.append(("/oauth/token", 200, {
         "access_token": "test-new-access", "refresh_token": "test-new-refresh",
     }))
-    model_round(planned, [call_event("search-retry", "web_search", {"queries": ["synthetic"]})])
+    model_round(planned, [
+        call_event("search-retry", "web_search", {"queries": ["synthetic"]}), COMPLETED,
+    ])
     search_reply(planned)
-    model_round(planned, text_events("Recovered after refresh."))
+    model_round(planned, text_events("Recovered after refresh.") + [COMPLETED])
     if surface == "conversation":
         result = await conversation.async_converse(
             hass, "Look up the documentation.", None, Context(),

@@ -57,6 +57,12 @@ for this issue and older Home Assistant compatibility errors.
 - Generates images with curated quality and size controls.
 - Disables hosted web search for schema-constrained tasks so citation text cannot corrupt structured output.
 
+If a backend response ends before completion, Codex Assist reports a failure.
+You may have already seen or heard partial conversation text. Home Assistant
+tool calls wait for that response to complete, and incomplete AI Task text or
+images are not returned as successful results. The integration does not retry
+interrupted responses automatically.
+
 ### Options
 
 The chat-model picker uses authenticated account discovery without adding guessed
