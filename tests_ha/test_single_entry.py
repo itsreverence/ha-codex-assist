@@ -17,7 +17,8 @@ from custom_components.codex_assist.codex_auth import (
 def auth(monkeypatch):
     client = SimpleNamespace(
         request_device_code=AsyncMock(return_value=CodexDeviceCode(
-            "TEST-CODE", "test-device", 5, "https://auth.openai.com/codex/device"
+            user_code="TEST-CODE", device_auth_id="test-device",
+            verification_uri="https://auth.openai.com/codex/device", interval=5,
         )),
         poll_device_code=AsyncMock(return_value=CodexAuthorizationCode("test-code", "verifier")),
         exchange_authorization_code=AsyncMock(
