@@ -20,6 +20,10 @@ uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt
   python -m pytest tests_ha -q
 ```
 
+`tests_ha/test_single_entry.py` verifies duplicate setup stops before authentication
+and existing entries can complete reauthentication and reconfiguration. It checks
+the reload request; the reload implementation is stubbed in these flow tests.
+
 ### Home Assistant version selection
 
 CI tests compatibility boundaries rather than every monthly or patch release:
@@ -211,6 +215,24 @@ After restarting Home Assistant:
 5. Confirm sensitive entities remain unexposed unless deliberately allowed.
 
 ## Authentication and model tests
+
+The auth boundary regressions use real `httpx` responses and transport exceptions
+for device-code requests, polling, code exchange, and refresh. Coordinator and
+discovery tests use the real auth client to check temporary failures, unchanged
+credentials, still-valid-token fallback, and authentication versus unavailable
+classification.
+
+The stubbed exchange-recovery case does not establish that a live one-time code
+can be reused after a lost exchange response. Restart sign-in if pairing cannot
+finish after an exchange failure.
+
+`tests_ha/test_auth_recovery.py` drives HA's flow manager through setup, reauth,
+and reconfigure failures, then resumes each flow. It also calls public Conversation
+and AI Task APIs through temporary refresh failure and recovery, and opens options
+with cached models after a failed refresh. External HTTP is stubbed; the options
+cache uses an injected clock to advance its cooldown. Run this file in both HA
+contract environments. These tests do not establish live sign-in or backend
+availability.
 
 When auth or model handling changes:
 

@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from custom_components.codex_assist.codex_auth import (
@@ -71,7 +72,7 @@ async def test_request_device_code_raises_when_required_fields_are_missing():
     http = FakeHttpClient([FakeResponse(200, {"user_code": "ABCD-EFGH"})])
     client = CodexAuthClient(http_client=http)
 
-    with pytest.raises(RuntimeError, match="missing required fields"):
+    with pytest.raises(RuntimeError, match="missing device_auth_id"):
         await client.request_device_code()
 
 
@@ -172,3 +173,13 @@ async def test_exchange_authorization_code_requires_refresh_token():
                 code_verifier="verifier-1",
             )
         )
+
+
+@pytest.mark.parametrize("status", [403, 404])
+async def test_pending_poll_does_not_decode_response(status):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, content=b"not json"))
+    ) as http:
+        assert await CodexAuthClient(http).poll_device_code(
+            device_auth_id="test-device", user_code="TEST-CODE"
+        ) is None
