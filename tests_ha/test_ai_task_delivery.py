@@ -317,4 +317,7 @@ async def test_ai_task_service_rejects_unusable_image_before_backend_request(
     assert expected in caplog.text
     if failure == "unreadable":
         assert open_attempts == [path]
-    assert not await hass.async_add_executor_job((tmp_path / "ai_task" / "image").exists)
+    stored_images = await hass.async_add_executor_job(
+        lambda: list((tmp_path / "ai_task" / "image").glob("*"))
+    )
+    assert stored_images == []

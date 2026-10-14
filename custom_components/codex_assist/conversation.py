@@ -585,19 +585,13 @@ def _image_attachments_for_codex(attachments: Any) -> list[tuple[str, bytes]]:
             continue
         path = getattr(attachment, "path", None)
         if path is None:
-            continue
+            raise ValueError("Codex Assist could not read an image attachment")
         try:
             size = path.stat().st_size
-        except OSError as err:
-            LOGGER.warning("Skipping unreadable Codex Assist image attachment %s: %s", path, err)
-            continue
+        except OSError:
+            raise ValueError("Codex Assist could not read an image attachment") from None
         if size > MAX_IMAGE_ATTACHMENT_BYTES:
-            LOGGER.warning(
-                "Skipping Codex Assist image attachment over %s bytes: %s",
-                MAX_IMAGE_ATTACHMENT_BYTES,
-                path,
-            )
-            continue
+            raise ValueError("Codex Assist image attachment exceeds the 10 MiB per-file limit")
         candidates.append((mime_type, path, size))
 
     if len(candidates) > MAX_IMAGE_ATTACHMENTS:
@@ -613,9 +607,8 @@ def _image_attachments_for_codex(attachments: Any) -> list[tuple[str, bytes]]:
         try:
             with path.open("rb") as attachment_file:
                 data = attachment_file.read(read_limit + 1)
-        except OSError as err:
-            LOGGER.warning("Skipping unreadable Codex Assist image attachment %s: %s", path, err)
-            continue
+        except OSError:
+            raise ValueError("Codex Assist could not read an image attachment") from None
         if len(data) > MAX_IMAGE_ATTACHMENT_BYTES:
             raise ValueError("Codex Assist image attachment grew beyond the per-file size limit")
         if len(data) > remaining_bytes:

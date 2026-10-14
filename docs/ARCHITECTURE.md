@@ -64,6 +64,18 @@ retention does not implement the CLI's encrypted search-output or ref-ID protoco
 
 Normal Assist conversation surfaces may not expose an upload button even though Home Assistant chat-log objects can carry attachments internally. Use AI Task surfaces that advertise attachment support when testing native attachments.
 
+The shared attachment reader returns `list[tuple[str, bytes]]` through HA's executor.
+It ignores non-image MIME types and raises a fixed `ValueError` if an image has no
+path, cannot be read, or exceeds 10 MiB. OS errors have suppressed exception chains
+so owner logs do not expose filenames. The four-image count, 20 MiB aggregate limit,
+bounded reads, and file-growth checks apply before conversion returns any images.
+Both AI Task owners and the conversation owner report rejection before a model request.
+
+History conversion still reads attachments before trimming whole turns to 24 items.
+An unreadable historical image can therefore fail a request even when its turn
+would later be discarded. Selecting retained turns before reading attachments is
+a separate followup that must preserve the existing replay semantics.
+
 ## Model discovery lifecycle
 
 First setup completes device-code sign-in before model selection. Authenticated
