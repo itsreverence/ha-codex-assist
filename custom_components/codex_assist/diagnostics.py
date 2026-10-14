@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 REDACTED = "**REDACTED**"
-TO_REDACT = {"access_token", "refresh_token"}
+TO_REDACT = {"access_token", "refresh_token", "prompt"}
 
 
 async def async_get_config_entry_diagnostics(
@@ -27,5 +27,5 @@ async def async_get_config_entry_diagnostics(
 
 
 def redact_sensitive(data: dict[str, Any]) -> dict[str, Any]:
-    """Replace credential values with a redaction marker, keeping the keys."""
+    """Replace sensitive values with a redaction marker, keeping the keys."""
     return {key: REDACTED if key in TO_REDACT else value for key, value in data.items()}
