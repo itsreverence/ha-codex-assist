@@ -2,9 +2,15 @@ import asyncio
 import base64
 import json
 
+import httpx
 import pytest
 
-from custom_components.codex_assist.codex_auth import CodexAuthTemporaryError, CodexTokenSet
+from custom_components.codex_assist.codex_auth import (
+    CodexAuthClient,
+    CodexAuthTemporaryError,
+    CodexReauthRequiredError,
+    CodexTokenSet,
+)
 from custom_components.codex_assist.codex_runtime import (
     RuntimeTokenCoordinator,
     resolve_runtime_tokens,
@@ -299,3 +305,47 @@ async def test_rejected_token_refresh_does_not_overwrite_concurrent_reauth() -> 
 
     assert tokens == CodexTokenSet("reauth-access", "reauth-refresh")
     assert updates == []
+
+
+@pytest.mark.parametrize("mode", ["near_expiry", "expired", "rejected"])
+@pytest.mark.parametrize("failure", ["transport", "invalid_json", "invalid_token", "reauth"])
+async def test_coordinator_classifies_real_auth_failures_without_persisting(mode, failure):
+    data = {
+        "access_token": _jwt_with_exp(999 if mode == "expired" else 1060),
+        "refresh_token": "test-refresh",
+    }
+    original = dict(data)
+    updates = []
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if failure == "transport":
+            raise httpx.ConnectError("synthetic transport failure", request=request)
+        if failure == "invalid_json":
+            return httpx.Response(200, content=b"not json")
+        if failure == "reauth":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"access_token": "new-access", "refresh_token": {}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        coordinator = RuntimeTokenCoordinator()
+        kwargs = {"auth_client": CodexAuthClient(http), "async_update_entry_data": updates.append}
+        if mode == "rejected":
+            resolving = coordinator.refresh_after_rejection(
+                lambda: data, rejected_tokens=CodexTokenSet(**data), **kwargs
+            )
+        else:
+            resolving = coordinator.resolve(lambda: data, now=1000, **kwargs)
+        if mode == "near_expiry" and failure != "reauth":
+            assert await resolving == CodexTokenSet(**original)
+        else:
+            error_type = (
+                CodexReauthRequiredError if failure == "reauth" else CodexAuthTemporaryError
+            )
+            with pytest.raises(error_type):
+                await resolving
+
+    assert len(requests) == 1
+    assert updates == []
+    assert data == original

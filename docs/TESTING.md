@@ -20,6 +20,10 @@ uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt
   python -m pytest tests_ha -q
 ```
 
+`tests_ha/test_single_entry.py` verifies duplicate setup stops before authentication
+and existing entries can complete reauthentication and reconfiguration. It checks
+the reload request; the reload implementation is stubbed in these flow tests.
+
 ### Home Assistant version selection
 
 CI tests compatibility boundaries rather than every monthly or patch release:
@@ -78,7 +82,12 @@ HA supplies the real task objects, chat logs, service selector schemas, results,
 attachment resolution, image persistence, and signed media representation.
 The cases cover plain text, structured data (including optional null omission
 and disabling hosted search), a local PNG attachment reaching backend HTTP,
-and image bytes plus configured metadata reaching HA's media store. They do
+and image bytes plus configured metadata reaching HA's media store. Invalid-image
+cases cover both services with an actual 10 MiB overflow and a targeted local-file
+open failure. They require a service error, zero backend requests, no generated
+media, and no synthetic private-path marker in delivered errors, tracebacks, or
+Codex Assist logs. Home Assistant core can log attachment metadata at debug level;
+these tests do not claim framework-wide log redaction. They do
 not establish live authentication, backend image generation, camera contents,
 or device behavior. The synthetic PNG is not evidence that a backend honored
 the requested image dimensions.
@@ -221,6 +230,24 @@ After restarting Home Assistant:
 
 ## Authentication and model tests
 
+The auth boundary regressions use real `httpx` responses and transport exceptions
+for device-code requests, polling, code exchange, and refresh. Coordinator and
+discovery tests use the real auth client to check temporary failures, unchanged
+credentials, still-valid-token fallback, and authentication versus unavailable
+classification.
+
+The stubbed exchange-recovery case does not establish that a live one-time code
+can be reused after a lost exchange response. Restart sign-in if pairing cannot
+finish after an exchange failure.
+
+`tests_ha/test_auth_recovery.py` drives HA's flow manager through setup, reauth,
+and reconfigure failures, then resumes each flow. It also calls public Conversation
+and AI Task APIs through temporary refresh failure and recovery, and opens options
+with cached models after a failed refresh. External HTTP is stubbed; the options
+cache uses an injected clock to advance its cooldown. Run this file in both HA
+contract environments. These tests do not establish live sign-in or backend
+availability.
+
 When auth or model handling changes:
 
 - verify invalidated credentials produce a clear reauthentication path;
@@ -246,7 +273,15 @@ Home Assistant's normal Assist popup may not expose file uploads. Use AI Task su
 5. Confirm logs do not contain tokens, local file contents, or base64 payloads.
 
 Codex Assist accepts up to four image attachments, with a 10 MiB per-image limit and
-a 20 MiB aggregate limit per request. Requests over the count or aggregate limit fail
-instead of silently discarding attachments.
+a 20 MiB aggregate limit per request. For nonblank instructions, missing paths,
+unreadable images, and requests
+over any attachment limit fail before a model request. OS errors must not expose
+attachment paths in delivered errors or Codex Assist logged tracebacks. Non-image MIME types
+remain ignored.
+
+Repeat attachment checks through both AI Task services. Confirm a valid PNG reaches
+the backend, then confirm an image over 10 MiB fails without a model request.
+Fast boundary tests cover stat, open, and read failures, mixed valid and invalid
+images, exact limits, and growth during a bounded read.
 
 Before publishing screenshots, remove private URLs, account details, tokens, device codes, and private entity or dashboard names.

@@ -34,11 +34,21 @@ Requirements: Home Assistant `2026.6.0` or newer, HACS, and a ChatGPT account or
 
 Codex Assist is included in HACS by default. You do not need to add this repository as a custom repository. If it does not appear immediately after a release or catalog change, refresh HACS data and try again later.
 
+Codex Assist supports one integration entry. To reconnect or change the signed-in
+account, reconfigure the existing entry. Adding a second entry stops before sign-in.
+
 For Home Assistant 2026.10, use Codex Assist `0.4.7` or newer. Earlier versions
 fail to load the conversation agent and AI Task entity. Update through HACS and
 restart Home Assistant. You can keep your existing sign-in and settings.
 See [Troubleshooting](https://github.com/itsreverence/ha-codex-assist/wiki/Troubleshooting)
 for this issue and older Home Assistant compatibility errors.
+
+If sign-in fails because of a connection problem or an invalid auth response,
+retry after the service recovers. If pairing cannot finish after a failed token
+exchange, restart sign-in to obtain a new code. Temporary refresh failures keep your saved credentials
+and do not request a new sign-in. Assist and AI Task can use a still-valid token;
+if it has expired, try your request again after the service recovers. Rejected
+refresh credentials still require reauthentication.
 
 ## What it does
 
@@ -62,6 +72,11 @@ interrupted responses automatically.
 - Accepts supported image attachments on AI Task surfaces.
 - Generates images with curated quality and size controls.
 - Disables hosted web search for schema-constrained tasks so citation text cannot corrupt structured output.
+
+Image attachments are limited to four images, 10 MiB per image, and 20 MiB total.
+With nonblank instructions, a missing, unreadable, or oversized image fails
+the request before a model call.
+Codex Assist does not silently omit these images or include their paths in its errors.
 
 ### Options
 
@@ -89,6 +104,8 @@ Codex Assist does **not** expose a raw “call any Home Assistant service” bri
 Start with harmless lights or read-only questions. Keep locks, alarms, garage doors, water shutoff valves, covers, and other sensitive devices unexposed unless you deliberately want Assist control there.
 
 Hosted web search sends the current model turn and the model's search queries to the Codex backend when enabled. AI Task prompts and supported attachments are also sent to the backend when you run those tasks. See the [security policy](SECURITY.md) for the full data and control boundaries.
+
+Integration diagnostics redact access tokens, refresh tokens, and configured prompts from both entry data and options. Settings such as model, reasoning effort, and hosted search remain visible. Review diagnostics before sharing them.
 
 ## User guide
 

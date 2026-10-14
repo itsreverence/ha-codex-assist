@@ -510,6 +510,9 @@ async def test_multi_turn_web_search_sources_are_not_spoken_after_ha_tool_call(
 
 async def test_diagnostics_redact_tokens_on_real_entry(hass: HomeAssistant) -> None:
     entry = await _setup_entry(hass)
+    data = {**entry.data, "prompt": "Synthetic stored prompt marker"}
+    options = {"prompt": "Synthetic options prompt marker", "web_search": False}
+    hass.config_entries.async_update_entry(entry, data=data, options=options)
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
@@ -517,7 +520,13 @@ async def test_diagnostics_redact_tokens_on_real_entry(hass: HomeAssistant) -> N
     assert entry_data["access_token"] == REDACTED
     assert entry_data["refresh_token"] == REDACTED
     assert entry_data["model"] == "gpt-5.4"
+    assert entry_data["prompt"] == REDACTED
+    assert diagnostics["entry"]["options"] == {"prompt": REDACTED, "web_search": False}
+    assert entry.data == data
+    assert entry.options == options
     assert "test-access-token" not in str(diagnostics)
+    assert "Synthetic stored prompt marker" not in str(diagnostics)
+    assert "Synthetic options prompt marker" not in str(diagnostics)
 
 
 async def test_options_flow_uses_real_home_assistant_contract(
