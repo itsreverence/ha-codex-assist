@@ -911,3 +911,46 @@ async def test_native_transcript_survives_tool_round_and_final_synthesis(
         *final_items,
         {"role": "user", "content": "What happened?"},
     ]
+
+
+@pytest.mark.parametrize("retained", [False, True])
+async def test_history_reads_invalid_images_only_in_retained_turns(
+    conversation_module, tmp_path, retained
+):
+    image = SimpleNamespace(mime_type="image/png", path=tmp_path / "missing.png")
+    old = FakeContent(role="user", content="Old turn", attachments=[image])
+    recent = [FakeContent(role="user", content=f"Recent {i}") for i in range(24)]
+    log = FakeChatLog([old] if retained else [old, *recent])
+    hass = FakeHass()
+
+    if retained:
+        with pytest.raises(ValueError, match="could not read an image attachment"):
+            await conversation_module._codex_input_from_chat_log(hass, log)
+        assert len(hass.executor_jobs) == 1
+    else:
+        assert await conversation_module._codex_input_from_chat_log(hass, log) == [
+            {"role": "user", "content": f"Recent {i}"} for i in range(24)
+        ]
+        assert hass.executor_jobs == []
+
+
+async def test_history_materializes_only_retained_images(conversation_module, tmp_path):
+    path = tmp_path / "image.png"
+    path.write_bytes(b"image")
+    image = SimpleNamespace(mime_type="image/png", path=path)
+    log = FakeChatLog([
+        FakeContent(role="user", content=f"Turn {i}", attachments=[image])
+        for i in range(30)
+    ])
+    hass = FakeHass()
+
+    result = await conversation_module._codex_input_from_chat_log(hass, log)
+
+    assert result == [
+        {"role": "user", "content": [
+            {"type": "input_text", "text": f"Turn {i}"},
+            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=", "detail": "auto"},
+        ]}
+        for i in range(6, 30)
+    ]
+    assert len(hass.executor_jobs) == 24
