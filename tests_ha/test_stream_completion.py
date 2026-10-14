@@ -1,5 +1,3 @@
-"""Incomplete backend streams through real HA delivery and tool execution."""
-
 import base64
 import json
 

@@ -40,7 +40,6 @@ class FakeStreamResponse:
 
 
 class GatedStreamResponse(FakeStreamResponse):
-    """Pause before the supplied tail to observe delivery and cancellation."""
 
     def __init__(self, lines, *, tail=()):
         super().__init__(lines)

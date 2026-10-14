@@ -247,8 +247,6 @@ class CodexClient:
                         continue
                     other_tool_call = True
                 # Until the round ends, even early text may belong to an internal search.
-                # Completed HA calls or the search-disabled last round make the
-                # handoff certain. Only the latter can stream before completion.
                 buffered_deltas.append(delta)
                 if other_tool_call or not search_allowed:
                     for buffered_delta in buffered_deltas:
@@ -1018,7 +1016,6 @@ def _citations_from_event(event: dict[str, Any]) -> list[CodexCitation]:
 
 
 async def _aiter_completed_response_events(response: Any) -> AsyncIterator[dict[str, Any]]:
-    """Require response completion for both text/tool and image streams."""
     async for event in _aiter_sse_events(response):
         if stream_error := _stream_event_exception(event):
             raise stream_error
