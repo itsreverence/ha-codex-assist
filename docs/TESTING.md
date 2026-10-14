@@ -20,6 +20,10 @@ uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt
   python -m pytest tests_ha -q
 ```
 
+`tests_ha/test_single_entry.py` verifies duplicate setup stops before authentication
+and existing entries can complete reauthentication and reconfiguration. It checks
+the reload request; the reload implementation is stubbed in these flow tests.
+
 ### Home Assistant version selection
 
 CI tests compatibility boundaries rather than every monthly or patch release:
