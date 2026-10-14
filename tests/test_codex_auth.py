@@ -158,15 +158,21 @@ async def test_auth_invalid_json_response_is_temporary(operation, kwargs, conten
 ])
 @pytest.mark.parametrize("invalid", [None, "", "  ", 123, True, ["private-auth-marker"],
                                      {"secret": "private-auth-marker"}])
-async def test_auth_invalid_credential_is_temporary(operation, kwargs, payload, field, invalid):
+async def test_auth_validates_credentials_and_preserves_optional_refresh(
+    operation, kwargs, payload, field, invalid
+):
     payload = {**payload, field: invalid}
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
     ) as http:
-        with pytest.raises(CodexAuthTemporaryError) as caught:
-            await getattr(CodexAuthClient(http), operation)(**kwargs)
-
-    assert "private-auth-marker" not in "".join(traceback.format_exception(caught.value))
+        if operation == "refresh" and field == "refresh_token" and invalid in (None, "", "  "):
+            assert await CodexAuthClient(http).refresh(**kwargs) == CodexTokenSet(
+                "test-access", "test-refresh"
+            )
+        else:
+            with pytest.raises(CodexAuthTemporaryError) as caught:
+                await getattr(CodexAuthClient(http), operation)(**kwargs)
+            assert "private-auth-marker" not in "".join(traceback.format_exception(caught.value))
 
 
 @pytest.mark.parametrize(("operation", "kwargs"), AUTH_OPERATIONS)

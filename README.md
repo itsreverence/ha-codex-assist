@@ -41,7 +41,8 @@ See [Troubleshooting](https://github.com/itsreverence/ha-codex-assist/wiki/Troub
 for this issue and older Home Assistant compatibility errors.
 
 If sign-in fails because of a connection problem or an invalid auth response,
-try the form again later. Temporary refresh failures keep your saved credentials
+retry after the service recovers. If pairing cannot finish after a failed token
+exchange, restart sign-in to obtain a new code. Temporary refresh failures keep your saved credentials
 and do not request a new sign-in. Assist and AI Task can use a still-valid token;
 if it has expired, try your request again after the service recovers. Rejected
 refresh credentials still require reauthentication.

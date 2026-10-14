@@ -142,9 +142,9 @@ class CodexAuthClient:
     async def _post(self, url: str, **kwargs: Any) -> Any:
         try:
             return await self._http_client.post(url, **kwargs)
-        except httpx.HTTPError:
+        except httpx.HTTPError as err:
             raise CodexAuthTemporaryError(
-                "Codex authentication is temporarily unavailable"
+                f"Codex authentication is temporarily unavailable ({type(err).__name__})"
             ) from None
 
 
@@ -178,7 +178,10 @@ def _token_set_from_payload(
     fallback_refresh: str = "",
 ) -> CodexTokenSet:
     access_token = _required_string(payload.get("access_token"), "access_token")
-    refresh_token = _required_string(
-        payload.get("refresh_token", fallback_refresh), "refresh_token"
-    )
+    refresh_value = payload.get("refresh_token")
+    if fallback_refresh and (
+        refresh_value is None or isinstance(refresh_value, str) and not refresh_value.strip()
+    ):
+        refresh_value = fallback_refresh
+    refresh_token = _required_string(refresh_value, "refresh_token")
     return CodexTokenSet(access_token=access_token, refresh_token=refresh_token)

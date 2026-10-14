@@ -1,5 +1,3 @@
-"""Auth recovery through real HA flows and public consumers, with HTTP stubbed."""
-
 from __future__ import annotations
 
 import base64
