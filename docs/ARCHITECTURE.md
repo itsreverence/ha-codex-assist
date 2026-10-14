@@ -73,8 +73,9 @@ strings. Messages omit response bodies and credentials, and translated transport
 and JSON exceptions suppress their raw traceback chains.
 
 Polling HTTP 403 and 404 remain pending. Refresh HTTP 400, 401, and 403 require
-reauthentication. A successful refresh can omit `refresh_token` to retain the
-previous token, but an invalid supplied value fails before persistence.
+reauthentication. A successful refresh can omit `refresh_token` or return null
+or a blank string to retain the previous token. A non-string replacement value
+fails before persistence.
 
 The coordinator retains a still-valid access token after a temporary proactive
 refresh failure. An expired or already rejected token cannot use that fallback.
