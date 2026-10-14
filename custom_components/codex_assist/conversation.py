@@ -170,6 +170,8 @@ class CodexAssistConversationEntity(
                         citation_sink=citations,
                     )
                 except CodexAuthenticationError as err:
+                    if not err.retry_allowed:
+                        raise
                     LOGGER.warning(
                         "Codex Assist access token was rejected; refreshing and retrying once: %s",
                         err,
@@ -342,40 +344,45 @@ async def _codex_stream_to_assistant_deltas(
     started = False
     seen_urls: set[str] = set()
     response_items: list[dict[str, Any]] = []
-    async for delta in stream:
-        if isinstance(delta, CodexResponseItemDelta):
-            response_items.append(delta.item)
-            continue
-        if isinstance(delta, CodexCitationDelta):
-            citation = _safe_citation(delta.citation)
-            if citation is not None and citation.url not in seen_urls:
-                seen_urls.add(citation.url)
-                if citation_sink is not None and all(
-                    existing.url != citation.url for existing in citation_sink
-                ):
-                    citation_sink.append(citation)
-            continue
-        if not started:
-            yield {"role": "assistant"}
-            started = True
-        if isinstance(delta, CodexTextDelta):
-            yield {"content": delta.text}
-        elif isinstance(delta, CodexToolCallDelta):
-            if not allow_tools:
-                raise RuntimeError(
-                    "Codex Assist final synthesis returned a tool call while tools are disabled"
-                )
-            if on_tool_call is not None:
-                on_tool_call()
-            yield {
-                "tool_calls": [
-                    llm.ToolInput(
-                        id=delta.tool_call.id,
-                        tool_name=delta.tool_call.name,
-                        tool_args=delta.tool_call.arguments,
+    try:
+        async for delta in stream:
+            if isinstance(delta, CodexResponseItemDelta):
+                response_items.append(delta.item)
+                continue
+            if isinstance(delta, CodexCitationDelta):
+                citation = _safe_citation(delta.citation)
+                if citation is not None and citation.url not in seen_urls:
+                    seen_urls.add(citation.url)
+                    if citation_sink is not None and all(
+                        existing.url != citation.url for existing in citation_sink
+                    ):
+                        citation_sink.append(citation)
+                continue
+            if not started:
+                yield {"role": "assistant"}
+                started = True
+            if isinstance(delta, CodexTextDelta):
+                yield {"content": delta.text}
+            elif isinstance(delta, CodexToolCallDelta):
+                if not allow_tools:
+                    raise RuntimeError(
+                        "Codex Assist final synthesis returned a tool call while tools are disabled"
                     )
-                ]
-            }
+                if on_tool_call is not None:
+                    on_tool_call()
+                yield {
+                    "tool_calls": [
+                        llm.ToolInput(
+                            id=delta.tool_call.id,
+                            tool_name=delta.tool_call.name,
+                            tool_args=delta.tool_call.arguments,
+                        )
+                    ]
+                }
+    except CodexAuthenticationError as err:
+        if started:
+            err.retry_allowed = False
+        raise
     if native_state := native_state_from_response_items(response_items):
         if not started:
             yield {"role": "assistant"}

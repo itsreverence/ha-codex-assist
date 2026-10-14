@@ -55,7 +55,8 @@ async def test_stream_turn_yields_text_deltas_and_posts_advanced_options():
     response = FakeStreamResponse(
         200,
         _event({"type": "response.output_text.delta", "delta": "Hel"})
-        + _event({"type": "response.output_text.delta", "delta": "lo"}),
+        + _event({"type": "response.output_text.delta", "delta": "lo"})
+        + _event({"type": "response.completed", "response": {"status": "completed"}}),
     )
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
@@ -85,7 +86,7 @@ async def test_stream_turn_yields_text_deltas_and_posts_advanced_options():
 
 @pytest.mark.asyncio
 async def test_stream_turn_posts_structured_output_format_with_verbosity():
-    response = FakeStreamResponse(200, [])
+    response = FakeStreamResponse(200, _event({"type": "response.completed"}))
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
     text_format = {
@@ -141,7 +142,8 @@ async def test_stream_turn_yields_function_call_after_arguments_complete():
                 "type": "response.function_call_arguments.done",
                 "arguments": '{"name":"Kitchen","domain":"light"}',
             }
-        ),
+        )
+        + _event({"type": "response.completed", "response": {"status": "completed"}}),
     )
     client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
 
@@ -214,7 +216,8 @@ async def test_stream_turn_correlates_interleaved_function_call_arguments_by_ite
                 "item_id": "item-1",
                 "arguments": '{"name":"Kitchen","domain":"light"}',
             }
-        ),
+        )
+        + _event({"type": "response.completed", "response": {"status": "completed"}}),
     )
     client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
 
@@ -271,7 +274,8 @@ async def test_stream_turn_yields_structured_url_citations():
                     ],
                 },
             }
-        ),
+        )
+        + _event({"type": "response.completed", "response": {"status": "completed"}}),
     )
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
@@ -295,7 +299,7 @@ async def test_stream_turn_yields_structured_url_citations():
 
 @pytest.mark.asyncio
 async def test_stream_turn_omits_reasoning_summary_when_off():
-    response = FakeStreamResponse(200, [])
+    response = FakeStreamResponse(200, _event({"type": "response.completed"}))
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
 
@@ -316,7 +320,7 @@ async def test_stream_turn_omits_reasoning_summary_when_off():
 
 @pytest.mark.asyncio
 async def test_stream_turn_omits_advanced_options_for_non_reasoning_models():
-    response = FakeStreamResponse(200, [])
+    response = FakeStreamResponse(200, _event({"type": "response.completed"}))
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
 
@@ -440,7 +444,8 @@ async def test_stream_turn_preserves_output_item_done_payloads_exactly():
                 for item in output_items
             ),
             [],
-        ),
+        )
+        + _event({"type": "response.completed", "response": {"status": "completed"}}),
     )
     client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
 

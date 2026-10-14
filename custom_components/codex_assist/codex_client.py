@@ -247,8 +247,6 @@ class CodexClient:
                         continue
                     other_tool_call = True
                 # Until the round ends, even early text may belong to an internal search.
-                # HA tools or the search-disabled last round make the handoff certain,
-                # so those paths can still stream without waiting for the response to end.
                 buffered_deltas.append(delta)
                 if other_tool_call or not search_allowed:
                     for buffered_delta in buffered_deltas:
@@ -377,8 +375,9 @@ class CodexClient:
 
             pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
             completed_tool_call_ids: set[str] = set()
+            held_tool_calls: list[CodexToolCallDelta] = []
             anonymous_call_index = 0
-            async for event in _aiter_sse_events(response):
+            async for event in _aiter_completed_response_events(response):
                 event_type = event.get("type")
                 for citation in _citations_from_event(event):
                     yield CodexCitationDelta(citation)
@@ -407,7 +406,7 @@ class CodexClient:
                             pending_arguments = arguments
                         tool_call = _tool_call_from_item(pending_tool_call, pending_arguments)
                         completed_tool_call_ids.add(tool_call.id)
-                        yield CodexToolCallDelta(tool_call)
+                        held_tool_calls.append(CodexToolCallDelta(tool_call))
                     continue
                 if event_type == "response.output_item.done":
                     item = event.get("item")
@@ -422,8 +421,12 @@ class CodexClient:
                     if call_id and call_id in completed_tool_call_ids:
                         continue
                 delta = _stream_delta_from_event(event)
-                if delta is not None:
+                if isinstance(delta, CodexToolCallDelta):
+                    held_tool_calls.append(delta)
+                elif delta is not None:
                     yield delta
+            for tool_delta in held_tool_calls:
+                yield tool_delta
 
     async def generate_image(
         self,
@@ -464,7 +467,7 @@ class CodexClient:
                     f"Codex image request failed with status {response.status_code}: {error.detail}"
                 )
 
-            async for event in _aiter_sse_events(response):
+            async for event in _aiter_completed_response_events(response):
                 found = _extract_image_b64(event)
                 if found:
                     image_b64 = found
@@ -697,6 +700,8 @@ def _chatgpt_account_id(access_token: str) -> str | None:
 
 class CodexAuthenticationError(RuntimeError):
     """Raised when Codex rejects the stored access token."""
+
+    retry_allowed: bool = True
 
 
 class CodexRateLimitError(RuntimeError):
@@ -1008,6 +1013,16 @@ def _citations_from_event(event: dict[str, Any]) -> list[CodexCitation]:
         for annotation in annotations
         if (citation := _citation_from_annotation(annotation)) is not None
     ]
+
+
+async def _aiter_completed_response_events(response: Any) -> AsyncIterator[dict[str, Any]]:
+    async for event in _aiter_sse_events(response):
+        if stream_error := _stream_event_exception(event):
+            raise stream_error
+        yield event
+        if event.get("type") == "response.completed":
+            return
+    raise RuntimeError("Codex stream ended before response.completed")
 
 
 async def _aiter_sse_events(response: Any) -> AsyncIterator[dict[str, Any]]:

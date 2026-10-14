@@ -40,10 +40,10 @@ class FakeStreamResponse:
 
 
 class GatedStreamResponse(FakeStreamResponse):
-    """Keep response EOF pending so tests can observe delivery and cancellation."""
 
-    def __init__(self, lines):
+    def __init__(self, lines, *, tail=()):
         super().__init__(lines)
+        self.tail = tail
         self.waiting = asyncio.Event()
         self.release = asyncio.Event()
 
@@ -52,6 +52,8 @@ class GatedStreamResponse(FakeStreamResponse):
             yield line
         self.waiting.set()
         await self.release.wait()
+        for line in self.tail:
+            yield line
 
 
 class FakeSearchResponse:
@@ -89,9 +91,10 @@ def _event(payload):
     return ["data: " + json.dumps(payload), ""]
 
 
-def _round(*items):
+def _round(*items, completed=False):
     return FakeStreamResponse(
         sum((_event({"type": "response.output_item.done", "item": item}) for item in items), [])
+        + (_event({"type": "response.completed"}) if completed else [])
     )
 
 
@@ -113,10 +116,11 @@ def _message(text):
     }
 
 
-def _text_round(text):
+def _text_round(text, *, completed=False):
     return FakeStreamResponse(
         _event({"type": "response.output_text.delta", "delta": text})
         + _event({"type": "response.output_item.done", "item": _message(text)})
+        + (_event({"type": "response.completed"}) if completed else [])
     )
 
 
@@ -153,7 +157,7 @@ async def _collect(client, tools, **kwargs):
 
 @pytest.mark.asyncio
 async def test_stream_turn_replaces_hosted_search_with_client_side_function():
-    http = FakeHttpClient([_text_round("No search needed.")])
+    http = FakeHttpClient([_text_round("No search needed.", completed=True)])
     client = CodexClient(http_client=http, access_token="token-1")
 
     deltas = await _collect(client, [{"type": "web_search"}])
@@ -175,7 +179,10 @@ async def test_stream_turn_runs_search_and_hides_search_round_from_caller():
     search_call = _function_call("call-s1", "web_search", {"queries": ["example domains"]})
     reasoning = {"type": "reasoning", "encrypted_content": "round-1"}
     http = FakeHttpClient(
-        [_round(reasoning, search_call), _text_round("IANA maintains them.")],
+        [
+            _round(reasoning, search_call, completed=True),
+            _text_round("IANA maintains them.", completed=True),
+        ],
         [FakeSearchResponse(200, SEARCH_PAYLOAD)],
     )
     client = CodexClient(http_client=http, access_token="token-1")
@@ -235,12 +242,13 @@ async def test_stream_turn_discards_search_round_text_and_annotations(search_fir
     first_round = FakeStreamResponse(
         _event({"type": "response.output_item.done", "item": reasoning})
         + (search_events + text_events if search_first else text_events + search_events)
+        + _event({"type": "response.completed"})
     )
     final_text = "IANA maintains them."
     final_reasoning = {"type": "reasoning", "encrypted_content": "final-round"}
     final_round = FakeStreamResponse(
         _event({"type": "response.output_item.done", "item": final_reasoning})
-        + _text_round(final_text)._lines
+        + _text_round(final_text, completed=True)._lines
     )
     http = FakeHttpClient(
         [first_round, final_round], [FakeSearchResponse(200, SEARCH_PAYLOAD)]
@@ -278,6 +286,7 @@ async def test_stream_turn_lets_home_assistant_tool_win_over_search_in_same_roun
             FakeStreamResponse(
                 _round(reasoning)._lines
                 + _text_round("Using a Home Assistant tool.")._lines + _round(*calls)._lines
+                + _event({"type": "response.completed"})
             )
         ]
     )
@@ -309,7 +318,7 @@ async def test_stream_turn_lets_home_assistant_tool_win_over_search_in_same_roun
 @pytest.mark.parametrize("unexpected_search", [False, True])
 async def test_stream_turn_drops_search_tool_after_round_limit(unexpected_search):
     rounds = [
-        _round(_function_call(f"call-{n}", "web_search", {"queries": [f"q{n}"]}))
+        _round(_function_call(f"call-{n}", "web_search", {"queries": [f"q{n}"]}), completed=True)
         for n in range(MAX_SEARCH_ROUNDS)
     ]
     last_round = _text_round("Best answer so far.")
@@ -317,6 +326,7 @@ async def test_stream_turn_drops_search_tool_after_round_limit(unexpected_search
         last_round._lines += _round(
             _function_call("unexpected", "web_search", {"queries": ["one more"]})
         )._lines
+    last_round._lines += _event({"type": "response.completed"})
     http = FakeHttpClient(
         [*rounds, last_round],
         [FakeSearchResponse(200, SEARCH_PAYLOAD) for _ in range(MAX_SEARCH_ROUNDS)],
@@ -451,9 +461,12 @@ async def test_stream_turn_streams_only_when_round_is_known_to_be_terminal(path)
     ha_call = _function_call("ha-1", "HassTurnOn", {"name": "Kitchen"})
     if path == "ha_tool":
         lines += _round(ha_call)._lines
-    response = GatedStreamResponse(lines)
+    response = GatedStreamResponse(lines, tail=_event({"type": "response.completed"}))
     rounds = [
-        _round(_function_call(f"s-{n}", "web_search", {"queries": ["example domains"]}))
+        _round(
+            _function_call(f"s-{n}", "web_search", {"queries": ["example domains"]}),
+            completed=True,
+        )
         for n in range(MAX_SEARCH_ROUNDS if path == "limit" else 0)
     ]
     http = FakeHttpClient(
@@ -478,7 +491,7 @@ async def test_stream_turn_streams_only_when_round_is_known_to_be_terminal(path)
         assert not response.closed
         assert not task.done()
         assert [delta.text for delta in deltas if isinstance(delta, CodexTextDelta)] == (
-            [] if path == "search_enabled" else ["Hel", "lo"]
+            [] if path in {"search_enabled", "ha_tool"} else ["Hel", "lo"]
         )
     finally:
         response.release.set()
@@ -525,14 +538,19 @@ async def test_stream_turn_failed_round_does_not_publish_buffered_text(failure):
 @pytest.mark.parametrize("failure", ["timeout", "auth", "rate_limit", "server"])
 async def test_stream_turn_handles_search_failure_without_leaking_preamble(failure):
     search_call = _function_call("s-1", "web_search", {"queries": ["example domains"]})
-    response = FakeStreamResponse(_text_round("Searching.")._lines + _round(search_call)._lines)
+    response = FakeStreamResponse(
+        _text_round("Searching.")._lines + _round(search_call)._lines
+        + _event({"type": "response.completed"})
+    )
     errors = {
         "timeout": httpx.ReadTimeout("search timed out"),
         "auth": FakeSearchResponse(401, {"detail": "nope"}),
         "rate_limit": FakeSearchResponse(429, {"detail": "nope"}),
         "server": FakeSearchResponse(500, {"detail": "search backend down"}),
     }
-    http = FakeHttpClient([response, _text_round("Search is unavailable.")], [errors[failure]])
+    http = FakeHttpClient(
+        [response, _text_round("Search is unavailable.", completed=True)], [errors[failure]]
+    )
     client = CodexClient(http_client=http, access_token="token-1")
     deltas = []
 
@@ -575,7 +593,7 @@ async def test_stream_turn_cancellation_stops_internal_round(stage, monkeypatch)
         response = GatedStreamResponse(lines)
         waiting = response.waiting
     else:
-        response = FakeStreamResponse(lines)
+        response = FakeStreamResponse(lines + _event({"type": "response.completed"}))
         waiting = asyncio.Event()
     http = FakeHttpClient([response])
     search_finished = asyncio.Event()
@@ -622,7 +640,10 @@ async def test_stream_turn_rejects_search_batch_over_total_budget():
         for n in range(5)
     ]
     http = FakeHttpClient(
-        [_round(*calls), _text_round("Should not execute this batch.")],
+        [
+            _round(*calls, completed=True),
+            _text_round("Should not execute this batch.", completed=True),
+        ],
         [FakeSearchResponse(200, SEARCH_PAYLOAD) for _ in calls],
     )
     client = CodexClient(http_client=http, access_token="token-1")
@@ -638,11 +659,11 @@ async def test_stream_turn_disables_search_after_total_call_budget():
         _round(*[
             _function_call(f"search-{n}-{i}", "web_search", {"queries": ["query"]})
             for i in range(2)
-        ])
+        ], completed=True)
         for n in range(2)
     ]
     http = FakeHttpClient(
-        [*rounds, _text_round("Final answer.")],
+        [*rounds, _text_round("Final answer.", completed=True)],
         [FakeSearchResponse(200, SEARCH_PAYLOAD) for _ in range(4)],
     )
     client = CodexClient(http_client=http, access_token="token-1")
@@ -650,3 +671,27 @@ async def test_stream_turn_disables_search_after_total_call_budget():
     assert len(http.search_calls) == 4
     assert "tools" not in http.stream_calls[-1][2]["json"]
     assert [d.text for d in deltas if isinstance(d, CodexTextDelta)] == ["Final answer."]
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_truncated_search_round_cannot_dispatch_search_or_ha_tools(mixed):
+    calls = [_function_call("search-1", "web_search", {"queries": ["synthetic"]})]
+    if mixed:
+        calls.append(_function_call("ha-1", "HassTestReading", {}))
+    http = FakeHttpClient([_round(*calls)])
+    client = CodexClient(http_client=http, access_token="token-1")
+    emitted = []
+
+    with pytest.raises(RuntimeError, match="before response.completed"):
+        async for delta in client.stream_turn(
+            model="gpt-test", instructions="Search.",
+            input_items=[{"role": "user", "content": "Read the test value."}],
+            tools=[{"type": "web_search"}, {
+                "type": "function", "name": "HassTestReading", "parameters": {},
+            }],
+        ):
+            emitted.append(delta)
+
+    assert http.search_calls == []
+    assert len(http.stream_calls) == 1
+    assert not any(isinstance(delta, CodexToolCallDelta) for delta in emitted)

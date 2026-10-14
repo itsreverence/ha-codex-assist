@@ -84,6 +84,7 @@ async def test_generate_data_returns_native_plain_text_result(
     """GENERATE_DATA must admit and deliver a real HA result, not just a flag."""
     requests, events = backend
     _reply(events, "A concise task response.")
+    events.append({"type": "response.completed", "response": {"status": "completed"}})
 
     result = await ai_task.async_generate_data(
         hass,
@@ -111,6 +112,7 @@ async def test_generate_data_service_delivers_selector_validated_structure(
     hass.config_entries.async_update_entry(task_entry, options={"web_search": True})
     requests, events = backend
     _reply(events, '{"summary":"All clear.","note":null}')
+    events.append({"type": "response.completed", "response": {"status": "completed"}})
 
     result = await hass.services.async_call(
         "ai_task",
@@ -157,6 +159,7 @@ async def test_generate_data_service_sends_local_image_attachment(
     await hass.async_add_executor_job((tmp_path / "attachment.png").write_bytes, PNG_BYTES)
     requests, events = backend
     _reply(events, "The supplied image was received.")
+    events.append({"type": "response.completed", "response": {"status": "completed"}})
 
     result = await hass.services.async_call(
         "ai_task",
@@ -205,6 +208,7 @@ async def test_generate_image_service_persists_native_result_as_media(
             },
         }
     )
+    events.append({"type": "response.completed", "response": {"status": "completed"}})
 
     result = await hass.services.async_call(
         "ai_task",

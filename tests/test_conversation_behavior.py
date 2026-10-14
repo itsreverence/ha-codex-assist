@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from custom_components.codex_assist.codex_client import (
+    CodexAuthenticationError,
     CodexCitation,
     CodexCitationDelta,
     CodexResponseItemDelta,
@@ -911,6 +912,26 @@ async def test_native_transcript_survives_tool_round_and_final_synthesis(
         *final_items,
         {"role": "user", "content": "What happened?"},
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delta,visible", [
+    (None, False),
+    (CodexTextDelta("Partial answer"), True),
+    (CodexToolCallDelta(CodexToolCall("call-1", "HassTestReading", {})), True),
+    (CodexCitationDelta(CodexCitation("Example", "https://example.com")), False),
+    (CodexResponseItemDelta({"type": "reasoning"}), False),
+])
+async def test_auth_replay_is_disabled_after_visible_deltas(conversation_module, delta, visible):
+    async def stream():
+        if delta is not None:
+            yield delta
+        raise CodexAuthenticationError("Synthetic auth rejection")
+
+    with pytest.raises(CodexAuthenticationError) as caught:
+        async for _ in conversation_module._codex_stream_to_assistant_deltas(stream()):
+            pass
+    assert getattr(caught.value, "retry_allowed", True) is (not visible)
 
 
 @pytest.mark.parametrize("retained", [False, True])
