@@ -235,7 +235,8 @@ Home Assistant's normal Assist popup may not expose file uploads. Use AI Task su
 5. Confirm logs do not contain tokens, local file contents, or base64 payloads.
 
 Codex Assist accepts up to four image attachments, with a 10 MiB per-image limit and
-a 20 MiB aggregate limit per request. Missing paths, unreadable images, and requests
+a 20 MiB aggregate limit per request. For nonblank instructions, missing paths,
+unreadable images, and requests
 over any attachment limit fail before a model request. OS errors must not expose
 attachment paths in delivered errors or logged tracebacks. Non-image MIME types
 remain ignored.

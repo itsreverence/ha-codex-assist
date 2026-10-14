@@ -58,7 +58,8 @@ for this issue and older Home Assistant compatibility errors.
 - Disables hosted web search for schema-constrained tasks so citation text cannot corrupt structured output.
 
 Image attachments are limited to four images, 10 MiB per image, and 20 MiB total.
-A missing, unreadable, or oversized image fails the request before a model call.
+With nonblank instructions, a missing, unreadable, or oversized image fails
+the request before a model call.
 Codex Assist does not silently omit these images or include their paths in its errors.
 
 ### Options

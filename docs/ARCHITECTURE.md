@@ -71,6 +71,9 @@ so owner logs do not expose filenames. The four-image count, 20 MiB aggregate li
 bounded reads, and file-growth checks apply before conversion returns any images.
 Both AI Task owners and the conversation owner report rejection before a model request.
 
+User turns with blank instructions are omitted by the existing converter, including
+their attachments. This change does not add support for image-only blank turns.
+
 History conversion selects whole turns within the 24-item limit before reading
 images. Discarded attachments are never opened. Retained attachments follow the
 same rejection rules, and complete native reasoning and tool groups stay together.
