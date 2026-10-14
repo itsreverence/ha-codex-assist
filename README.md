@@ -87,6 +87,8 @@ Start with harmless lights or read-only questions. Keep locks, alarms, garage do
 
 Hosted web search sends the current model turn and the model's search queries to the Codex backend when enabled. AI Task prompts and supported attachments are also sent to the backend when you run those tasks. See the [security policy](SECURITY.md) for the full data and control boundaries.
 
+Integration diagnostics redact access tokens, refresh tokens, and configured prompts from both entry data and options. Settings such as model, reasoning effort, and hosted search remain visible. Review diagnostics before sharing them.
+
 ## User guide
 
 The GitHub Wiki is the main user manual:
