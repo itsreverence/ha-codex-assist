@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -376,19 +380,86 @@ async def test_codex_input_from_chat_log_translates_image_attachments(
     assert hass.executor_jobs[0][0] is conversation_module._image_attachments_for_codex
 
 
+@pytest.mark.parametrize(
+    "failure", ["missing_path", "missing_file", "stat", "open", "read", "size"]
+)
+@pytest.mark.parametrize("with_valid_image", [False, True])
+def test_image_attachments_reject_unusable_image_without_private_paths(
+    conversation_module, monkeypatch, tmp_path, caplog, failure, with_valid_image
+):
+    marker = "synthetic-private-attachment"
+    path = tmp_path / f"{marker}.png"
+    path.write_bytes(b"123456")
+    monkeypatch.setattr(conversation_module, "MAX_IMAGE_ATTACHMENT_BYTES", 5)
+    attachment = SimpleNamespace(mime_type="image/png", path=path)
+    expected = "Codex Assist could not read an image attachment"
+    if failure == "missing_path":
+        attachment = SimpleNamespace(mime_type="image/png")
+    elif failure == "missing_file":
+        path.unlink()
+    elif failure in {"stat", "open", "read"}:
+        error = PermissionError(13, marker, str(path))
+        fake_path = MagicMock()
+        fake_path.stat.return_value.st_size = 3
+        if failure == "read":
+            fake_path.open.return_value.__enter__.return_value.read.side_effect = error
+        else:
+            getattr(fake_path, failure).side_effect = error
+        attachment.path = fake_path
+    else:
+        expected = "Codex Assist image attachment exceeds the 10 MiB per-file limit"
+
+    attachments = [attachment]
+    if with_valid_image:
+        valid_path = tmp_path / "valid.png"
+        valid_path.write_bytes(b"valid")
+        attachments.insert(0, SimpleNamespace(mime_type="image/png", path=valid_path))
+
+    with pytest.raises(ValueError) as caught:
+        try:
+            conversation_module._image_attachments_for_codex(attachments)
+        except ValueError:
+            logging.getLogger(__name__).exception("Attachment conversion failed")
+            raise
+
+    assert str(caught.value) == expected
+    assert marker not in "".join(traceback.format_exception(caught.value))
+    assert marker not in caplog.text
+    assert "Attachment conversion failed" in caplog.text
+
+
+def test_image_attachments_accept_exact_file_count_and_total_limits(
+    conversation_module, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(conversation_module, "MAX_IMAGE_ATTACHMENT_BYTES", 5)
+    monkeypatch.setattr(conversation_module, "MAX_TOTAL_IMAGE_ATTACHMENT_BYTES", 20)
+    path = tmp_path / "image.png"
+    path.write_bytes(b"12345")
+    attachment = SimpleNamespace(mime_type="image/png", path=path)
+
+    assert conversation_module._image_attachments_for_codex([attachment] * 4) == [
+        ("image/png", b"12345")
+    ] * 4
+
+
+@pytest.mark.parametrize("mime_type", ["text/plain", None, "", 123])
+def test_image_attachments_still_ignore_non_images(conversation_module, mime_type):
+    attachment = SimpleNamespace(mime_type=mime_type)
+
+    assert conversation_module._image_attachments_for_codex([attachment]) == []
+
+
 def test_image_attachments_rejects_too_many_images(
     conversation_module,
-    monkeypatch,
     tmp_path: Path,
 ):
-    monkeypatch.setattr(conversation_module, "MAX_IMAGE_ATTACHMENTS", 2)
     attachments = []
-    for index in range(3):
+    for index in range(5):
         path = tmp_path / f"image-{index}.png"
         path.write_bytes(b"image")
         attachments.append(type("Attachment", (), {"mime_type": "image/png", "path": path})())
 
-    with pytest.raises(ValueError, match="at most 2 image attachments"):
+    with pytest.raises(ValueError, match="at most 4 image attachments"):
         conversation_module._image_attachments_for_codex(attachments)
 
 
