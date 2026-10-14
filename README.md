@@ -40,6 +40,12 @@ restart Home Assistant. You can keep your existing sign-in and settings.
 See [Troubleshooting](https://github.com/itsreverence/ha-codex-assist/wiki/Troubleshooting)
 for this issue and older Home Assistant compatibility errors.
 
+If sign-in fails because of a connection problem or an invalid auth response,
+try the form again later. Temporary refresh failures keep your saved credentials
+and do not request a new sign-in. Assist and AI Task can use a still-valid token;
+if it has expired, try your request again after the service recovers. Rejected
+refresh credentials still require reauthentication.
+
 ## What it does
 
 ### Assist conversations

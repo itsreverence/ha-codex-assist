@@ -209,11 +209,13 @@ async def test_public_request_recovers_after_temporary_refresh_failure(
         assert "private-auth-marker" not in "".join(traceback.format_exception(caught.value))
     else:
         failure_text = await call()
-        assert "Codex Assist request failed" in failure_text
+        assert "Codex Assist failed" in failure_text
         assert "private-auth-marker" not in failure_text
     assert dict(entry.data) == original
     assert "private-auth-marker" not in caplog.text
-    assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert not hass.config_entries.flow.async_progress_by_handler(
+        DOMAIN, include_uninitialized=True
+    )
     assert [request.url.path for request in requests] == {
         "near_expiry": [TOKEN_PATH, RESPONSE_PATH],
         "expired": [TOKEN_PATH],
@@ -227,7 +229,9 @@ async def test_public_request_recovers_after_temporary_refresh_failure(
     assert entry.data["access_token"] == "fresh-access"
     assert entry.data["refresh_token"] == "fresh-refresh"
     assert sum(request.url.path == TOKEN_PATH for request in requests) == 2
-    assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert not hass.config_entries.flow.async_progress_by_handler(
+        DOMAIN, include_uninitialized=True
+    )
 
 
 async def test_options_retains_cached_models_when_refresh_transport_fails(hass, auth_http, caplog):

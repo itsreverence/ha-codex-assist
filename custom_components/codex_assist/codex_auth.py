@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import httpx
+
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CODEX_OAUTH_REDIRECT_URI = "https://auth.openai.com/deviceauth/callback"
@@ -50,20 +52,18 @@ class CodexAuthClient:
         self._http_client = http_client
 
     async def request_device_code(self) -> CodexDeviceCode:
-        response = await self._http_client.post(
+        response = await self._post(
             CODEX_DEVICE_AUTH_USER_CODE_URL,
             json={"client_id": CODEX_OAUTH_CLIENT_ID},
             headers={"Content-Type": "application/json"},
         )
         if response.status_code != 200:
-            raise RuntimeError(
+            raise CodexAuthTemporaryError(
                 f"Codex device-code request failed with status {response.status_code}"
             )
-        payload = response.json()
-        user_code = str(payload.get("user_code") or "").strip()
-        device_auth_id = str(payload.get("device_auth_id") or "").strip()
-        if not user_code or not device_auth_id:
-            raise RuntimeError("Codex device-code response missing required fields")
+        payload = _auth_payload(response)
+        user_code = _required_string(payload.get("user_code"), "user_code")
+        device_auth_id = _required_string(payload.get("device_auth_id"), "device_auth_id")
         interval = _positive_int(payload.get("interval"), default=5)
         return CodexDeviceCode(
             user_code=user_code,
@@ -78,7 +78,7 @@ class CodexAuthClient:
         device_auth_id: str,
         user_code: str,
     ) -> CodexAuthorizationCode | None:
-        response = await self._http_client.post(
+        response = await self._post(
             CODEX_DEVICE_AUTH_TOKEN_URL,
             json={"device_auth_id": device_auth_id, "user_code": user_code},
             headers={"Content-Type": "application/json"},
@@ -86,14 +86,14 @@ class CodexAuthClient:
         if response.status_code in {403, 404}:
             return None
         if response.status_code != 200:
-            raise RuntimeError(
+            raise CodexAuthTemporaryError(
                 f"Codex device-code polling failed with status {response.status_code}"
             )
-        payload = response.json()
-        authorization_code = str(payload.get("authorization_code") or "").strip()
-        code_verifier = str(payload.get("code_verifier") or "").strip()
-        if not authorization_code or not code_verifier:
-            raise RuntimeError("Codex device auth response missing exchange fields")
+        payload = _auth_payload(response)
+        authorization_code = _required_string(
+            payload.get("authorization_code"), "authorization_code"
+        )
+        code_verifier = _required_string(payload.get("code_verifier"), "code_verifier")
         return CodexAuthorizationCode(
             authorization_code=authorization_code,
             code_verifier=code_verifier,
@@ -103,7 +103,7 @@ class CodexAuthClient:
         self,
         authorization: CodexAuthorizationCode,
     ) -> CodexTokenSet:
-        response = await self._http_client.post(
+        response = await self._post(
             CODEX_OAUTH_TOKEN_URL,
             data={
                 "grant_type": "authorization_code",
@@ -115,13 +115,13 @@ class CodexAuthClient:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if response.status_code != 200:
-            raise RuntimeError(
+            raise CodexAuthTemporaryError(
                 f"Codex token exchange failed with status {response.status_code}"
             )
-        return _token_set_from_payload(response.json(), require_refresh=True)
+        return _token_set_from_payload(_auth_payload(response))
 
     async def refresh(self, tokens: CodexTokenSet) -> CodexTokenSet:
-        response = await self._http_client.post(
+        response = await self._post(
             CODEX_OAUTH_TOKEN_URL,
             data={
                 "grant_type": "refresh_token",
@@ -135,7 +135,33 @@ class CodexAuthClient:
             if response.status_code in {400, 401, 403}:
                 raise CodexReauthRequiredError(message)
             raise CodexAuthTemporaryError(message)
-        return _token_set_from_payload(response.json(), fallback_refresh=tokens.refresh_token)
+        return _token_set_from_payload(
+            _auth_payload(response), fallback_refresh=tokens.refresh_token
+        )
+
+    async def _post(self, url: str, **kwargs: Any) -> Any:
+        try:
+            return await self._http_client.post(url, **kwargs)
+        except httpx.HTTPError:
+            raise CodexAuthTemporaryError(
+                "Codex authentication is temporarily unavailable"
+            ) from None
+
+
+def _auth_payload(response: Any) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError:
+        raise CodexAuthTemporaryError("Codex auth response was not valid JSON") from None
+    if not isinstance(payload, dict):
+        raise CodexAuthTemporaryError("Codex auth response was not an object")
+    return payload
+
+
+def _required_string(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CodexAuthTemporaryError(f"Codex auth response has an invalid or missing {field}")
+    return value.strip()
 
 
 def _positive_int(value: Any, *, default: int) -> int:
@@ -150,12 +176,9 @@ def _token_set_from_payload(
     payload: dict[str, Any],
     *,
     fallback_refresh: str = "",
-    require_refresh: bool = False,
 ) -> CodexTokenSet:
-    access_token = str(payload.get("access_token") or "").strip()
-    if not access_token:
-        raise RuntimeError("Codex token response was missing access_token")
-    refresh_token = str(payload.get("refresh_token") or fallback_refresh).strip()
-    if require_refresh and not refresh_token:
-        raise RuntimeError("Codex token response was missing refresh_token")
+    access_token = _required_string(payload.get("access_token"), "access_token")
+    refresh_token = _required_string(
+        payload.get("refresh_token", fallback_refresh), "refresh_token"
+    )
     return CodexTokenSet(access_token=access_token, refresh_token=refresh_token)

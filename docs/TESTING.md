@@ -207,6 +207,20 @@ After restarting Home Assistant:
 
 ## Authentication and model tests
 
+The auth boundary regressions use real `httpx` responses and transport exceptions
+for device-code requests, polling, code exchange, and refresh. Coordinator and
+discovery tests use the real auth client to check temporary failures, unchanged
+credentials, still-valid-token fallback, and authentication versus unavailable
+classification.
+
+`tests_ha/test_auth_recovery.py` drives HA's flow manager through setup, reauth,
+and reconfigure failures, then resumes each flow. It also calls public Conversation
+and AI Task APIs through temporary refresh failure and recovery, and opens options
+with cached models after a failed refresh. External HTTP is stubbed; the options
+cache uses an injected clock to advance its cooldown. Run this file in both HA
+contract environments. These tests do not establish live sign-in or backend
+availability.
+
 When auth or model handling changes:
 
 - verify invalidated credentials produce a clear reauthentication path;
