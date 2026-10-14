@@ -6,6 +6,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from custom_components.codex_assist.codex_auth import CodexReauthRequiredError, CodexTokenSet
@@ -88,3 +89,53 @@ async def test_invalidated_refresh_token_returns_authentication_status(discovery
     assert result.source == "fallback"
     assert result.error == "authentication"
     assert entry.data["access_token"] == "original-access"
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("mode", ["expired", "rejected"])
+@pytest.mark.parametrize("failure", ["transport", "invalid_token", "reauth"])
+async def test_discovery_classifies_real_refresh_failures(discovery, cached, mode, failure):
+    from custom_components.codex_assist.codex_models import (
+        DEFAULT_CODEX_MODELS,
+        ModelDiscoveryCache,
+    )
+    from custom_components.codex_assist.codex_runtime import runtime_token_coordinator
+
+    requests = []
+    failing = False
+    clock = [0]
+
+    def respond(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                401 if failing else 200, json={"models": [{"slug": "account-model"}]}
+            )
+        assert request.url.path == "/oauth/token"
+        if failure == "transport":
+            raise httpx.ReadTimeout("synthetic timeout", request=request)
+        if failure == "reauth":
+            return httpx.Response(403)
+        return httpx.Response(200, json={"access_token": ["not-a-token"]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        hass, entry = environment(http)
+        runtime_token_coordinator(entry).model_cache = ModelDiscoveryCache(clock=lambda: clock[0])
+        if cached:
+            assert (await discovery.async_entry_model_catalog(hass, entry)).source == "discovered"
+        if mode == "expired":
+            payload = base64.urlsafe_b64encode(b'{"exp":0}').decode().rstrip("=")
+            entry.data = {**entry.data, "access_token": f"header.{payload}.signature"}
+        original = dict(entry.data)
+        failing = True
+        clock[0] = 61
+        result = await discovery.async_entry_model_catalog(hass, entry, force=True)
+        assert result.source == ("cached" if cached else "fallback")
+        assert result.models == (("account-model",) if cached else tuple(DEFAULT_CODEX_MODELS))
+        assert result.error == ("authentication" if failure == "reauth" else "unavailable")
+        assert await discovery.async_entry_model_catalog(hass, entry, force=True) == result
+
+    assert [request.method for request in requests] == (
+        (["GET"] if cached else []) + (["GET"] if mode == "rejected" else []) + ["POST"]
+    )
+    assert entry.data == original

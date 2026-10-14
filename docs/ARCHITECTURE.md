@@ -64,6 +64,24 @@ retention does not implement the CLI's encrypted search-output or ref-ID protoco
 
 Normal Assist conversation surfaces may not expose an upload button even though Home Assistant chat-log objects can carry attachments internally. Use AI Task surfaces that advertise attachment support when testing native attachments.
 
+## Authentication failures
+
+`CodexAuthClient` owns transport and response validation for all four auth POSTs.
+HTTP transport errors, malformed JSON, non-object responses, and invalid required
+credential fields become `CodexAuthTemporaryError`. Credentials must be nonempty
+strings. Messages omit response bodies and credentials, and translated transport
+and JSON exceptions suppress their raw traceback chains.
+
+Polling HTTP 403 and 404 remain pending. Refresh HTTP 400, 401, and 403 require
+reauthentication. A successful refresh can omit `refresh_token` or return null
+or a blank string to retain the previous token. A non-string replacement value
+fails before persistence.
+
+The coordinator retains a still-valid access token after a temporary proactive
+refresh failure. An expired or already rejected token cannot use that fallback.
+Temporary failures preserve stored credentials and report discovery as unavailable,
+with cached models retained. The auth boundary adds no automatic retries.
+
 ## Model discovery lifecycle
 
 First setup completes device-code sign-in before model selection. Authenticated
