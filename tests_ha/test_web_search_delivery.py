@@ -302,7 +302,9 @@ async def test_search_401_refreshes_once_through_real_owner(
     model_round(planned, first + [COMPLETED])
     if after_search:
         search_reply(planned)
-    rejected_path = "/backend-api/codex/responses" if after_search else "/backend-api/codex/alpha/search"
+    rejected_path = (
+        "/backend-api/codex/responses" if after_search else "/backend-api/codex/alpha/search"
+    )
     planned.append((rejected_path, 401, {"detail": "expired access token"}))
     planned.append(("/oauth/token", 200, {
         "access_token": "test-new-access", "refresh_token": "test-new-refresh",

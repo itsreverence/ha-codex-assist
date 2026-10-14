@@ -49,8 +49,9 @@ flowchart LR
 For stateless multi-turn requests, Codex Assist keeps completed provider output items in Home Assistant's in-memory chat log and replays them before later user or function-output items. This can include encrypted reasoning state and assistant message phase. The integration does not decrypt that state. Native state is removed from normal delta listeners, uses redacted debug formatting, and serializes as an item count rather than provider content in conversation traces.
 
 Conversation and AI Task retain the existing single auth-refresh retry only
-while the current stream invocation has not delivered text, tools, or citation
-deltas to its caller. Hidden search-round output does not prevent that retry.
+while the current stream invocation has not delivered text or tool deltas to
+its caller. Hidden search-round output and buffered citations do not prevent
+that retry.
 An auth failure after delivered output keeps its authentication classification
 but cannot trigger replay. Incomplete streams have no automatic retry, and
 failed streams do not publish completed native transcript state. Text already

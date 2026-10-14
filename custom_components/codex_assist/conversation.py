@@ -344,13 +344,11 @@ async def _codex_stream_to_assistant_deltas(
     started = False
     seen_urls: set[str] = set()
     response_items: list[dict[str, Any]] = []
-    visible_output = False
     try:
         async for delta in stream:
             if isinstance(delta, CodexResponseItemDelta):
                 response_items.append(delta.item)
                 continue
-            visible_output = True
             if isinstance(delta, CodexCitationDelta):
                 citation = _safe_citation(delta.citation)
                 if citation is not None and citation.url not in seen_urls:
@@ -382,7 +380,7 @@ async def _codex_stream_to_assistant_deltas(
                     ]
                 }
     except CodexAuthenticationError as err:
-        if visible_output:
+        if started:
             err.retry_allowed = False
         raise
     if native_state := native_state_from_response_items(response_items):
