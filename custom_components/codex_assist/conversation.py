@@ -490,6 +490,7 @@ async def _codex_input_from_chat_log(
     chat_log: conversation.ChatLog,
 ) -> list[dict[str, Any]]:
     input_items: list[dict[str, Any]] = []
+    attachments_by_item: dict[int, Any] = {}
     for content in chat_log.content:
         role = getattr(content, "role", None)
         text = getattr(content, "content", None)
@@ -512,14 +513,10 @@ async def _codex_input_from_chat_log(
             input_items.extend(native.items)
             continue
         if role in {"user", "assistant"} and isinstance(text, str) and text.strip():
-            item_content: str | list[dict[str, Any]] = text
+            item: dict[str, Any] = {"role": role, "content": text}
+            input_items.append(item)
             if role == "user":
-                images = await _async_image_attachments_for_codex(
-                    hass,
-                    getattr(content, "attachments", None),
-                )
-                item_content = codex_user_content_with_images(text, images)
-            input_items.append({"role": role, "content": item_content})
+                attachments_by_item[id(item)] = getattr(content, "attachments", None)
 
         tool_calls = getattr(content, "tool_calls", None)
         if role == "assistant" and tool_calls:
@@ -533,7 +530,12 @@ async def _codex_input_from_chat_log(
                     }
                 )
 
-    return _trim_codex_input_items(input_items, max_items=24)
+    retained = _trim_codex_input_items(input_items, max_items=24)
+    for item in retained:
+        if id(item) in attachments_by_item:
+            images = await _async_image_attachments_for_codex(hass, attachments_by_item[id(item)])
+            item["content"] = codex_user_content_with_images(item["content"], images)
+    return retained
 
 
 def _trim_codex_input_items(
@@ -585,19 +587,13 @@ def _image_attachments_for_codex(attachments: Any) -> list[tuple[str, bytes]]:
             continue
         path = getattr(attachment, "path", None)
         if path is None:
-            continue
+            raise ValueError("Codex Assist could not read an image attachment")
         try:
             size = path.stat().st_size
-        except OSError as err:
-            LOGGER.warning("Skipping unreadable Codex Assist image attachment %s: %s", path, err)
-            continue
+        except OSError:
+            raise ValueError("Codex Assist could not read an image attachment") from None
         if size > MAX_IMAGE_ATTACHMENT_BYTES:
-            LOGGER.warning(
-                "Skipping Codex Assist image attachment over %s bytes: %s",
-                MAX_IMAGE_ATTACHMENT_BYTES,
-                path,
-            )
-            continue
+            raise ValueError("Codex Assist image attachment exceeds the 10 MiB per-file limit")
         candidates.append((mime_type, path, size))
 
     if len(candidates) > MAX_IMAGE_ATTACHMENTS:
@@ -613,9 +609,8 @@ def _image_attachments_for_codex(attachments: Any) -> list[tuple[str, bytes]]:
         try:
             with path.open("rb") as attachment_file:
                 data = attachment_file.read(read_limit + 1)
-        except OSError as err:
-            LOGGER.warning("Skipping unreadable Codex Assist image attachment %s: %s", path, err)
-            continue
+        except OSError:
+            raise ValueError("Codex Assist could not read an image attachment") from None
         if len(data) > MAX_IMAGE_ATTACHMENT_BYTES:
             raise ValueError("Codex Assist image attachment grew beyond the per-file size limit")
         if len(data) > remaining_bytes:

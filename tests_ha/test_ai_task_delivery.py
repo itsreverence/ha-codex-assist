@@ -1,25 +1,23 @@
-"""AI Task delivery through real HA APIs, services, and local media.
-
-Only external Codex HTTP is stubbed. HA owns task creation, feature admission,
-chat logs, selector conversion, result serialization, and image persistence.
-These contracts do not prove live authentication, backend, or device behavior.
-"""
-
 from __future__ import annotations
 
 import base64
 import json
+import logging
+import traceback
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from homeassistant.components import ai_task, media_source
+from homeassistant.components.conversation.chat_log import Attachment, ChatLog, UserContent
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.codex_assist import DOMAIN
+from custom_components.codex_assist.conversation import _codex_input_from_chat_log
 
 ENTITY_ID = "ai_task.codex_assist_ai_task"
 # A synthetic 1x1 PNG, not a camera snapshot or a real backend output.
@@ -241,3 +239,104 @@ async def test_generate_image_service_persists_native_result_as_media(
     image_tool = next(tool for tool in requests[0]["tools"] if tool["type"] == "image_generation")
     assert image_tool["size"] == "1536x1024"
     assert image_tool["quality"] == "high"
+
+
+@pytest.mark.parametrize("service", ["generate_data", "generate_image"])
+@pytest.mark.parametrize("failure", ["oversized", "unreadable"])
+async def test_ai_task_service_rejects_unusable_image_before_backend_request(
+    hass: HomeAssistant,
+    task_entry: MockConfigEntry,
+    tmp_path: Path,
+    backend,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    service: str,
+    failure: str,
+) -> None:
+    marker = "synthetic-private-attachment"
+    path = tmp_path / f"{marker}.png"
+    payload = PNG_BYTES if failure == "unreadable" else b"x" * (10 * 1024 * 1024 + 1)
+    await hass.async_add_executor_job(path.write_bytes, payload)
+    requests, events = backend
+    _reply(events, "This request must not reach the backend.")
+    events.append(
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "image_generation_call",
+                "result": base64.b64encode(PNG_BYTES).decode(),
+            },
+        }
+    )
+    open_attempts = []
+    real_open = Path.open
+
+    def open_attachment(candidate, *args, **kwargs):
+        if candidate == path:
+            open_attempts.append(candidate)
+            raise PermissionError(13, marker, str(candidate))
+        return real_open(candidate, *args, **kwargs)
+
+    if failure == "unreadable":
+        monkeypatch.setattr(Path, "open", open_attachment)
+    expected = (
+        "Codex Assist could not read an image attachment"
+        if failure == "unreadable"
+        else "Codex Assist image attachment exceeds the 10 MiB per-file limit"
+    )
+
+    with pytest.raises(HomeAssistantError, match=expected) as caught:
+        await hass.services.async_call(
+            "ai_task",
+            service,
+            {
+                "task_name": "Invalid attachment",
+                "entity_id": ENTITY_ID,
+                "instructions": "Describe or redraw the supplied image.",
+                "attachments": [
+                    {
+                        "media_content_id": f"media-source://media_source/local/{path.name}",
+                        "media_content_type": "image/png",
+                    }
+                ],
+            },
+            blocking=True,
+            return_response=True,
+        )
+
+    assert requests == []
+    assert marker not in str(caught.value)
+    assert marker not in "".join(traceback.format_exception(caught.value))
+    integration_logs = "\n".join(
+        logging.Formatter().format(record)
+        for record in caplog.records
+        if record.name.startswith("custom_components.codex_assist")
+    )
+    assert marker not in integration_logs
+    assert expected in integration_logs
+    if failure == "unreadable":
+        assert open_attempts == [path]
+    stored_images = await hass.async_add_executor_job(
+        lambda: list((tmp_path / "ai_task" / "image").glob("*"))
+    )
+    assert stored_images == []
+
+
+async def test_real_chat_log_discards_unreadable_old_attachment(hass, tmp_path):
+    old = UserContent(
+        content="Discarded turn",
+        attachments=[Attachment(
+            media_content_id="synthetic-old-image",
+            mime_type="image/png",
+            path=tmp_path / "missing-old-image.png",
+        )],
+    )
+    log = ChatLog(hass=hass, conversation_id="synthetic-history", content=[
+        old, *[UserContent(content=f"Retained {i}") for i in range(24)]
+    ])
+
+    assert await _codex_input_from_chat_log(hass, log) == [
+        {"role": "user", "content": f"Retained {i}"} for i in range(24)
+    ]
+    assert log.content[0] is old
+    assert len(log.content) == 25
