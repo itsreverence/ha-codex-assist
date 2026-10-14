@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import traceback
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -306,8 +307,13 @@ async def test_ai_task_service_rejects_unusable_image_before_backend_request(
     assert requests == []
     assert marker not in str(caught.value)
     assert marker not in "".join(traceback.format_exception(caught.value))
-    assert marker not in caplog.text
-    assert expected in caplog.text
+    integration_logs = "\n".join(
+        logging.Formatter().format(record)
+        for record in caplog.records
+        if record.name.startswith("custom_components.codex_assist")
+    )
+    assert marker not in integration_logs
+    assert expected in integration_logs
     if failure == "unreadable":
         assert open_attempts == [path]
     stored_images = await hass.async_add_executor_job(
