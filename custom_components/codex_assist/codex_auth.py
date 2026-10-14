@@ -180,7 +180,7 @@ def _token_set_from_payload(
     access_token = _required_string(payload.get("access_token"), "access_token")
     refresh_value = payload.get("refresh_token")
     if fallback_refresh and (
-        refresh_value is None or isinstance(refresh_value, str) and not refresh_value.strip()
+        refresh_value is None or (isinstance(refresh_value, str) and not refresh_value.strip())
     ):
         refresh_value = fallback_refresh
     refresh_token = _required_string(refresh_value, "refresh_token")

@@ -120,6 +120,7 @@ async def test_auth_transport_failure_is_temporary_and_sanitized(operation, kwar
             await getattr(CodexAuthClient(http), operation)(**kwargs)
 
     assert len(requests) == 1
+    assert error_type.__name__ in str(caught.value)
     assert "private-auth-marker" not in "".join(traceback.format_exception(caught.value))
     assert caught.value.__suppress_context__
 
