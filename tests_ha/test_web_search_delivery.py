@@ -290,17 +290,20 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
+@pytest.mark.parametrize("after_search", [False, True])
 async def test_search_401_refreshes_once_through_real_owner(
-    hass: HomeAssistant, search_entry, backend, surface,
+    hass: HomeAssistant, search_entry, backend, surface, after_search,
 ):
-    """A rejected search refreshes through the existing coordinator, without leaked text."""
     planned, requests = backend
     first = [
         *text_events("An interrupted preliminary answer. "),
         call_event("search-rejected", "web_search", {"queries": ["synthetic"]}),
     ]
     model_round(planned, first + [COMPLETED])
-    planned.append(("/backend-api/codex/alpha/search", 401, {"detail": "expired access token"}))
+    if after_search:
+        search_reply(planned)
+    rejected_path = "/backend-api/codex/responses" if after_search else "/backend-api/codex/alpha/search"
+    planned.append((rejected_path, 401, {"detail": "expired access token"}))
     planned.append(("/oauth/token", 200, {
         "access_token": "test-new-access", "refresh_token": "test-new-refresh",
     }))
@@ -324,6 +327,7 @@ async def test_search_401_refreshes_once_through_real_owner(
     assert search_entry.data["access_token"] == "test-new-access"
     assert search_entry.data["refresh_token"] == "test-new-refresh"
     assert [path for path, _body in requests].count("/oauth/token") == 1
-    assert requests[2][1]["grant_type"] == ["refresh_token"]
-    assert requests[2][1]["refresh_token"] == ["test-refresh"]
-    assert "search-rejected" not in json.dumps(requests[3][1]["input"])
+    refresh_index = 3 if after_search else 2
+    assert requests[refresh_index][1]["grant_type"] == ["refresh_token"]
+    assert requests[refresh_index][1]["refresh_token"] == ["test-refresh"]
+    assert "search-rejected" not in json.dumps(requests[refresh_index + 1][1]["input"])

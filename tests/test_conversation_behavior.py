@@ -848,7 +848,7 @@ async def test_native_transcript_survives_tool_round_and_final_synthesis(
     (None, False),
     (CodexTextDelta("Partial answer"), True),
     (CodexToolCallDelta(CodexToolCall("call-1", "HassTestReading", {})), True),
-    (CodexCitationDelta(CodexCitation("Example", "https://example.com")), True),
+    (CodexCitationDelta(CodexCitation("Example", "https://example.com")), False),
     (CodexResponseItemDelta({"type": "reasoning"}), False),
 ])
 async def test_auth_replay_is_disabled_after_visible_deltas(conversation_module, delta, visible):

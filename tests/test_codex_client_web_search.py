@@ -671,3 +671,27 @@ async def test_stream_turn_disables_search_after_total_call_budget():
     assert len(http.search_calls) == 4
     assert "tools" not in http.stream_calls[-1][2]["json"]
     assert [d.text for d in deltas if isinstance(d, CodexTextDelta)] == ["Final answer."]
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_truncated_search_round_cannot_dispatch_search_or_ha_tools(mixed):
+    calls = [_function_call("search-1", "web_search", {"queries": ["synthetic"]})]
+    if mixed:
+        calls.append(_function_call("ha-1", "HassTestReading", {}))
+    http = FakeHttpClient([_round(*calls)])
+    client = CodexClient(http_client=http, access_token="token-1")
+    emitted = []
+
+    with pytest.raises(RuntimeError, match="before response.completed"):
+        async for delta in client.stream_turn(
+            model="gpt-test", instructions="Search.",
+            input_items=[{"role": "user", "content": "Read the test value."}],
+            tools=[{"type": "web_search"}, {
+                "type": "function", "name": "HassTestReading", "parameters": {},
+            }],
+        ):
+            emitted.append(delta)
+
+    assert http.search_calls == []
+    assert len(http.stream_calls) == 1
+    assert not any(isinstance(delta, CodexToolCallDelta) for delta in emitted)
