@@ -111,7 +111,7 @@ def test_start_reauth_result_starts_ha_reauth_and_returns_user_message(
     assert entry.reauth_started is True
     assert entry.reauth_hass is hass
     assert result.conversation_id == "conversation-1"
-    assert "sign in again" in response.speech
+    assert response.speech == "Codex Assist needs attention in Home Assistant."
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ async def test_handle_message_reports_temporary_auth_failure_without_reauth(
     assert entry.reauth_started is False
     assert result[1] is chat_log
     assert len(chat_log.added) == 1
-    assert "rate limited" in chat_log.added[0].content
+    assert chat_log.added[0].content == "Sorry, I couldn't complete that."
 
 
 @pytest.mark.asyncio
@@ -193,6 +193,8 @@ async def test_handle_message_reports_friendly_usage_limit_without_status_code(
 
     assert result[1] is chat_log
     assert len(chat_log.added) == 1
-    assert "usage limit" in chat_log.added[0].content.lower()
+    assert chat_log.added[0].content == (
+        "Codex Assist cannot process this request because of an account or usage limit."
+    )
     assert "status 429" not in chat_log.added[0].content
     assert "Codex request failed" not in chat_log.added[0].content

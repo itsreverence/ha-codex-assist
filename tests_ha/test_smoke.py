@@ -283,7 +283,7 @@ async def test_conversation_finishes_after_tool_limit(
     if final_reply == "answer":
         assert speech == "I collected five readings."
     else:
-        assert "tool call while tools are disabled" in speech
+        assert speech == "Sorry, I couldn't complete that."
 
 
 @pytest.mark.parametrize("content_type", ["tool_result", "tool_args"])

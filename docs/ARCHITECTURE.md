@@ -108,6 +108,36 @@ If the current turn alone exceeds that limit, the owner fails explicitly rather
 than dropping evidence, splitting tool pairs, or stripping reasoning. Search
 retention does not implement the CLI's encrypted search-output or ref-ID protocol.
 
+### Conversation error boundary
+
+The conversation owner maps caught exceptions to fixed speech locally. Only
+`_start_reauth_result`, which starts reauthentication, selects "Codex Assist needs
+attention in Home Assistant." Rate-limit exceptions select "Codex Assist cannot
+process this request because of an account or usage limit." Other caught failures,
+including authentication failures without reauthentication, select "Sorry, I
+couldn't complete that." Attachment and history-limit validation failures also use
+this generic response. More detailed speech based on typed validation errors is a
+separate follow-up. The shared validators and AI Task error formatter are unchanged.
+
+Conversation-owned failure logs contain a fixed stage, the exception class,
+fixed retry and reauthentication decisions, and the innermost integration filename
+and line number from the caught exception's traceback. External frames and exception
+chains are not reported. The location is `unknown` if no integration frame exists.
+The validation catch uses `request_preparation_or_tool_processing` because it also
+covers input preparation. Logs omit exception messages, formatted tracebacks, source
+text, locals, absolute paths, response bodies, and URLs. Existing catch boundaries,
+cancellation propagation, refresh limits, and reauthentication actions are
+unchanged. A failed final synthesis does not replay completed native actions.
+
+Each conversation request appends short-error guidance after the configured
+prompt and HA context, alongside optional citation guidance. It asks the model
+to omit unsolicited diagnostics, error codes, request IDs, HTTP details, stack
+traces, and reporting instructions. Explicitly requested troubleshooting remains
+allowed. This is prompt guidance, not an output filter. Model-generated text,
+already streamed text, and HA-native errors converted into tool results can
+still contain details. Framework-owned `ConverseError` results pass through
+unchanged. This boundary does not promise secrecy across all HA logs or traces.
+
 ## AI Task flow
 
 1. Home Assistant sends an AI Task request to the Codex Assist AI Task entity.

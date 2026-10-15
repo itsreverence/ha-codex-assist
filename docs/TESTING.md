@@ -80,6 +80,26 @@ auth failures after recovered text, and Sources cards only on success. An auth
 retry must discard citations from the failed attempt. All backend responses in
 these tests are synthetic; passing them does not establish live Codex behavior.
 
+`tests_ha/test_conversation_errors.py` calls HA's public conversation API with
+synthetic HTTPX responses and registered native test tools. It checks fixed
+speech for HTTP, SSE, transport, quota, authentication, and tool exceptions;
+safe replay history and conversation-owned logs; refresh and reauthentication
+counts; cancellation propagation; and no action replay after failed synthesis.
+Chained exceptions carry synthetic sensitive messages and a private traceback path.
+Diagnostics distinguish backend failure, empty-answer, and incomplete-stream sites
+by integration filename and line number, without source text or absolute paths.
+Authentication failures without reauthentication use generic speech. Reauthentication
+keeps its short guidance, and quota speech makes no temporary-recovery promise.
+No error result may attach a Sources card. Existing search handoff coverage also
+checks this when an earlier
+round already supplied citations. The request assertions verify that conversation
+error guidance reaches the backend with custom prompts and either search setting.
+
+These tests run in both HA contract environments. They do not prove model
+obedience, filter tool-result payloads, or establish framework-wide log or trace
+secrecy. AI Task assertions retain their existing error expectations. No live
+backend or Home Assistant device is involved.
+
 The tool-result regression runs a real conversation and checks the outgoing
 Codex payload. On modern HA it removes only the deprecated property to prove
 the integration does not rely on that compatibility shim.

@@ -143,7 +143,7 @@ async def test_search_final_answer_validation(hass, search_entry, backend, surfa
             assert speech == "Recovered answer."
             assert result.response.card["simple"]["title"] == "Sources"
         else:
-            assert "no answer text" in speech if ending == "silent" else "failed" in speech
+            assert speech == "Sorry, I couldn't complete that."
             assert not result.response.card
     elif ending == "recovered":
         result = await ai_task.async_generate_data(
@@ -313,9 +313,10 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
         agent_id="conversation.codex_assist",
     )
     if replay_boundary == "failed_final":
-        assert "Synthetic final failure" in result.response.speech["plain"]["speech"]
+        assert result.response.speech["plain"]["speech"] == "Sorry, I couldn't complete that."
         assert not result.response.card
         assert executed == ["reading-1"]
+        assert len(requests) == 4
         return
     assert result.response.speech["plain"]["speech"] == final_text
     assert url in result.response.card["simple"]["content"]
