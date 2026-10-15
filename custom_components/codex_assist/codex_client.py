@@ -232,9 +232,11 @@ class _ResponseTextLedger:
             text = event.get("delta")
             if not isinstance(text, str) or not text:
                 return []
-            message = self._message(event, {})
             if event.get("item_id") is None and event.get("output_index") is None:
+                if len(self.messages) > 1:
+                    raise RuntimeError(_TEXT_CONFLICT)
                 self.anonymous_text = True
+            message = self._message(event, {})
             if message.completed is not None:
                 raise RuntimeError(_TEXT_CONFLICT)
             index = event.get("content_index")
