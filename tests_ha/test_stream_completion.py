@@ -237,6 +237,95 @@ async def test_delivered_order_controls_success_and_native_state(
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
+@pytest.mark.parametrize("output,expected", [
+    *[
+        pytest.param([
+            text_delta("E", "a"), text_delta("X", "b"),
+            {"type": "response.output_text.delta", "delta": "e"}, *ending,
+        ], None, id=name)
+        for name, ending in [
+            ("delta-only-completion", [COMPLETED]),
+            ("premature-eof", []),
+            ("message-done", [completed_message("Ee", item_id="a", output_index=None),
+                              COMPLETED]),
+        ]
+    ],
+    pytest.param([
+        text_delta("E", "a"), completed_message("E", item_id="a", output_index=None),
+        text_delta("X", "b"), {"type": "response.output_text.delta", "delta": "e"}, COMPLETED,
+    ], None, id="completed-message-before-anonymous"),
+    pytest.param([
+        text_delta("E", "a"), {"type": "response.output_text.delta", "delta": "e"},
+        completed_message("Ee", item_id="a", output_index=None), COMPLETED,
+    ], "Ee", id="single-message-anonymous"),
+    pytest.param([
+        text_delta("E", "a"), text_delta("X", "b"), text_delta("x", "b"),
+        completed_message("E", item_id="a", output_index=None),
+        completed_message("Xx", item_id="b", output_index=None), COMPLETED,
+    ], "EXx", id="multiple-messages-identified"),
+    pytest.param([
+        text_delta("E", "a"), text_delta("X", "b"),
+        {"type": "response.output_text.delta", "delta": ""},
+        completed_message("E", item_id="a", output_index=None),
+        completed_message("X", item_id="b", output_index=None), COMPLETED,
+    ], "EX", id="multiple-messages-empty-anonymous"),
+])
+async def test_anonymous_delta_controls_native_commit_and_sources(
+    hass, task_entry, stream_backend, monkeypatch, surface, output, expected,
+):
+    from custom_components.codex_assist import ai_task as task_owner
+    from custom_components.codex_assist import conversation as conversation_owner
+
+    logs = []
+    original = conversation_owner._stream_codex_turn_into_chat_log
+
+    async def record(**kwargs):
+        logs.append(kwargs["chat_log"])
+        return await original(**kwargs)
+
+    for owner in (task_owner, conversation_owner):
+        monkeypatch.setattr(owner, "_stream_codex_turn_into_chat_log", record)
+    events, requests = stream_backend
+    events.extend([
+        {"type": "response.output_item.done", "item": {
+            "type": "reasoning", "id": "reasoning", "encrypted_content": "synthetic",
+        }},
+        {"type": "response.output_text.annotation.added", "annotation": {
+            "type": "url_citation", "title": "Example", "url": "https://example.com/docs",
+        }},
+        *output,
+    ])
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
+        )
+        speech = result.response.speech["plain"]["speech"]
+        if expected is None:
+            assert "Codex returned inconsistent answer text" in speech
+            assert not result.response.card
+        else:
+            assert speech == expected
+            assert result.response.card["simple"]["title"] == "Sources"
+    elif expected is None:
+        with pytest.raises(HomeAssistantError, match="Codex returned inconsistent answer text"):
+            await ai_task.async_generate_data(
+                hass, task_name="Test", instructions="Give a test answer.",
+                entity_id="ai_task.codex_assist_ai_task",
+            )
+    else:
+        result = await ai_task.async_generate_data(
+            hass, task_name="Test", instructions="Give a test answer.",
+            entity_id="ai_task.codex_assist_ai_task",
+        )
+        assert result.data == expected
+    assert requests == ["/backend-api/codex/responses"]
+    assert len(logs) == 1
+    assert any(getattr(content, "native", None) is not None for content in logs[0].content) == (
+        expected is not None
+    )
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task"])
 @pytest.mark.parametrize("output", [
     [],
     [{"type": "response.output_text.delta", "delta": " \n"}],

@@ -275,3 +275,64 @@ async def test_contiguous_delivery_preserves_long_adjacent_chunks_and_recovered_
         message("Next", item_id="b"), COMPLETED,
     ], delivered)
     assert delivered == [*["x"] * 2048, "!", "Next"]
+
+
+@pytest.mark.parametrize("identities", [
+    ({"item_id": "a"}, {"item_id": "b"}),
+    ({"output_index": 0}, {"output_index": 1}),
+])
+@pytest.mark.parametrize("ending", [
+    pytest.param([COMPLETED], id="delta-only-completion"),
+    pytest.param([], id="premature-eof"),
+    pytest.param([message("Ee", item_id="a"), COMPLETED], id="message-done"),
+])
+async def test_anonymous_delta_after_multiple_messages_fails_before_delivery(identities, ending):
+    first, second = identities
+    delivered = []
+    with pytest.raises(RuntimeError, match="^Codex returned inconsistent answer text$"):
+        await collect([
+            delta("E", **first), delta("X", **second), delta("e"), *ending,
+        ], delivered)
+    assert delivered == ["E", "X"]
+
+
+async def test_anonymous_delta_stops_reading_before_long_ambiguous_tail():
+    class CountingStream(httpx.AsyncByteStream):
+        events_read = 0
+
+        async def __aiter__(self):
+            for event in [
+                delta("E", item_id="a"), delta("X", item_id="b"),
+                *(delta("e") for _ in range(2048)), COMPLETED,
+            ]:
+                self.events_read += 1
+                yield encode([event])
+
+    stream = CountingStream()
+    delivered = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=stream),
+    )) as http:
+        client = CodexClient(http_client=http, access_token="test")
+        with pytest.raises(RuntimeError, match="^Codex returned inconsistent answer text$"):
+            async for item in client.stream_turn(model="test", instructions="Test", input_items=[]):
+                if isinstance(item, CodexTextDelta):
+                    delivered.append(item.text)
+    assert delivered == ["E", "X"]
+    assert stream.events_read == 3
+
+
+@pytest.mark.parametrize("events,expected", [
+    pytest.param([delta("E", item_id="a"), delta("e")], ["E", "e"],
+                 id="single-message-anonymous"),
+    pytest.param([delta("E", item_id="a"), delta("X", item_id="b"), delta("x", item_id="b")],
+                 ["E", "X", "x"], id="multiple-messages-identified"),
+    pytest.param([delta("E", output_index=0), delta("X", output_index=1),
+                  delta("x", output_index=1)], ["E", "X", "x"], id="multiple-messages-indexed"),
+    pytest.param([delta("E", item_id="a"), delta("X", item_id="b"), delta("")],
+                 ["E", "X"], id="multiple-messages-empty-anonymous"),
+])
+async def test_anonymous_delta_preserves_unambiguous_delivery(events, expected):
+    delivered = []
+    await collect([*events, COMPLETED], delivered)
+    assert delivered == expected
