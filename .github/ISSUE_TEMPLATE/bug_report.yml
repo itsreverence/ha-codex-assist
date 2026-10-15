@@ -18,7 +18,7 @@ body:
     id: integration-version
     attributes:
       label: Codex Assist version / commit
-      placeholder: "v0.1.0 or commit SHA"
+      placeholder: "The version shown in HACS, or a commit SHA"
     validations:
       required: true
   - type: dropdown
@@ -30,11 +30,20 @@ body:
         - Token refresh / reauth
         - Assist pipeline selection
         - Exposed entity control
+        - Hosted web search
+        - AI Task or image attachments
+        - Model list or model selection
         - Model response quality
         - HACS install/update
         - Other
     validations:
       required: true
+  - type: input
+    id: model-settings
+    attributes:
+      label: Selected model and hosted web search setting
+      description: Optional. The chat model chosen in Codex Assist options and whether hosted web search is on.
+      placeholder: "Model name, search on or off"
   - type: textarea
     id: description
     attributes:
@@ -46,5 +55,5 @@ body:
     id: logs
     attributes:
       label: Relevant Home Assistant logs
-      description: Paste only relevant redacted log lines containing codex_assist.
+      description: Paste only relevant redacted log lines containing codex_assist. Review any downloaded diagnostics before attaching them. Remove tokens, device codes, private URLs, and private entity names.
       render: text

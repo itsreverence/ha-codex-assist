@@ -2,7 +2,7 @@
 
 ## Questions and setup help
 
-Start with the [user guide](https://github.com/itsreverence/ha-codex-assist/wiki), especially its installation, troubleshooting, compatibility, model-selection, and safe-entity-exposure pages.
+Start with the [user guide](https://github.com/itsreverence/ha-codex-assist/wiki), especially its [Installation](https://github.com/itsreverence/ha-codex-assist/wiki/Installation), [Troubleshooting](https://github.com/itsreverence/ha-codex-assist/wiki/Troubleshooting), [Compatibility and Limitations](https://github.com/itsreverence/ha-codex-assist/wiki/Compatibility-and-Limitations), [Choosing a Model](https://github.com/itsreverence/ha-codex-assist/wiki/Choosing-a-Model), and [Safe Entity Exposure](https://github.com/itsreverence/ha-codex-assist/wiki/Safe-Entity-Exposure) pages.
 
 For a quick first check:
 
