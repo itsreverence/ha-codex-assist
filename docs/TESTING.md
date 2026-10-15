@@ -258,6 +258,55 @@ After restarting Home Assistant:
 4. Test one harmless exposed light.
 5. Confirm sensitive entities remain unexposed unless deliberately allowed.
 
+## Clarification follow-ups
+
+`tests_ha/test_clarification_followups.py` calls public HA Conversation and AI Task
+APIs with scripted HTTPX responses. Outbound-request assertions check that
+clarification guidance accompanies default, custom, options, template, and extra
+prompts without mutating stored prompts or accumulating across turns. They also
+check search guidance, auth retries, native tool handoffs, and AI Task exclusion.
+
+Separate characterization cases check native continuation for final `?`, ASCII
+`;` (U+003B), and fullwidth `？`, retained conversation ID and history, and no continuation
+after ordinary, action, or cancellation acknowledgements. Ellipses, periods,
+trailing prose or quotes, and Arabic `؟` remain unchanged and do not continue.
+A completed-message-only question still reaches speech and retains the Sources
+card after search. A fixed clarification-then-`HassTurnOn` script checks zero calls
+before clarification and exactly one call to a synthetic light service afterward.
+The script never chooses a response based on the new instruction. This proves
+request construction and HA routing only, not model compliance or real device
+behavior. Run the file and the full suite in both HA contract environments.
+
+Before claiming live clarification or ESPHome support, use an authorized test
+instance with integration-owned authentication and complete these checks:
+
+1. Record the candidate commit, HA version, selected model, pipeline language,
+   satellite model and firmware, and search setting. Keep private identifiers out
+   of shared evidence. Test the default prompt and the installation's custom prompt.
+2. Ask an ambiguous read-only question. Check that the actual model asks one direct
+   question as the final sentence with nothing after its question punctuation.
+   Inspect `continue_conversation` and the conversation ID in the Assist result.
+3. On the physical ESPHome satellite, confirm the microphone listens again after
+   TTS. Answer without another wake word and confirm the same conversation resumes
+   with the earlier question in context. A true result flag alone is not this proof.
+4. With only harmless test lights exposed, give an ambiguous action. Confirm no
+   action occurs before clarification. Name the target, then confirm exactly one
+   intended action and no unnecessary closing question or extra listening cycle.
+5. Repeat clarification and answer with "cancel" and "never mind". Confirm no
+   action occurs and listening ends. Separately test the satellite stop control
+   and the existing timeout without changing microphone or pipeline settings.
+6. Check an ordinary answer and a completed action for a false continuation flag
+   and normal idle behavior. Enable search and verify a clarification can preserve
+   validated Sources metadata without URLs or source text after the spoken question.
+7. Test the languages used by the installation. HA's native check recognizes `?`,
+   ASCII `;` (U+003B), and fullwidth `？`. Record other punctuation as a known limitation;
+   do not repair output or force English to make the test pass.
+
+Report observed failures as well as successes. Do not claim live model compliance,
+physical microphone reopening, or timeout and cancellation behavior from the
+scripted suite. Publish matching wiki guidance only after the repository docs
+reach `main`, as required by [RELEASING.md](RELEASING.md).
+
 ## Authentication and model tests
 
 The auth boundary regressions use real `httpx` responses and transport exceptions

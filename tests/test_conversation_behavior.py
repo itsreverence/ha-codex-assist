@@ -332,11 +332,13 @@ def test_citation_result_keeps_sources_in_card_without_changing_speech(conversat
 def test_web_search_instructions_suppress_spoken_source_urls(conversation_module):
     chat_log = FakeChatLog([FakeContent(role="system", content="Be concise.")])
 
-    plain_instructions = conversation_module._instructions_for_turn(
+    without_search = conversation_module._instructions_for_turn(
         chat_log, "fallback", web_search=False
     )
-    assert plain_instructions.startswith("Be concise.")
-    assert "do not include raw URLs" not in plain_instructions
+    assert without_search.startswith("Be concise.\n\n")
+    assert "Keep error responses short" in without_search
+    assert "When clarification is required" in without_search
+    assert "do not include raw URLs" not in without_search
     instructions = conversation_module._instructions_for_turn(
         chat_log, "fallback", web_search=True
     )
