@@ -167,6 +167,12 @@ async def test_text_streams_but_tools_wait_for_response_completion(call_events, 
     ({"type": "response.incomplete", "response": {"incomplete_details": {"reason": "limit"}}},
      RuntimeError, "response incomplete: limit"),
     ({"type": "error", "message": "backend down"}, RuntimeError, "backend down"),
+    ({"type": "error", "code": "token_invalidated", "error": {
+        "code": "quota_exceeded", "message": "Nested quota rejection",
+    }}, CodexRateLimitError, "Codex usage limit or rate limit reached: Nested quota rejection"),
+    ({"type": "error", "code": "quota_exceeded", "error": {
+        "code": "token_invalidated", "detail": "Nested auth rejection",
+    }}, CodexAuthenticationError, "Codex authentication failed: Nested auth rejection"),
 ])
 async def test_explicit_stream_failures_keep_their_classification(surface, event, error, message):
     stream = Stream(encode([event]))
@@ -175,3 +181,85 @@ async def test_explicit_stream_failures_keep_their_classification(surface, event
     )) as http:
         with pytest.raises(error, match=message):
             await run(CodexClient(http_client=http, access_token="test"), surface)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["text", "image"])
+@pytest.mark.parametrize("shape", ["flat", "nested", "failed"])
+@pytest.mark.parametrize("field", ["message", "detail"])
+@pytest.mark.parametrize("code,error,prefix", [
+    ("token_invalidated", CodexAuthenticationError, "Codex authentication failed: "),
+    ("rate_limit_exceeded", CodexRateLimitError, "Codex usage limit or rate limit reached: "),
+    ("usage_limit_reached", CodexRateLimitError, "Codex usage limit or rate limit reached: "),
+    ("usage_not_included", CodexRateLimitError, "Codex usage limit or rate limit reached: "),
+    ("quota_exceeded", CodexRateLimitError, "Codex usage limit or rate limit reached: "),
+])
+async def test_structured_stream_errors(surface, shape, field, code, error, prefix):
+    detail = {"code": code, field: "Synthetic rejection"}
+    event = ({"type": "error", **detail} if shape == "flat" else
+             {"type": "error", "error": detail} if shape == "nested" else
+             {"type": "response.failed", "response": {"error": detail}})
+    stream = Stream(encode([event]))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=stream)
+    )) as http:
+        with pytest.raises(error) as caught:
+            await run(CodexClient(http_client=http, access_token="test"), surface)
+    assert str(caught.value) == prefix + "Synthetic rejection"
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["text", "image"])
+@pytest.mark.parametrize("shape", ["flat", "nested", "failed"])
+@pytest.mark.parametrize("code", [None, 401, [], {}, "unknown", "prefix_token_invalidated",
+                                  "quota_exceeded_suffix"])
+async def test_unrecognized_stream_codes_preserve_generic_diagnostics(surface, shape, code):
+    detail = {"code": code, "message": "token_invalidated quota_exceeded"}
+    event = ({"type": "error", **detail} if shape == "flat" else
+             {"type": "error", "error": detail} if shape == "nested" else
+             {"type": "response.failed", "response": {"error": detail}})
+    stream = Stream(encode([event]))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=stream)
+    )) as http:
+        with pytest.raises(RuntimeError) as caught:
+            await run(CodexClient(http_client=http, access_token="test"), surface)
+    assert type(caught.value) is RuntimeError
+    prefix = "Codex stream failed: " if shape == "failed" else ""
+    assert str(caught.value) == prefix + "token_invalidated quota_exceeded"
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["text", "image"])
+@pytest.mark.parametrize("event,message", [
+    ({"type": "error"}, "Codex stream returned an error event"),
+    ({"type": "error", "code": "unknown"}, "Codex stream returned an error event"),
+    ({"type": "error", "error": "backend down"}, "backend down"),
+    ({"type": "error", "error": {"code": "unknown"}}, "unknown"),
+    ({"type": "error", "error": {"code": []}}, "Codex stream returned an error event"),
+    ({"type": "error", "code": "token_invalidated", "error": {"code": "unknown"}},
+     "unknown"),
+    ({"type": "error", "code": "token_invalidated", "error": {}, "message": "backend down"},
+     "backend down"),
+    ({"type": "error", "code": "token_invalidated", "error": {
+        "code": [], "detail": "Malformed nested code",
+    }}, "Malformed nested code"),
+    ({"type": "error", "error": ["token_invalidated"]},
+     "Codex stream returned an error event"),
+    ({"type": "response.failed"}, "Codex stream failed: response.failed event received"),
+    ({"type": "response.failed", "response": {"error": {"code": {}}}},
+     "Codex stream failed: unknown error"),
+    ({"type": "response.incomplete", "response": {"error": {"code": "token_invalidated"}}},
+     "Codex response incomplete: unknown reason"),
+])
+async def test_malformed_stream_errors_keep_existing_diagnostics(surface, event, message):
+    stream = Stream(encode([event]))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=stream)
+    )) as http:
+        with pytest.raises(RuntimeError) as caught:
+            await run(CodexClient(http_client=http, access_token="test"), surface)
+    assert type(caught.value) is RuntimeError
+    assert str(caught.value) == message
