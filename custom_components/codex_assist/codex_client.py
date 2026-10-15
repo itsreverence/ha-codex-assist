@@ -182,11 +182,7 @@ class _ResponseTextLedger:
                 raise RuntimeError(_TEXT_CONFLICT)
             message.output_index = index
             self.by_index[index] = message
-            emitted_indices = [
-                m.output_index for m, _ in self.emitted if m.output_index is not None
-            ]
-            if emitted_indices != sorted(emitted_indices):
-                raise RuntimeError(_TEXT_CONFLICT)
+            self._validate_order()
         for key in ("role", "phase"):
             if (value := item.get(key)) is not None:
                 previous = getattr(message, key)
@@ -195,12 +191,24 @@ class _ResponseTextLedger:
                 setattr(message, key, value)
         return message
 
+    def _validate_order(self) -> None:
+        output_index = -1
+        content_indices: dict[_TextMessage, int] = {}
+        for message, index in self.emitted:
+            if message.output_index is not None:
+                if message.output_index < output_index:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                output_index = message.output_index
+            if index is not None:
+                if index < content_indices.get(message, -1):
+                    raise RuntimeError(_TEXT_CONFLICT)
+                content_indices[message] = index
+
     def _record(self, message: _TextMessage, index: int | None, text: str) -> None:
         message.parts[index] = message.parts.get(index, "") + text
-        if text:
-            if (message, index) in self.emitted:
-                self.emitted.remove((message, index))
+        if text and (not self.emitted or self.emitted[-1] != (message, index)):
             self.emitted.append((message, index))
+            self._validate_order()
 
     def _bind_part(self, message: _TextMessage, index: int) -> None:
         if None not in message.parts:
@@ -211,6 +219,7 @@ class _ResponseTextLedger:
         self.emitted = [
             (m, index if m is message and i is None else i) for m, i in self.emitted
         ]
+        self._validate_order()
 
     def observe(self, event: dict[str, Any]) -> list[str]:
         event_type = event.get("type")
