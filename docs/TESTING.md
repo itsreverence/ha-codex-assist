@@ -204,9 +204,10 @@ When the hosted-search payload, model defaults, citation handling, or backend co
      uv run python scripts/probe_web_search_contract.py --model MODEL_ID
    ```
 
-   The probe emits event names and key shapes, not response text, search queries,
-   URLs, identifiers, or credentials. Never borrow credentials from Codex CLI,
-   an editor, or another assistant.
+   The probe emits closed outcomes and booleans, not event names, key shapes,
+   response text, search queries, URLs, identifiers, or credentials. Success
+   requires `response.completed`, a completed search item, and a nonempty answer.
+   Never borrow credentials from Codex CLI, an editor, or another assistant.
 
 ## Release-candidate install
 
