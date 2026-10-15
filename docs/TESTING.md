@@ -248,8 +248,10 @@ trials and mark them `not_run`. Unclassified runtime errors and unexpected
 exceptions also stop remaining trials, with generic sanitized error categories
 and an overall `incomplete` status. Such errors may conceal authentication or
 quota failures. The report cannot attribute them to an upstream or client failure.
-Investigate the cause before authorizing another bounded run. Known typed HTTP
-and timeout errors remain evaluated failures and allow subsequent trials.
+Investigate the cause before authorizing another bounded run. Transport errors
+raised as `httpx.HTTPError` and timeouts remain evaluated failures and allow
+subsequent trials. Other non-200 `/responses` replies, failed or incomplete
+streams, and other runtime errors stop the run as incomplete.
 Cancellation closes active streams, and overall timeout preserves partial
 evidence in the JSON report.
 
