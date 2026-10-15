@@ -185,6 +185,67 @@ transport paths, not semantic answer accuracy.
 The probe does not connect to HA or verify device effects, speech, source cards,
 or other UI behavior. Test those boundaries separately through the real owners.
 
+To compare client-side and built-in search with the same public questions, run:
+
+```bash
+uv run python scripts/probe_search_comparison.py --model MODEL_ID --dry-run
+```
+
+The comparison accepts one required account-discovered `--model`, `--dry-run`,
+and `--first-arm client|builtin`, which defaults to `client`. It has no prompt,
+token, pair-count, multiple-model, or budget flags. Dry-run reports the fixed
+limits with `live_request_sent=false` and makes no requests. For an authorized
+live run, use only the integration-owned `CODEX_ASSIST_ACCESS_TOKEN` environment
+variable and omit `--dry-run`. Do not borrow another application's credentials.
+
+Each invocation pairs both arms for exactly three fixed public cases. The cases
+ask who maintains IANA's Reserved Domains page, the current latest stable Python
+release, and a direct open of IANA's example-domains page. The first arm alternates
+between cases. Repeat the invocation with the other `--first-arm` value for a
+second window, and run each additional model separately with both orders.
+
+Both arms use the same initial prompt, instructions, model options, medium
+search context, and enabled external access, without domain filters or location.
+The client arm uses `CodexClient.stream_turn` and its real `alpha/search` adapter.
+The built-in arm uses the existing `_stream_once` iterator with `web_search`.
+Each arm owns a fresh HTTP client. An initial turn must complete normally, answer,
+retain native items, and establish successful search before its follow-up runs.
+Every observed client search must return HTTP 200 with usable normalized output.
+Every observed built-in search item must have status `completed`. An earlier
+success cannot mask a later failed or incomplete search.
+
+The direct case also requires an observed successful open of the fixed target.
+For the built-in arm, the documented action is `open_page` with the target in
+`action.url`, as described in the [OpenAI web search guide](https://developers.openai.com/api/docs/guides/tools-web-search).
+Unknown actions or an absent target produce `open_not_established`, not a claim
+that the backend cannot open pages. The follow-up replays the original question
+and complete ordered native history, including reasoning and call outputs, with
+tools disabled. It must complete with a nonempty answer. Unexpected function
+calls fail the gate without execution.
+
+The runner allows at most six arms and twelve turns. Each turn has a 60-second
+deadline, each arm has 120 seconds, and the entire invocation has 720 seconds.
+The client arm permits up to ten HTTP requests, including four search calls,
+five initial response requests, and one follow-up request. The built-in arm
+permits two response requests. The total bound is 36 HTTP requests. The runner
+does not retry. Authentication or usage limits stop remaining trials and mark
+them `not_run`. Cancellation closes active streams, and overall timeout preserves
+partial evidence in the JSON report.
+
+Reports contain counts, booleans, closed outcome and error categories, and elapsed
+time to first visible text and completion. They omit raw answers, native items,
+URLs, queries, identifiers, backend error messages, and event key names. The
+model field contains only the validated CLI identifier. Exit codes are 0 when
+all six execution gates pass, 1 for evaluated failure, 2 for missing credentials
+or authentication or usage blocks, and 3 for an incomplete overall time budget.
+Dry-run also exits 0.
+
+This comparison does not assess answer correctness, citation support, Home
+Assistant UI, devices, or speech. It reports no statistics or winner. These few
+requests and their small timing differences cannot establish a performance or
+quality ranking. Synthetic tests exercise current-client routing, native replay,
+failure gates, redaction, cancellation, and request bounds without live calls.
+
 When the hosted-search payload, model defaults, citation handling, or backend contract changes:
 
 1. Run `uv run python scripts/probe_web_search_contract.py --model MODEL_ID --dry-run` and its tests.
@@ -204,9 +265,10 @@ When the hosted-search payload, model defaults, citation handling, or backend co
      uv run python scripts/probe_web_search_contract.py --model MODEL_ID
    ```
 
-   The probe emits event names and key shapes, not response text, search queries,
-   URLs, identifiers, or credentials. Never borrow credentials from Codex CLI,
-   an editor, or another assistant.
+   The probe emits closed outcomes and booleans, not event names, key shapes,
+   response text, search queries, URLs, identifiers, or credentials. Success
+   requires `response.completed`, a completed search item, and a nonempty answer.
+   Never borrow credentials from Codex CLI, an editor, or another assistant.
 
 ## Release-candidate install
 
