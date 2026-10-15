@@ -167,6 +167,12 @@ async def test_text_streams_but_tools_wait_for_response_completion(call_events, 
     ({"type": "response.incomplete", "response": {"incomplete_details": {"reason": "limit"}}},
      RuntimeError, "response incomplete: limit"),
     ({"type": "error", "message": "backend down"}, RuntimeError, "backend down"),
+    ({"type": "error", "code": "token_invalidated", "error": {
+        "code": "quota_exceeded", "message": "Nested quota rejection",
+    }}, CodexRateLimitError, "Codex usage limit or rate limit reached: Nested quota rejection"),
+    ({"type": "error", "code": "quota_exceeded", "error": {
+        "code": "token_invalidated", "detail": "Nested auth rejection",
+    }}, CodexAuthenticationError, "Codex authentication failed: Nested auth rejection"),
 ])
 async def test_explicit_stream_failures_keep_their_classification(surface, event, error, message):
     stream = Stream(encode([event]))
@@ -233,6 +239,13 @@ async def test_unrecognized_stream_codes_preserve_generic_diagnostics(surface, s
     ({"type": "error", "error": "backend down"}, "backend down"),
     ({"type": "error", "error": {"code": "unknown"}}, "unknown"),
     ({"type": "error", "error": {"code": []}}, "Codex stream returned an error event"),
+    ({"type": "error", "code": "token_invalidated", "error": {"code": "unknown"}},
+     "unknown"),
+    ({"type": "error", "code": "token_invalidated", "error": {}, "message": "backend down"},
+     "backend down"),
+    ({"type": "error", "code": "token_invalidated", "error": {
+        "code": [], "detail": "Malformed nested code",
+    }}, "Malformed nested code"),
     ({"type": "error", "error": ["token_invalidated"]},
      "Codex stream returned an error event"),
     ({"type": "response.failed"}, "Codex stream failed: response.failed event received"),
