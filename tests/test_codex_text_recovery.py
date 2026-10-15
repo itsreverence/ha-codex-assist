@@ -1,5 +1,3 @@
-"""Completed message text reconciles with the text already delivered over SSE."""
-
 import httpx
 import pytest
 

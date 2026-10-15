@@ -146,8 +146,6 @@ class _TextMessage:
 
 
 class _ResponseTextLedger:
-    """Reconcile one response without changing the order of delivered text."""
-
     def __init__(self) -> None:
         self.messages: list[_TextMessage] = []
         self.by_id: dict[str, _TextMessage] = {}
