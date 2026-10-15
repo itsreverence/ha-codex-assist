@@ -298,12 +298,15 @@ Each trace also has `structured_errors`, null unless an `error` or
 labels for top-level `event` fields, nested `event_error` fields, and
 `response_error` fields. A top-level error can retain both identities, without
 choosing one over the other. Each identity contains only `source`, `code`, `type`,
-and `param`. The envelope `type: error` never becomes an identity type.
+and `param`. The envelope `type: error` never becomes an identity type;
+the `event` source therefore always reports its identity `type` as `missing`.
 Code and type labels use a literal allowlist for authentication, usage limits,
 request validation, and server errors in `scripts/search_stream_diagnostic.py`.
 These are reported labels, not confirmed causes or a promised backend vocabulary.
 Absent fields become `missing`; null, non-string, and unknown fields become
-`other`. Missing or malformed error objects report `missing` for each field.
+`other`. In particular, `param: other` does not distinguish explicit null from
+an unknown parameter or a dynamic path. Missing or malformed error objects
+report `missing` for each field.
 Param labels allow only `input`, `tools`, `model`, `store`, `previous_response_id`,
 `include`, and `reasoning`. Paths and all other values become `other`.
 An unknown param with a missing code does not establish a history error.
