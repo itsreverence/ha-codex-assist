@@ -76,12 +76,17 @@ Caught Codex request, credential, and tool-handling failures use fixed, short
 conversation responses:
 
 - General failures say "Sorry, I couldn't complete that."
-- Authentication failures say "Codex Assist needs attention in Home Assistant."
-- Usage and rate limits say "Codex Assist is temporarily unavailable. Please try again later."
+- Failures that start reauthentication say "Codex Assist needs attention in Home Assistant."
+- Usage and rate limits say "Codex Assist cannot process this request because of
+  an account or usage limit."
 
-The agent logs the failure stage, exception class, and retry or reauthentication
-decision without raw exception details. It also asks the model to keep error
-responses short and omit unsolicited diagnostics and reporting instructions.
+Authentication failures that do not start reauthentication use the general response.
+Attachment and history-limit validation failures also use the general response.
+
+The agent logs the failure stage, exception class, retry or reauthentication
+decision, and an integration filename and line number without raw exception details
+or absolute paths. It also asks the model to keep error responses short and omit
+unsolicited diagnostics and reporting instructions.
 Requested troubleshooting is allowed. This prompt guidance does not filter model
 output or Home Assistant tool results, so generated replies can still contain
 details. These protections do not cover every Home Assistant log or trace.

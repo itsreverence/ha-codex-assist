@@ -88,16 +88,22 @@ retention does not implement the CLI's encrypted search-output or ref-ID protoco
 
 ### Conversation error boundary
 
-The conversation owner maps caught exceptions to fixed speech locally. Existing
-authentication exception types select "Codex Assist needs attention in Home
-Assistant." Rate-limit exceptions select "Codex Assist is temporarily unavailable.
-Please try again later." Other caught failures, including temporary authentication
-failures, select "Sorry, I couldn't complete that." The shared AI Task error
-formatter is unchanged.
+The conversation owner maps caught exceptions to fixed speech locally. Only
+`_start_reauth_result`, which starts reauthentication, selects "Codex Assist needs
+attention in Home Assistant." Rate-limit exceptions select "Codex Assist cannot
+process this request because of an account or usage limit." Other caught failures,
+including authentication failures without reauthentication, select "Sorry, I
+couldn't complete that." Attachment and history-limit validation failures also use
+this generic response. More detailed speech based on typed validation errors is a
+separate follow-up. The shared validators and AI Task error formatter are unchanged.
 
-Conversation-owned failure logs contain a fixed stage, the exception class, and
-fixed retry and reauthentication decisions. They omit exception messages,
-tracebacks, chains, response bodies, and URLs. Existing catch boundaries,
+Conversation-owned failure logs contain a fixed stage, the exception class,
+fixed retry and reauthentication decisions, and the innermost integration filename
+and line number from the caught exception's traceback. External frames and exception
+chains are not reported. The location is `unknown` if no integration frame exists.
+The validation catch uses `request_preparation_or_tool_processing` because it also
+covers input preparation. Logs omit exception messages, formatted tracebacks, source
+text, locals, absolute paths, response bodies, and URLs. Existing catch boundaries,
 cancellation propagation, refresh limits, and reauthentication actions are
 unchanged. A failed final synthesis does not replay completed native actions.
 

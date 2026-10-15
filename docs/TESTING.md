@@ -85,8 +85,13 @@ synthetic HTTPX responses and registered native test tools. It checks fixed
 speech for HTTP, SSE, transport, quota, authentication, and tool exceptions;
 safe replay history and conversation-owned logs; refresh and reauthentication
 counts; cancellation propagation; and no action replay after failed synthesis.
-Chained exceptions carry synthetic sensitive markers. No error result may attach
-a Sources card. Existing search handoff coverage also checks this when an earlier
+Chained exceptions carry synthetic sensitive messages and a private traceback path.
+Diagnostics distinguish backend failure, empty-answer, and incomplete-stream sites
+by integration filename and line number, without source text or absolute paths.
+Authentication failures without reauthentication use generic speech. Reauthentication
+keeps its short guidance, and quota speech makes no temporary-recovery promise.
+No error result may attach a Sources card. Existing search handoff coverage also
+checks this when an earlier
 round already supplied citations. The request assertions verify that conversation
 error guidance reaches the backend with custom prompts and either search setting.
 

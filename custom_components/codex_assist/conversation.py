@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -51,6 +52,7 @@ MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_ATTACHMENTS = 4
 MAX_TOTAL_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 LOGGER = logging.getLogger(__name__)
+_INTEGRATION_DIRECTORY = Path(__file__).parent
 _AUTH_FAILURE_TEXT = "Codex Assist needs attention in Home Assistant."
 _ERROR_RESPONSE_INSTRUCTIONS = (
     "Keep error responses short. Do not volunteer technical diagnostics, raw error codes, "
@@ -137,16 +139,12 @@ class CodexAssistConversationEntity(
                 ),
             )
         except CodexReauthRequiredError as err:
-            LOGGER.warning(
-                "Codex Assist failure: stage=authentication exception=%s retry=none reauth=start",
-                type(err).__name__,
+            _log_request_failure(
+                err, stage="authentication", reauth="start", level=logging.WARNING,
             )
             return _start_reauth_result(self.hass, self.entry, response, user_input)
         except (CodexAuthTemporaryError, RuntimeError) as err:
-            LOGGER.error(
-                "Codex Assist failure: stage=authentication exception=%s retry=none reauth=none",
-                type(err).__name__,
-            )
+            _log_request_failure(err, stage="authentication")
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
                     agent_id=user_input.agent_id,
@@ -183,10 +181,8 @@ class CodexAssistConversationEntity(
                 except CodexAuthenticationError as err:
                     if not err.retry_allowed:
                         raise
-                    LOGGER.warning(
-                        "Codex Assist failure: stage=model_request exception=%s "
-                        "retry=once reauth=none",
-                        type(err).__name__,
+                    _log_request_failure(
+                        err, stage="model_request", retry="once", level=logging.WARNING,
                     )
                     try:
                         tokens = await _refresh_runtime_tokens(
@@ -196,10 +192,9 @@ class CodexAssistConversationEntity(
                             tokens,
                         )
                     except CodexReauthRequiredError as refresh_err:
-                        LOGGER.warning(
-                            "Codex Assist failure: stage=token_refresh exception=%s "
-                            "retry=none reauth=start",
-                            type(refresh_err).__name__,
+                        _log_request_failure(
+                            refresh_err, stage="token_refresh", reauth="start",
+                            level=logging.WARNING,
                         )
                         return _start_reauth_result(
                             self.hass,
@@ -233,10 +228,8 @@ class CodexAssistConversationEntity(
                             citation_sink=citations,
                         )
                     except CodexAuthenticationError as retry_err:
-                        LOGGER.warning(
-                            "Codex Assist failure: stage=model_retry exception=%s "
-                            "retry=none reauth=start",
-                            type(retry_err).__name__,
+                        _log_request_failure(
+                            retry_err, stage="model_retry", reauth="start", level=logging.WARNING,
                         )
                         return _start_reauth_result(
                             self.hass,
@@ -247,10 +240,7 @@ class CodexAssistConversationEntity(
                 if not tool_call_requested:
                     break
         except CodexRateLimitError as err:
-            LOGGER.warning(
-                "Codex Assist failure: stage=model_request exception=%s retry=none reauth=none",
-                type(err).__name__,
-            )
+            _log_request_failure(err, stage="model_request", level=logging.WARNING)
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
                     agent_id=user_input.agent_id,
@@ -258,10 +248,7 @@ class CodexAssistConversationEntity(
                 )
             )
         except (httpx.HTTPError, RuntimeError) as err:
-            LOGGER.error(
-                "Codex Assist failure: stage=model_request exception=%s retry=none reauth=none",
-                type(err).__name__,
-            )
+            _log_request_failure(err, stage="model_request")
             text = _request_failure_text(err)
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
@@ -270,10 +257,7 @@ class CodexAssistConversationEntity(
                 )
             )
         except (ValueError, TypeError) as err:
-            LOGGER.error(
-                "Codex Assist failure: stage=tool_handling exception=%s retry=none reauth=none",
-                type(err).__name__,
-            )
+            _log_request_failure(err, stage="request_preparation_or_tool_processing")
             text = _request_failure_text(err)
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
@@ -290,12 +274,33 @@ class CodexAssistConversationEntity(
         return conversation.async_get_result_from_chat_log(user_input, chat_log)
 
 
+def _log_request_failure(
+    err: BaseException,
+    *,
+    stage: str,
+    retry: str = "none",
+    reauth: str = "none",
+    level: int = logging.ERROR,
+) -> None:
+    """Log the innermost integration location without formatting exception details."""
+    location = "unknown"
+    traceback = err.__traceback__
+    while traceback is not None:
+        filename = Path(traceback.tb_frame.f_code.co_filename)
+        if filename.parent == _INTEGRATION_DIRECTORY:
+            location = f"{filename.name}:{traceback.tb_lineno}"
+        traceback = traceback.tb_next
+    LOGGER.log(
+        level,
+        "Codex Assist failure: stage=%s exception=%s retry=%s reauth=%s location=%s",
+        stage, type(err).__name__, retry, reauth, location,
+    )
+
+
 def _request_failure_text(err: BaseException) -> str:
     """Choose fixed conversation speech without exposing exception details."""
-    if isinstance(err, (CodexAuthenticationError, CodexReauthRequiredError)):
-        return _AUTH_FAILURE_TEXT
     if isinstance(err, CodexRateLimitError):
-        return "Codex Assist is temporarily unavailable. Please try again later."
+        return "Codex Assist cannot process this request because of an account or usage limit."
     return "Sorry, I couldn't complete that."
 
 
