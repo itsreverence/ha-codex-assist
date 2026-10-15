@@ -214,30 +214,52 @@ Every observed client search must return HTTP 200 with usable normalized output.
 Every observed built-in search item must have status `completed`. An earlier
 success cannot mask a later failed or incomplete search.
 
-The direct case also requires an observed successful open of the fixed target.
-For the built-in arm, the documented action is `open_page` with the target in
+The client direct case also requires the fixed target in an actual HTTP `open`
+command, reported as `open_target_requested=true`, alongside successful search
+calls. This is request-level evidence only. A usable HTTP 200 response can contain
+unrelated query results even when the same request includes the target.
+Client `open_target_completed` is always null. Neither output text, a result URL,
+nor a citation proves that the client opened the page.
+
+The built-in direct case requires a completed `open_page` action with the target in
 `action.url`, as described in the [OpenAI web search guide](https://developers.openai.com/api/docs/guides/tools-web-search).
+It reports that stronger completion evidence as `open_target_completed=true`.
+Its `open_target_requested` remains false because no client HTTP `open` command
+is observed.
 Unknown actions or an absent target produce `open_not_established`, not a claim
-that the backend cannot open pages. The follow-up replays the original question
+that the backend cannot open pages. Six passing gates do not establish equivalent
+direct-open capability between the arms. The follow-up replays the original question
 and complete ordered native history, including reasoning and call outputs, with
 tools disabled. It must complete with a nonempty answer. Unexpected function
 calls fail the gate without execution.
 
 The runner allows at most six arms and twelve turns. Each turn has a 60-second
 deadline, each arm has 120 seconds, and the entire invocation has 720 seconds.
+The overall deadline takes precedence when it overlaps the final arm's deadline;
+the last arm is not guaranteed its full 120 seconds.
 The client arm permits up to ten HTTP requests, including four search calls,
 five initial response requests, and one follow-up request. The built-in arm
-permits two response requests. The total bound is 36 HTTP requests. The runner
-does not retry. Authentication or usage limits stop remaining trials and mark
-them `not_run`. Cancellation closes active streams, and overall timeout preserves
-partial evidence in the JSON report.
+permits two response requests. The total bound is 36 HTTP requests. A test pins
+the production search-round and search-call limits to four each. Raising either
+limit requires reviewing the budget and this documentation without silently
+expanding the authorized 36-request bound.
+The runner does not retry. Typed authentication or usage errors stop remaining
+trials and mark them `not_run`. Unclassified runtime errors and unexpected
+exceptions also stop remaining trials, with generic sanitized error categories
+and an overall `incomplete` status. Such errors may conceal authentication or
+quota failures. The report cannot attribute them to an upstream or client failure.
+Investigate the cause before authorizing another bounded run. Known typed HTTP
+and timeout errors remain evaluated failures and allow subsequent trials.
+Cancellation closes active streams, and overall timeout preserves partial
+evidence in the JSON report.
 
 Reports contain counts, booleans, closed outcome and error categories, and elapsed
 time to first visible text and completion. They omit raw answers, native items,
 URLs, queries, identifiers, backend error messages, and event key names. The
 model field contains only the validated CLI identifier. Exit codes are 0 when
 all six execution gates pass, 1 for evaluated failure, 2 for missing credentials
-or authentication or usage blocks, and 3 for an incomplete overall time budget.
+or typed authentication or usage blocks, and 3 for an overall timeout or an
+unclassified runtime or unexpected error that leaves the comparison incomplete.
 Dry-run also exits 0.
 
 This comparison does not assess answer correctness, citation support, Home

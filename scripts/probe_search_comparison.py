@@ -74,7 +74,8 @@ class SanitizedTurnEvidence:
     unexpected_tool_calls: int = 0
     search_calls: int = 0
     search_completed: int = 0
-    open_target_completed: bool = False
+    open_target_requested: bool = False
+    open_target_completed: bool | None = False
     http_requests: int = 0
     response_requests: int = 0
     search_requests: int = 0
@@ -94,6 +95,10 @@ class TrialResult:
     initial: SanitizedTurnEvidence = field(default_factory=SanitizedTurnEvidence)
     followup: SanitizedTurnEvidence = field(default_factory=SanitizedTurnEvidence)
     total_seconds: float = 0
+
+    def __post_init__(self):
+        if self.arm == "client":
+            self.initial.open_target_completed = self.followup.open_target_completed = None
 
 
 def classify_error(exc: Exception) -> str:
@@ -155,15 +160,15 @@ async def consume_turn(client, arm, evidence, *, model, input_items, tools):
 
 async def run_trial(result, case, model, token, *, transport=None):
     evidence = result.initial
-    call_opened_target = False
 
     async def observe_request(request):
-        nonlocal call_opened_target
         evidence.http_requests += 1
         if request.url.path.endswith("/alpha/search"):
             evidence.search_requests += 1
             opens = json.loads(request.content)["commands"].get("open", [])
-            call_opened_target |= any(command.get("ref_id") == DIRECT_URL for command in opens)
+            evidence.open_target_requested |= any(
+                command.get("ref_id") == DIRECT_URL for command in opens
+            )
         else:
             evidence.response_requests += 1
 
@@ -182,8 +187,6 @@ async def run_trial(result, case, model, token, *, transport=None):
 
     class ObservedClient(CodexClient):
         async def web_search(self, model, arguments, settings):
-            nonlocal call_opened_target
-            call_opened_target = False
             evidence.search_calls += 1
             before = evidence.search_requests
             usable_before = evidence.search_usable_responses
@@ -197,7 +200,6 @@ async def run_trial(result, case, model, token, *, transport=None):
                 ))
             )
             evidence.search_completed += int(successful)
-            evidence.open_target_completed |= successful and call_opened_target
             return response
 
     started = monotonic()
@@ -219,7 +221,10 @@ async def run_trial(result, case, model, token, *, transport=None):
                 result.status = "initial_answer_not_established"
             elif not evidence.search_calls or evidence.search_calls != evidence.search_completed:
                 result.status = "search_not_established"
-            elif case.requires_open and not evidence.open_target_completed:
+            elif case.requires_open and not (
+                evidence.open_target_requested if result.arm == "client"
+                else evidence.open_target_completed
+            ):
                 result.status = "open_not_established"
             else:
                 evidence = result.followup
@@ -259,6 +264,9 @@ async def compare(model, token, first_arm="client", *, transport=None):
                 await run_trial(result, case, model, token, transport=transport)
                 if result.error in {"authentication", "rate_limit"}:
                     exit_code = 2
+                    break
+                if result.error in {"runtime", "unexpected"}:
+                    exit_code = 3
                     break
             else:
                 exit_code = 0 if all(trial.gate_pass for trial in trials) else 1

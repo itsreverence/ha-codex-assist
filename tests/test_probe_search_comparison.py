@@ -6,6 +6,7 @@ import json
 import httpx
 import pytest
 
+from custom_components.codex_assist.codex_client import MAX_SEARCH_CALLS, MAX_SEARCH_ROUNDS
 from scripts import probe_search_comparison as probe
 
 COMPLETED = {"type": "response.completed", "response": {"status": "completed"}}
@@ -101,7 +102,8 @@ async def test_success_replays_complete_native_evidence_not_visible_answer(arm):
     assert result.initial.response_complete and result.followup.response_complete
     assert result.initial.answered and result.followup.answered
     assert result.initial.search_calls == result.initial.search_completed == 1
-    assert result.initial.open_target_completed
+    assert result.initial.open_target_requested is (arm == "client")
+    assert result.initial.open_target_completed is (None if arm == "client" else True)
     assert captured[-1][1]["input"] == [
         {"role": "user", "content": probe.CASES[2].prompt},
         *expected_native, {"role": "user", "content": probe.FOLLOWUP},
@@ -228,13 +230,33 @@ async def test_builtin_unknown_or_wrong_open_is_unestablished(action):
     assert "private-" not in json.dumps(probe.asdict(result))
 
 
-async def test_client_direct_case_requires_successful_actual_target_open():
+async def test_client_direct_case_requires_actual_target_request_not_result_url():
     result, _ = await trial("client", [
         sse(item(search_call(arguments={"queries": [probe.DIRECT_URL]})), COMPLETED),
-        httpx.Response(200, json={"output": "private-result"}), sse(*answer()),
+        httpx.Response(200, json={"output": f"private-result {probe.DIRECT_URL}"}), sse(*answer()),
     ], case=probe.CASES[2])
     assert result.status == "open_not_established"
-    assert not result.initial.open_target_completed
+    assert not result.initial.open_target_requested
+    assert result.initial.open_target_completed is None
+
+
+async def test_client_mixed_query_and_target_request_does_not_claim_completed_open():
+    result, captured = await trial("client", [
+        sse(item(search_call(arguments={
+            "queries": ["private-unrelated-query"], "open_urls": [probe.DIRECT_URL],
+        })), COMPLETED),
+        httpx.Response(200, json={"output": "private-unrelated-query-result"}),
+        sse(*answer()), sse(*answer()),
+    ], case=probe.CASES[2])
+    assert captured[1][1]["commands"] == {
+        "search_query": [{"q": "private-unrelated-query"}],
+        "open": [{"ref_id": probe.DIRECT_URL}],
+    }
+    assert result.status == "completed" and result.gate_pass
+    report = json.loads(json.dumps(probe.asdict(result)))
+    assert report["initial"]["open_target_requested"] is True
+    assert report["initial"]["open_target_completed"] is None
+    assert "private-" not in json.dumps(report)
 
 
 @pytest.mark.parametrize("urls,established", [
@@ -250,7 +272,8 @@ async def test_client_open_gate_observes_effective_http_commands(urls, establish
     if established:
         replies.append(sse(*answer()))
     result, captured = await trial("client", replies, case=probe.CASES[2])
-    assert result.initial.open_target_completed is established
+    assert result.initial.open_target_requested is established
+    assert result.initial.open_target_completed is None
     assert result.gate_pass is established
     assert any(command["ref_id"] == probe.DIRECT_URL
                for command in captured[1][1]["commands"]["open"]) is established
@@ -420,6 +443,53 @@ async def test_streamed_auth_and_quota_stop_both_arms(first_arm, error_code, cat
     assert "private-" not in json.dumps(report)
 
 
+@pytest.mark.parametrize("first_arm", ["client", "builtin"])
+@pytest.mark.parametrize("error_code", ["token_invalidated", "quota_exceeded"])
+async def test_top_level_sse_errors_stop_as_incomplete_without_claiming_typed_auth(
+    first_arm, error_code,
+):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return sse({"type": "error", "code": error_code, "message": "private-error-message"})
+
+    report, code = await probe.compare(
+        "gpt-test", "test", first_arm, transport=httpx.MockTransport(respond),
+    )
+    assert code == 3 and report["status"] == "incomplete"
+    assert report["trials"][0]["error"] == "runtime"
+    assert [t["status"] for t in report["trials"][1:]] == ["not_run"] * 5
+    assert len(calls) == 1
+    assert "private-" not in json.dumps(report)
+    assert error_code not in json.dumps(report)
+
+
+@pytest.mark.parametrize("first_arm", ["client", "builtin"])
+@pytest.mark.parametrize("failure,category", [
+    (RuntimeError("Codex authentication failed: private-token_invalidated"), "runtime"),
+    (RuntimeError("Codex usage limit or rate limit reached: private-quota_exceeded"), "runtime"),
+    (ValueError("Codex stream failed: private-unknown"), "unexpected"),
+])
+async def test_unknown_errors_stop_without_interpreting_private_prefixes(
+    first_arm, failure, category,
+):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        raise failure
+
+    report, code = await probe.compare(
+        "gpt-test", "test", first_arm, transport=httpx.MockTransport(respond),
+    )
+    assert code == 3 and report["status"] == "incomplete"
+    assert report["trials"][0]["error"] == category
+    assert [t["status"] for t in report["trials"][1:]] == ["not_run"] * 5
+    assert len(calls) == 1
+    assert "private-" not in json.dumps(report)
+
+
 @pytest.mark.parametrize("failure,category", [
     (httpx.ConnectError("private-host-token"), "http"),
     (httpx.ReadTimeout("private-host-token"), "timeout"),
@@ -484,6 +554,28 @@ async def test_bounded_order_and_full_run_gates(first_arm, search_rounds, reques
             2 * search_rounds + 2 if result["arm"] == "client" else 2
         )
     assert report["live_request_sent"]
+    assert "private-" not in json.dumps(report)
+
+
+def test_production_search_limits_match_reviewed_36_request_budget():
+    assert (MAX_SEARCH_ROUNDS, MAX_SEARCH_CALLS) == (4, 4)
+
+
+@pytest.mark.parametrize("failure,category", [
+    (httpx.ConnectError("private-host"), "http"),
+    (httpx.ReadTimeout("private-host"), "timeout"),
+])
+async def test_known_http_and_timeout_failures_continue_evaluated_trials(failure, category):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        raise failure
+
+    report, code = await probe.compare("gpt-test", "test", transport=httpx.MockTransport(respond))
+    assert code == 1 and report["status"] == "failed"
+    assert [t["error"] for t in report["trials"]] == [category] * 6
+    assert len(calls) == 6
     assert "private-" not in json.dumps(report)
 
 
