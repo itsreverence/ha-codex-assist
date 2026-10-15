@@ -22,7 +22,9 @@ integration startup.
 | Failed refresh with a cache | The cached list with an outdated-list warning. |
 | Failed discovery without a cache | A small list of suggestions, explicitly unverified for the account. |
 | Successful empty list | No suggested models; new setup can retry later. |
-| Saved model absent from the list | The saved choice labeled “saved; not currently listed,” without replacing it. |
+| Saved model absent from the list | The saved choice labeled `(saved; not currently listed)`, without replacing it. |
+
+If setup says your account returned no visible models, try again later or restart setup with another account.
 
 The cache is isolated per integration entry and held only in memory. Restarting
 Home Assistant discards it. Signing in again clears it, including pending results
@@ -35,9 +37,13 @@ silently select another model or automatically replay a device-control request.
 The normal dropdown does not accept arbitrary model IDs. Image-generation models
 remain separate from chat-model discovery.
 
-OpenAI documents the retirement of `gpt-5.4` and `gpt-5.4-mini` for Codex with
-ChatGPT sign-in, recommending Terra and Luna respectively. This does not affect
-API-key availability. See the [official model guidance](https://learn.chatgpt.com/docs/models#other-models).
+OpenAI retired `gpt-5.4` and `gpt-5.4-mini` from Codex with ChatGPT sign-in on
+August 31, 2026. Its [models guide](https://learn.chatgpt.com/docs/models#deprecated-codex-models)
+says to replace `gpt-5.4` with `gpt-6-sol` and `gpt-5.4-mini` with `gpt-6-luna`
+when they are available to your plan and client. The retirement does not affect
+API-key use. If a retired model is still saved, open options and choose a
+replacement from your own list. Codex Assist shows only what your account
+returns, so a name in the guide may not appear for you.
 
 The downstream Codex model-discovery endpoint is not a stable public third-party
 API contract. Cached results and fallback suggestions allow settings to remain

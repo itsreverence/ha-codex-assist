@@ -14,6 +14,12 @@ body:
       description: What are you trying to accomplish?
     validations:
       required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Home Assistant and Codex Assist versions
+      description: Optional. Helps check whether the request still applies to your version.
+      placeholder: "Home Assistant 2026.6.0, Codex Assist as shown in HACS"
   - type: textarea
     id: proposal
     attributes:

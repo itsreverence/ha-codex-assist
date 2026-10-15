@@ -16,143 +16,89 @@ Codex Assist signs in with Codex-style ChatGPT device-code auth. It keeps device
 
 > Experimental: this project is not affiliated with OpenAI or Home Assistant. Codex backend compatibility may change with upstream Codex updates.
 
-## Quick install
+## Quick start
 
-Requirements: Home Assistant `2026.6.0` or newer, HACS, and a ChatGPT account or plan with Codex access.
+You need Home Assistant `2026.6.0` or newer, [HACS](https://www.hacs.xyz/docs/use/download/download/), and a ChatGPT account or plan with Codex access.
 
 [![Open HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=itsreverence&repository=ha-codex-assist&category=integration)
 [![Add the Codex Assist integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=codex_assist)
 
-1. In Home Assistant, open **HACS → Integrations**.
+### 1. Install
+
+Codex Assist is in the HACS default catalog, so you do not add a custom repository.
+
+1. In the Home Assistant sidebar, open **HACS**.
 2. Search for **Codex Assist**, open it, and select **Download**.
 3. Restart Home Assistant.
-4. In ChatGPT, enable **Settings → Security → Enable device code authorization for Codex** if it is available on your account.
-5. Go to **Settings → Devices & services → Add integration**, or use the button above.
-6. Search for **Codex Assist**, complete device-code sign-in, and choose a chat model from the account’s discovered list.
-7. Select **Codex Assist** in your Assist pipeline.
-8. Test with a harmless exposed entity first, such as a single light.
 
-Codex Assist is included in HACS by default. You do not need to add this repository as a custom repository. If it does not appear immediately after a release or catalog change, refresh HACS data and try again later.
+If it does not appear after a new release or a catalog change, try again later.
 
-Codex Assist supports one integration entry. To reconnect or change the signed-in
-account, reconfigure the existing entry. Adding a second entry stops before sign-in.
+### 2. Sign in
 
-For Home Assistant 2026.10, use Codex Assist `0.4.7` or newer. Earlier versions
-fail to load the conversation agent and AI Task entity. Update through HACS and
-restart Home Assistant. You can keep your existing sign-in and settings.
-See [Troubleshooting](https://github.com/itsreverence/ha-codex-assist/wiki/Troubleshooting)
-for this issue and older Home Assistant compatibility errors.
+Sign-in uses a device code, so you approve it in a browser. The browser can be on any device.
 
-If sign-in fails because of a connection problem or an invalid auth response,
-retry after the service recovers. If pairing cannot finish after a failed token
-exchange, restart sign-in to obtain a new code. Temporary refresh failures keep your saved credentials
-and do not request a new sign-in. Assist and AI Task can use a still-valid token;
-if it has expired, try your request again after the service recovers. Rejected
-refresh credentials still require reauthentication.
+1. Go to **Settings → Devices & services → Add integration**, or use the button above. Search for **Codex Assist** and select it.
+2. Select **Submit**. Home Assistant shows a web address and a short code.
+3. Open that address in a browser, sign in to ChatGPT, and enter the code.
+4. Return to Home Assistant and select **Submit**. If it says the code has not been approved yet, wait a few seconds and select **Submit** again.
+5. Choose a chat model from the list, then select **Submit**.
+
+If sign-in does not start or the code page reports an error, device-code login may be turned off for your account. OpenAI's [authentication guide](https://learn.chatgpt.com/docs/auth) says a personal account enables it in ChatGPT security settings, and a workspace admin controls it for a workspace. Home Assistant stores the sign-in itself. Do not paste tokens or copy them from Codex CLI or another tool.
+
+Codex Assist supports one sign-in. To change accounts or sign in again, use **Reconfigure** on the existing entry.
+
+### 3. Choose Codex Assist in your pipeline
+
+1. Go to **Settings → Voice assistants**.
+2. Open an existing assistant, or select **Add assistant**.
+3. Set **Conversation agent** to **Codex Assist**.
+
+### 4. Try a safe first request
+
+Expose one harmless entity to Assist before you ask anything. A single light or a read-only sensor is a good choice. Open **Settings → Voice assistants** and use the **Expose** tab. [Safe Entity Exposure](https://github.com/itsreverence/ha-codex-assist/wiki/Safe-Entity-Exposure) has the steps and the entities to keep unexposed.
+
+Then ask Assist about it by its own name. For example, if you exposed a light named Desk lamp:
+
+```text
+Is the desk lamp on?
+```
+
+<p align="center">
+  <img src="assets/codex-assist-light-control.png" alt="Example Assist chat in which Codex Assist reports that yard lights are on and turns them off" width="430">
+</p>
+
+If something fails, start with [Troubleshooting](https://github.com/itsreverence/ha-codex-assist/wiki/Troubleshooting).
 
 ## What it does
 
-If a backend response ends before completion, Codex Assist reports a failure.
-You may have already seen or heard partial conversation text. Home Assistant
-tool calls wait for that response to complete, and incomplete AI Task text or
-images are not returned as successful results. The integration does not retry
-interrupted responses automatically.
+**Assist conversations.** Codex Assist registers as a normal Assist conversation agent and streams replies. It reads and controls only the entities you expose to Assist, through Home Assistant's own Assist LLM API.
 
-Completed responses must contain nonblank answer text or a Home Assistant tool
-handoff. Codex Assist recovers missing text from completed assistant messages
-when it can match that text safely to the stream. Ambiguous or conflicting text
-fails explicitly, including interleaved messages or text parts.
+**AI Task.** It generates plain text or structured data, reads supported image attachments (up to four images, 10 MiB each, 20 MiB total), and generates images. See the [AI Task example](https://github.com/itsreverence/ha-codex-assist/wiki/Features-and-Options#run-a-data-task).
 
-### Assist conversations
+**Hosted web search.** Off by default. When on, the model can search for current information. The model is asked to keep raw URLs out of spoken replies, which is not guaranteed.
 
-- Registers as a normal Home Assistant Assist conversation agent.
-- Streams replies while Codex is answering.
-- Reads and controls only the entities Home Assistant exposes to Assist.
-- Supports simple follow-up actions through Home Assistant's native Assist LLM API.
-- Can optionally search through Codex's standalone search endpoint. Search is off by default. The integration asks the model to omit raw URLs and source blocks from spoken responses, but this is not guaranteed. It does not attach a separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`. The previously inspected stock Assist browser did not render it.
+**Options.** The chat model comes from your account's own model list. See [Choosing a Model](https://github.com/itsreverence/ha-codex-assist/wiki/Choosing-a-Model) and [Features and Options](https://github.com/itsreverence/ha-codex-assist/wiki/Features-and-Options).
 
-Caught Codex request, credential, and tool-handling failures use fixed, short
-conversation responses:
+If a response ends before it completes, Codex Assist reports a failure. Part of the reply may already have been shown or spoken, so check a device's state before you repeat a request.
 
-- General failures say "Sorry, I couldn't complete that."
-- Failures that start reauthentication say "Codex Assist needs attention in Home Assistant."
-- Usage and rate limits say "Codex Assist cannot process this request because of
-  an account or usage limit."
+## Privacy and safety
 
-Authentication failures that do not start reauthentication use the general response.
-Attachment and history-limit validation failures also use the general response.
+- Codex Assist has no raw "call any Home Assistant service" bridge. Control goes through Home Assistant's Assist LLM API, so your list of Assist-exposed entities is the practical safety boundary.
+- Each Assist request sends your message and the instructions Home Assistant builds for the model to the Codex service. Those instructions include an overview of your exposed entities. In Home Assistant 2026.10 the overview has names, areas, and aliases, and current states are sent only when the model asks for them. Other versions can differ. Expose only what you are comfortable sharing.
+- Keep locks, alarms, garage doors, water shutoff valves, covers, and other sensitive devices unexposed unless you want Assist to control them.
+- Hosted web search also sends the model's search queries to the Codex backend. AI Task prompts and supported attachments are sent when you run those tasks.
+- Diagnostics redact access tokens, refresh tokens, and prompts. Review them before you share them.
 
-The agent logs the failure stage, exception class, retry or reauthentication
-decision, and an integration filename and line number without raw exception details
-or absolute paths. It also asks the model to keep error responses short and omit
-unsolicited diagnostics and reporting instructions.
-Requested troubleshooting is allowed. This prompt guidance does not filter model
-output or Home Assistant tool results, so generated replies can still contain
-details. These protections do not cover every Home Assistant log or trace.
-AI Task error behavior is unchanged.
-
-Codex Assist asks the model to clarify ambiguous actions or targets before execution.
-It asks for one concise question as the final sentence, with language-appropriate
-question punctuation and nothing after it, and discourages unnecessary closing
-questions after answers, completed actions, or cancellation. This internal guidance
-preserves your saved prompt and applies only to conversations, not AI Task.
-
-Home Assistant decides whether to continue from the final reply. The tested HA
-versions recognize `?`, ASCII `;` (U+003B), and fullwidth `？`. Other question punctuation,
-such as Arabic `؟`, does not trigger that native check. Codex Assist does not rewrite
-the reply or force English. Model compliance and satellite listening are not
-guaranteed. See the [clarification follow-up checks](docs/TESTING.md#clarification-follow-ups)
-for live verification.
-
-### AI Task
-
-- Generates plain text or structured data from Home Assistant AI Task actions.
-- Accepts supported image attachments on AI Task surfaces.
-- Generates images with curated quality and size controls.
-- Disables hosted web search for schema-constrained tasks to preserve structured output.
-
-Image attachments are limited to four images, 10 MiB per image, and 20 MiB total.
-With nonblank instructions, a missing, unreadable, or oversized image fails
-the request before a model call.
-Codex Assist does not silently omit these images or include their paths in its errors.
-
-### Options
-
-The chat-model picker uses authenticated account discovery without adding guessed
-model names. It refreshes when you open options and every six hours while loaded.
-New setups preselect the first model in the account’s priority order; existing selections stay unchanged.
-Cached and unverified fallback lists are labeled. A saved model missing from the
-list is retained with a label so changing another setting does not replace it.
-See [Model discovery](docs/MODEL_DISCOVERY.md).
-
-The options flow keeps **Everyday settings** open and leaves **Advanced chat settings** and **Image-generation defaults** collapsed until needed. Everyday controls include the chat model, response length, and hosted web search. Advanced controls hold reasoning effort and a multiline system-prompt editor for longer Markdown instructions.
-
-<p align="center">
-  <img src="assets/codex-assist-settings-overview.png" alt="Example options layout from v0.4.3; current model choices come from account discovery" width="430">
-</p>
-
-<p align="center">
-  <img src="assets/codex-assist-light-control.png" alt="Codex Assist confirming yard lights are on and turning them off" width="430">
-</p>
-
-## Safety short version
-
-Codex Assist does **not** expose a raw “call any Home Assistant service” bridge. It routes control through Home Assistant's Assist LLM API, so your **Assist exposed entities** list is the practical safety boundary.
-
-Start with harmless lights or read-only questions. Keep locks, alarms, garage doors, water shutoff valves, covers, and other sensitive devices unexposed unless you deliberately want Assist control there.
-
-Hosted web search sends the current model turn and the model's search queries to the Codex backend when enabled. AI Task prompts and supported attachments are also sent to the backend when you run those tasks. See the [security policy](SECURITY.md) for the full data and control boundaries.
-
-Integration diagnostics redact access tokens, refresh tokens, and configured prompts from both entry data and options. Settings such as model, reasoning effort, and hosted search remain visible. Review diagnostics before sharing them.
+The [security policy](SECURITY.md) has the full data and control boundaries.
 
 ## User guide
 
-The GitHub Wiki is the main user manual:
+The [GitHub Wiki](https://github.com/itsreverence/ha-codex-assist/wiki) is the user manual.
 
 - [Installation](https://github.com/itsreverence/ha-codex-assist/wiki/Installation)
+- [Safe Entity Exposure](https://github.com/itsreverence/ha-codex-assist/wiki/Safe-Entity-Exposure)
 - [Features and Options](https://github.com/itsreverence/ha-codex-assist/wiki/Features-and-Options)
 - [Choosing a Model](https://github.com/itsreverence/ha-codex-assist/wiki/Choosing-a-Model)
-- [Safe Entity Exposure](https://github.com/itsreverence/ha-codex-assist/wiki/Safe-Entity-Exposure)
 - [Troubleshooting](https://github.com/itsreverence/ha-codex-assist/wiki/Troubleshooting)
 - [Compatibility and Limitations](https://github.com/itsreverence/ha-codex-assist/wiki/Compatibility-and-Limitations)
 
