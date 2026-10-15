@@ -18,6 +18,10 @@ AUTH_FAILURE = {
         "code": "token_invalidated", "message": "Synthetic auth rejection",
     }},
 }
+ANSWER = {"type": "response.output_item.done", "item": {
+    "type": "message", "role": "assistant", "id": "answer",
+    "content": [{"type": "output_text", "text": "The final answer."}],
+}}
 
 
 @pytest.fixture
@@ -45,6 +49,48 @@ async def stream_backend(monkeypatch):
                 f"custom_components.codex_assist.{module}.get_async_client", lambda hass: client,
             )
         yield events, requests
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task"])
+@pytest.mark.parametrize("prefix", [None, "The fi", "The final answer."])
+async def test_completed_message_delivers_full_answer(
+    hass, task_entry, stream_backend, surface, prefix,
+):
+    events, requests = stream_backend
+    if prefix is not None:
+        events.append({"type": "response.output_text.delta", "delta": prefix})
+    events.extend([ANSWER, COMPLETED])
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
+        )
+        assert result.response.speech["plain"]["speech"] == "The final answer."
+    else:
+        result = await ai_task.async_generate_data(
+            hass, task_name="Test", instructions="Give a test answer.",
+            entity_id="ai_task.codex_assist_ai_task",
+        )
+        assert result.data == "The final answer."
+    assert requests == ["/backend-api/codex/responses"]
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task"])
+async def test_recovered_answer_prevents_auth_replay(hass, task_entry, stream_backend, surface):
+    events, requests = stream_backend
+    events.extend([ANSWER, AUTH_FAILURE])
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
+        )
+        assert "authentication failed" in result.response.speech["plain"]["speech"]
+        assert not result.response.card
+    else:
+        with pytest.raises(HomeAssistantError, match="authentication failed"):
+            await ai_task.async_generate_data(
+                hass, task_name="Test", instructions="Give a test answer.",
+                entity_id="ai_task.codex_assist_ai_task",
+            )
+    assert requests == ["/backend-api/codex/responses"]
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])

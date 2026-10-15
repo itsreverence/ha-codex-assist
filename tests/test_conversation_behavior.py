@@ -98,6 +98,46 @@ def test_request_failure_text_names_blank_transport_error(conversation_module):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("text", [None, "", " \n"])
+async def test_silent_completed_stream_rejects_native_state_and_citations(
+    conversation_module, text,
+):
+    async def stream():
+        yield CodexCitationDelta(CodexCitation("Example", "https://example.com"))
+        if text is not None:
+            yield CodexTextDelta(text)
+        yield CodexResponseItemDelta({"type": "reasoning", "encrypted_content": "private"})
+
+    delivered = []
+    citations = []
+    with pytest.raises(RuntimeError, match="^Codex returned no answer text$"):
+        async for item in conversation_module._codex_stream_to_assistant_deltas(
+            stream(), citation_sink=citations,
+        ):
+            delivered.append(item)
+    assert not any("native" in item for item in delivered)
+    assert citations == []
+
+
+@pytest.mark.asyncio
+async def test_failed_auth_attempt_discards_staged_citations(conversation_module):
+    original = CodexCitation("Kept", "https://example.com/kept")
+    citations = [original]
+
+    async def stream():
+        yield CodexCitationDelta(CodexCitation("Discarded", "https://example.com/discarded"))
+        raise CodexAuthenticationError("Synthetic rejection")
+
+    with pytest.raises(CodexAuthenticationError) as raised:
+        async for _ in conversation_module._codex_stream_to_assistant_deltas(
+            stream(), citation_sink=citations,
+        ):
+            pass
+    assert raised.value.retry_allowed
+    assert citations == [original]
+
+
+@pytest.mark.asyncio
 async def test_codex_input_from_chat_log_preserves_history_tools_and_results(
     conversation_module,
 ):
