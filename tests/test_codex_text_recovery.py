@@ -151,3 +151,47 @@ async def test_recovered_text_still_requires_response_completion():
     with pytest.raises(RuntimeError, match="before response.completed"):
         await collect([message("Answer", item_id="a")], delivered)
     assert delivered == ["Answer"]
+
+
+@pytest.mark.parametrize("binding", ["done", "added"])
+async def test_interleaved_deltas_retain_order_until_late_index_binding(binding):
+    with pytest.raises(RuntimeError, match="^Codex returned inconsistent answer text$"):
+        await collect([
+            delta("L", item_id="b", content_index=0),
+            delta("E", item_id="a", output_index=0, content_index=0),
+            delta("l", item_id="b", content_index=0),
+            message("Ll", item_id="b", output_index=1, event=binding),
+            message("E", item_id="a", output_index=0),
+            COMPLETED,
+        ], [])
+
+
+@pytest.mark.parametrize("finish_message", [False, True])
+async def test_fully_delivered_parts_must_follow_content_order(finish_message):
+    events = [
+        delta("Later", item_id="a", output_index=0, content_index=1),
+        delta("Earlier", item_id="a", output_index=0, content_index=0),
+    ]
+    if finish_message:
+        events.append(message("Earlier", "Later", item_id="a", output_index=0))
+    with pytest.raises(RuntimeError, match="^Codex returned inconsistent answer text$"):
+        await collect([*events, COMPLETED], [])
+
+
+@pytest.mark.parametrize("multiple_parts", [False, True])
+async def test_ordered_multichunk_parts_with_late_index_binding(multiple_parts):
+    delivered = []
+    events = [
+        delta("Ear", item_id="a", content_index=0),
+        delta("lier", item_id="a", content_index=0),
+    ]
+    if multiple_parts:
+        events.extend([
+            delta("La", item_id="a", content_index=1),
+            delta("ter", item_id="a", content_index=1),
+            message("Earlier", "Later", item_id="a", output_index=0),
+        ])
+    else:
+        events.append(message("Earlier", item_id="a", output_index=0))
+    await collect([*events, COMPLETED], delivered)
+    assert delivered == (["Ear", "lier", "La", "ter"] if multiple_parts else ["Ear", "lier"])

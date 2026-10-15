@@ -106,6 +106,88 @@ async def test_late_index_alias_rejects_reordered_answer(
     assert requests == ["/backend-api/codex/responses"]
 
 
+def text_delta(text, item_id, content_index=0, **identity):
+    return {
+        "type": "response.output_text.delta", "delta": text, "item_id": item_id,
+        "content_index": content_index, **identity,
+    }
+
+
+def completed_message(*parts, item_id, output_index):
+    return {"type": "response.output_item.done", "output_index": output_index, "item": {
+        "type": "message", "role": "assistant", "id": item_id,
+        "content": [{"type": "output_text", "text": text} for text in parts],
+    }}
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task"])
+@pytest.mark.parametrize("output,expected", [
+    pytest.param([
+        text_delta("L", "b"), text_delta("E", "a", output_index=0), text_delta("l", "b"),
+        completed_message("Ll", item_id="b", output_index=1),
+        completed_message("E", item_id="a", output_index=0),
+    ], None, id="interleaved-late-index"),
+    pytest.param([
+        text_delta("Later", "a", content_index=1, output_index=0),
+        text_delta("Earlier", "a", content_index=0, output_index=0),
+        completed_message("Earlier", "Later", item_id="a", output_index=0),
+    ], None, id="reversed-full-parts"),
+    pytest.param([
+        text_delta("Ear", "a"), text_delta("lier", "a"),
+        completed_message("Earlier", item_id="a", output_index=0),
+    ], "Earlier", id="ordered-multichunk-part"),
+    pytest.param([
+        text_delta("Ear", "a"), text_delta("lier", "a"),
+        text_delta("La", "a", content_index=1), text_delta("ter", "a", content_index=1),
+        completed_message("Earlier", "Later", item_id="a", output_index=0),
+    ], "EarlierLater", id="ordered-multichunk-parts"),
+])
+async def test_delivered_order_controls_success_and_native_state(
+    hass, task_entry, stream_backend, monkeypatch, surface, output, expected,
+):
+    from custom_components.codex_assist import ai_task as task_owner
+    from custom_components.codex_assist import conversation as conversation_owner
+
+    logs = []
+    original = conversation_owner._stream_codex_turn_into_chat_log
+
+    async def record(**kwargs):
+        logs.append(kwargs["chat_log"])
+        return await original(**kwargs)
+
+    for owner in (task_owner, conversation_owner):
+        monkeypatch.setattr(owner, "_stream_codex_turn_into_chat_log", record)
+    events, requests = stream_backend
+    events.extend([*output, COMPLETED])
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
+        )
+        speech = result.response.speech["plain"]["speech"]
+        if expected is None:
+            assert "Codex returned inconsistent answer text" in speech
+        else:
+            assert speech == expected
+        assert not result.response.card
+    elif expected is None:
+        with pytest.raises(HomeAssistantError, match="Codex returned inconsistent answer text"):
+            await ai_task.async_generate_data(
+                hass, task_name="Test", instructions="Give a test answer.",
+                entity_id="ai_task.codex_assist_ai_task",
+            )
+    else:
+        result = await ai_task.async_generate_data(
+            hass, task_name="Test", instructions="Give a test answer.",
+            entity_id="ai_task.codex_assist_ai_task",
+        )
+        assert result.data == expected
+    assert requests == ["/backend-api/codex/responses"]
+    assert len(logs) == 1
+    assert any(getattr(content, "native", None) is not None for content in logs[0].content) == (
+        expected is not None
+    )
+
+
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
 @pytest.mark.parametrize("output", [
     [],
