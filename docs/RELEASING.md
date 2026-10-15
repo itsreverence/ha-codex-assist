@@ -31,10 +31,8 @@ This checklist is for maintainers.
    ```
 
 5. When hosted-search requests or search delivery change, complete the compatibility
-   checks in [TESTING.md](TESTING.md). For the Sources card removal, state that
-   custom API consumers lose Sources metadata in `response.card`; the stock Assist
-   browser already ignored it. Confirm search still returns final speech and task
-   data, retains evidence for replay, and attaches no separate source card.
+   checks in [TESTING.md](TESTING.md). Document changes to exported response fields
+   in the release notes, including their effect on API consumers.
 6. Run all checks in [TESTING.md](TESTING.md).
 7. Commit the scoped release change, open a pull request, and wait for every required check to pass.
 8. Merge through the protected `main` branch and verify the post-merge `main` checks before tagging.

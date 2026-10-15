@@ -69,7 +69,7 @@ fails explicitly, including interleaved messages or text parts.
 - Streams replies while Codex is answering.
 - Reads and controls only the entities Home Assistant exposes to Assist.
 - Supports simple follow-up actions through Home Assistant's native Assist LLM API.
-- Can optionally search through Codex's standalone search endpoint. Search is off by default. The integration asks the model to omit raw URLs and source blocks from spoken responses, but this is not guaranteed. It does not attach a separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`; the stock Assist browser already ignored it.
+- Can optionally search through Codex's standalone search endpoint. Search is off by default. The integration asks the model to omit raw URLs and source blocks from spoken responses, but this is not guaranteed. It does not attach a separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`. The previously inspected stock Assist browser did not render it.
 
 Caught Codex request, credential, and tool-handling failures use fixed, short
 conversation responses:

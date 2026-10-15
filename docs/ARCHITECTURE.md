@@ -42,7 +42,7 @@ flowchart LR
 3. Codex Assist sends the conversation to the Codex-compatible backend.
 4. If Codex requests a Home Assistant tool call, Codex Assist waits for that backend response to complete, then maps the request into Home Assistant's Assist LLM API.
 5. Home Assistant validates and executes the tool call using its normal exposed-entity controls.
-6. When search is enabled, the integration asks the model to keep raw URLs, markdown links, and source blocks out of speech and use human-readable source names only, without guaranteeing compliance. Conversation responses have no separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`; the stock Assist browser already ignored it.
+6. When search is enabled, the integration asks the model to keep raw URLs, markdown links, and source blocks out of speech and use human-readable source names only, without guaranteeing compliance. Conversation responses have no separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`. The previously inspected stock Assist browser did not render it.
 7. Codex Assist returns the final response to Home Assistant.
 
 `_instructions_for_turn` appends conversation-only clarification guidance after
