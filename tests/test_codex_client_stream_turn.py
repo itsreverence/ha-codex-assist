@@ -4,7 +4,6 @@ import pytest
 
 from custom_components.codex_assist.codex_client import (
     CODEX_STREAM_TIMEOUT,
-    CodexCitationDelta,
     CodexClient,
     CodexRateLimitError,
     CodexResponseItemDelta,
@@ -244,56 +243,48 @@ async def test_stream_turn_correlates_interleaved_function_call_arguments_by_ite
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_yields_structured_url_citations():
-    citation = {
+@pytest.mark.parametrize("completed", [False, True])
+async def test_stream_turn_preserves_annotated_message_without_extra_visible_deltas(completed):
+    annotation = {
         "type": "url_citation",
         "title": "IANA Reserved Domains",
         "url": "https://www.iana.org/help/example-domains",
         "start_index": 10,
         "end_index": 22,
     }
-    response = FakeStreamResponse(
-        200,
-        _event(
-            {
-                "type": "response.output_text.annotation.added",
-                "annotation": citation,
-            }
-        )
-        + _event(
-            {
-                "type": "response.output_item.done",
-                "item": {
-                    "type": "message",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": "Example Domains are maintained by IANA.",
-                            "annotations": [citation],
-                        }
-                    ],
-                },
-            }
-        )
-        + _event({"type": "response.completed", "response": {"status": "completed"}}),
+    text = " Example Domains are maintained by IANA.\n"
+    item = {
+        "type": "message", "role": "assistant", "phase": "final_answer",
+        "content": [{"type": "output_text", "text": text, "annotations": [annotation]}],
+    }
+    events = (
+        _event({"type": "response.output_text.delta", "delta": " Example"})
+        + _event({"type": "response.output_text.annotation.added", "annotation": annotation})
+        + _event({"type": "response.output_item.done", "item": item})
     )
-    http = FakeHttpClient(response)
-    client = CodexClient(http_client=http, access_token="token-1")
+    if completed:
+        events += _event({"type": "response.completed", "response": {"status": "completed"}})
+    client = CodexClient(http_client=FakeHttpClient(FakeStreamResponse(200, events)),
+                         access_token="token-1")
+    deltas = []
 
-    deltas = [
-        delta
+    async def collect():
         async for delta in client.stream_turn(
-            model="gpt-5.4",
-            instructions="Use search.",
+            model="gpt-5.4", instructions="Use search.",
             input_items=[{"role": "user", "content": "Who maintains Example Domains?"}],
             reasoning_effort="low",
-        )
-    ]
+        ):
+            deltas.append(delta)
 
-    citations = [delta.citation for delta in deltas if isinstance(delta, CodexCitationDelta)]
-    assert [(citation.title, citation.url) for citation in citations] == [
-        ("IANA Reserved Domains", "https://www.iana.org/help/example-domains"),
-        ("IANA Reserved Domains", "https://www.iana.org/help/example-domains"),
+    if completed:
+        await collect()
+    else:
+        with pytest.raises(RuntimeError, match="before response.completed"):
+            await collect()
+    assert deltas == [
+        CodexTextDelta(" Example"),
+        CodexTextDelta(" Domains are maintained by IANA.\n"),
+        CodexResponseItemDelta(item),
     ]
 
 

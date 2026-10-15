@@ -273,7 +273,7 @@ async def test_delivered_order_controls_success_and_native_state(
         completed_message("X", item_id="b", output_index=None), COMPLETED,
     ], "EX", id="multiple-messages-empty-anonymous"),
 ])
-async def test_anonymous_delta_controls_native_commit_and_sources(
+async def test_anonymous_delta_controls_native_commit_without_source_card(
     hass, task_entry, stream_backend, monkeypatch, surface, output, expected,
 ):
     from custom_components.codex_assist import ai_task as task_owner
@@ -308,7 +308,7 @@ async def test_anonymous_delta_controls_native_commit_and_sources(
             assert not result.response.card
         else:
             assert speech == expected
-            assert result.response.card["simple"]["title"] == "Sources"
+            assert not result.response.card
     elif expected is None:
         with pytest.raises(HomeAssistantError, match="Codex returned inconsistent answer text"):
             await ai_task.async_generate_data(

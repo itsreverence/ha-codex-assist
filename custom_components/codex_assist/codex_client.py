@@ -23,8 +23,6 @@ WEB_SEARCH_TOOL_NAME = "web_search"
 MAX_SEARCH_ROUNDS = 4
 MAX_SEARCH_CALLS = 4
 MAX_SEARCH_OUTPUT_CHARS = 24000
-# Each search call adds its top results to the displayed source card.
-MAX_SEARCH_CITATIONS = 5
 # The search text tags each result with a citation marker (U+E200 "cite" U+E202 ref U+E201) and
 # "[wordlim: N]"; a model that sees them copies them into its answer, so both are removed.
 _SEARCH_MARKUP = re.compile(
@@ -102,22 +100,8 @@ class CodexToolCallDelta:
 
 
 @dataclass(frozen=True)
-class CodexCitation:
-    title: str
-    url: str
-    start_index: int | None = None
-    end_index: int | None = None
-
-
-@dataclass(frozen=True)
-class CodexCitationDelta:
-    citation: CodexCitation
-
-
-@dataclass(frozen=True)
 class CodexSearchResult:
     text: str
-    citations: tuple[CodexCitation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -125,9 +109,7 @@ class CodexResponseItemDelta:
     item: dict[str, Any]
 
 
-CodexStreamDelta = (
-    CodexTextDelta | CodexToolCallDelta | CodexCitationDelta | CodexResponseItemDelta
-)
+CodexStreamDelta = CodexTextDelta | CodexToolCallDelta | CodexResponseItemDelta
 
 
 _TEXT_CONFLICT = "Codex returned inconsistent answer text"
@@ -456,8 +438,6 @@ class CodexClient:
             for call in searches.values():
                 search_calls += 1
                 result = await self.web_search(model, call.arguments, search_settings)
-                for citation in result.citations:
-                    yield CodexCitationDelta(citation)
                 items.append(
                     {"type": "function_call_output", "call_id": call.id, "output": result.text}
                 )
@@ -510,7 +490,6 @@ class CodexClient:
             return CodexSearchResult("Web search found nothing.")
         return CodexSearchResult(
             _SEARCH_MARKUP.sub("", output)[:MAX_SEARCH_OUTPUT_CHARS],
-            _citations_from_search_results(payload.get("results")),
         )
 
     async def _stream_once(
@@ -566,8 +545,6 @@ class CodexClient:
                     yield CodexTextDelta(text)
                 if event_type == "response.output_text.delta":
                     continue
-                for citation in _citations_from_event(event):
-                    yield CodexCitationDelta(citation)
                 if event_type == "response.output_item.added":
                     item = event.get("item")
                     if isinstance(item, dict) and item.get("type") == "function_call":
@@ -693,19 +670,6 @@ def _client_side_search_tools(
         else:
             out.append(tool)
     return out, settings
-
-
-def _citations_from_search_results(results: Any) -> tuple[CodexCitation, ...]:
-    citations: list[CodexCitation] = []
-    for result in results if isinstance(results, list) else []:
-        if len(citations) >= MAX_SEARCH_CITATIONS:
-            break
-        if not isinstance(result, dict):
-            continue
-        title, url = result.get("title"), result.get("url")
-        if isinstance(title, str) and title.strip() and isinstance(url, str) and url:
-            citations.append(CodexCitation(title=title, url=url))
-    return tuple(citations)
 
 
 def _non_empty_strings(value: Any) -> list[str]:
@@ -1170,43 +1134,6 @@ def _tool_call_from_item(item: dict[str, Any], arguments: str) -> CodexToolCall:
         name=str(name),
         arguments=parsed_arguments,
     )
-
-
-def _citation_from_annotation(annotation: Any) -> CodexCitation | None:
-    if not isinstance(annotation, dict) or annotation.get("type") != "url_citation":
-        return None
-    title = annotation.get("title")
-    url = annotation.get("url")
-    if not isinstance(title, str) or not title.strip():
-        return None
-    if not isinstance(url, str) or not url.strip():
-        return None
-    start_index = annotation.get("start_index")
-    end_index = annotation.get("end_index")
-    return CodexCitation(
-        title=title.strip(),
-        url=url.strip(),
-        start_index=start_index if isinstance(start_index, int) else None,
-        end_index=end_index if isinstance(end_index, int) else None,
-    )
-
-
-def _citations_from_event(event: dict[str, Any]) -> list[CodexCitation]:
-    annotations: list[Any] = []
-    if event.get("type") == "response.output_text.annotation.added":
-        annotations.append(event.get("annotation"))
-
-    item = event.get("item")
-    if isinstance(item, dict):
-        for content in item.get("content") or []:
-            if isinstance(content, dict):
-                annotations.extend(content.get("annotations") or [])
-
-    return [
-        citation
-        for annotation in annotations
-        if (citation := _citation_from_annotation(annotation)) is not None
-    ]
 
 
 async def _aiter_completed_response_events(response: Any) -> AsyncIterator[dict[str, Any]]:

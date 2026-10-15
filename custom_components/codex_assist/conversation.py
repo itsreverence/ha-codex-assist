@@ -4,7 +4,6 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 from homeassistant.components import conversation
@@ -26,8 +25,6 @@ from .codex_auth import (
 )
 from .codex_client import (
     CodexAuthenticationError,
-    CodexCitation,
-    CodexCitationDelta,
     CodexClient,
     CodexRateLimitError,
     CodexResponseItemDelta,
@@ -66,10 +63,9 @@ _CLARIFICATION_INSTRUCTIONS = (
     "Do not add unnecessary closing questions after ordinary answers, completed "
     "actions, or cancellation."
 )
-_WEB_SEARCH_CITATION_INSTRUCTIONS = (
+_WEB_SEARCH_SPEECH_INSTRUCTIONS = (
     "When using web search, do not include raw URLs, markdown links, or a Source/Sources "
-    "section in the response text. Refer to sources by human-readable names only. The "
-    "integration renders structured citations separately."
+    "section in the response text. Refer to sources by human-readable names only."
 )
 
 
@@ -121,7 +117,6 @@ class CodexAssistConversationEntity(
         reasoning_summary = settings.get("reasoning_summary", DEFAULT_REASONING_SUMMARY)
         text_verbosity = settings.get("text_verbosity", DEFAULT_TEXT_VERBOSITY)
         web_search = bool(settings.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH))
-        citations: list[CodexCitation] = []
 
         response = intent.IntentResponse(language=user_input.language)
         try:
@@ -183,7 +178,6 @@ class CodexAssistConversationEntity(
                         reasoning_summary=reasoning_summary,
                         text_verbosity=text_verbosity,
                         allow_tools=allow_tools,
-                        citation_sink=citations,
                     )
                 except CodexAuthenticationError as err:
                     if not err.retry_allowed:
@@ -232,7 +226,6 @@ class CodexAssistConversationEntity(
                             reasoning_summary=reasoning_summary,
                             text_verbosity=text_verbosity,
                             allow_tools=allow_tools,
-                            citation_sink=citations,
                         )
                     except CodexAuthenticationError as retry_err:
                         _log_request_failure(
@@ -272,11 +265,6 @@ class CodexAssistConversationEntity(
                     content=text,
                 )
             )
-
-        else:
-            result = conversation.async_get_result_from_chat_log(user_input, chat_log)
-            _attach_citations_card(result, citations)
-            return result
 
         return conversation.async_get_result_from_chat_log(user_input, chat_log)
 
@@ -341,7 +329,6 @@ async def _stream_codex_turn_into_chat_log(
     text_verbosity: str,
     text_format: dict[str, Any] | None = None,
     allow_tools: bool = True,
-    citation_sink: list[CodexCitation] | None = None,
 ) -> bool:
     tool_call_requested = False
 
@@ -364,7 +351,6 @@ async def _stream_codex_turn_into_chat_log(
             ),
             on_tool_call=mark_tool_call_requested,
             allow_tools=allow_tools,
-            citation_sink=citation_sink,
         ),
     ):
         pass
@@ -376,24 +362,15 @@ async def _codex_stream_to_assistant_deltas(
     *,
     on_tool_call: Callable[[], None] | None = None,
     allow_tools: bool = True,
-    citation_sink: list[CodexCitation] | None = None,
 ) -> AsyncIterator[AssistantContentDeltaDict]:
     started = False
     has_answer = False
     has_tool_handoff = False
-    seen_urls: set[str] = set()
-    staged_citations: list[CodexCitation] = []
     response_items: list[dict[str, Any]] = []
     try:
         async for delta in stream:
             if isinstance(delta, CodexResponseItemDelta):
                 response_items.append(delta.item)
-                continue
-            if isinstance(delta, CodexCitationDelta):
-                citation = _safe_citation(delta.citation)
-                if citation is not None and citation.url not in seen_urls:
-                    seen_urls.add(citation.url)
-                    staged_citations.append(citation)
                 continue
             if not started:
                 yield {"role": "assistant"}
@@ -424,59 +401,10 @@ async def _codex_stream_to_assistant_deltas(
         raise
     if not has_answer and not has_tool_handoff:
         raise RuntimeError("Codex returned no answer text")
-    if citation_sink is not None:
-        citation_sink.extend(
-            citation for citation in staged_citations
-            if all(existing.url != citation.url for existing in citation_sink)
-        )
     if native_state := native_state_from_response_items(response_items):
         if not started:
             yield {"role": "assistant"}
         yield {"native": native_state}
-
-
-def _safe_citation(citation: CodexCitation) -> CodexCitation | None:
-    if len(citation.url) > 2048:
-        return None
-    if any(character.isspace() or ord(character) < 32 for character in citation.url):
-        return None
-    try:
-        parsed = urlsplit(citation.url)
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return None
-    if "<" in citation.url or ">" in citation.url:
-        return None
-    title = " ".join(citation.title.split())[:200]
-    if not title:
-        return None
-    title = (
-        title.replace("\\", "\\\\")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-    return CodexCitation(
-        title=title,
-        url=citation.url,
-        start_index=citation.start_index,
-        end_index=citation.end_index,
-    )
-
-
-def _citation_lines(citations: list[CodexCitation]) -> str:
-    return "\n".join(f"- {citation.title} — <{citation.url}>" for citation in citations)
-
-
-def _attach_citations_card(
-    result: conversation.ConversationResult,
-    citations: list[CodexCitation],
-) -> None:
-    if not citations:
-        return
-    result.response.async_set_card("Sources", _citation_lines(citations))
 
 
 async def _refresh_runtime_tokens(
@@ -534,7 +462,7 @@ def _instructions_for_turn(
     instructions = f"{instructions}\n\n{_CLARIFICATION_INSTRUCTIONS}"
     if not web_search:
         return instructions
-    return f"{instructions.rstrip()}\n\n{_WEB_SEARCH_CITATION_INSTRUCTIONS}"
+    return f"{instructions.rstrip()}\n\n{_WEB_SEARCH_SPEECH_INSTRUCTIONS}"
 
 
 async def _codex_input_from_chat_log(
