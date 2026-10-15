@@ -1,5 +1,3 @@
-"""Synthetic HTTP/SSE exercises the real client without live search or credentials."""
-
 from __future__ import annotations
 
 import asyncio

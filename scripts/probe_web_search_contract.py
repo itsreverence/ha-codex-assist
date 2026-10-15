@@ -1,10 +1,3 @@
-"""Bounded probe for the Codex hosted web-search contract.
-
-This script records completion and search booleans, not response text, URLs,
-or credentials. Use only a token issued to Codex Assist itself; never borrow Codex
-CLI/editor credentials.
-"""
-
 from __future__ import annotations
 
 import argparse

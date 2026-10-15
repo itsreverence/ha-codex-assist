@@ -22,7 +22,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from custom_components.codex_assist.codex_client import (  # noqa: E402
+from custom_components.codex_assist.codex_client import (
     CodexAuthenticationError,
     CodexClient,
     CodexRateLimitError,
@@ -97,7 +97,6 @@ class TrialResult:
 
 
 def classify_error(exc: Exception) -> str:
-    """Classify typed failures without inspecting or exposing backend messages."""
     if isinstance(exc, CodexAuthenticationError):
         return "authentication"
     if isinstance(exc, CodexRateLimitError):
@@ -112,7 +111,6 @@ def classify_error(exc: Exception) -> str:
 
 
 async def consume_turn(client, arm, evidence, *, model, input_items, tools):
-    """Keep native history private and retain sanitized evidence on failure."""
     evidence.started = True
     started = monotonic()
     native = []
@@ -156,7 +154,6 @@ async def consume_turn(client, arm, evidence, *, model, input_items, tools):
 
 
 async def run_trial(result, case, model, token, *, transport=None):
-    """Use a fresh HTTP client for each arm; do not execute unexpected tools."""
     evidence = result.initial
     call_opened_target = False
 
@@ -246,7 +243,6 @@ async def run_trial(result, case, model, token, *, transport=None):
 
 
 async def compare(model, token, first_arm="client", *, transport=None):
-    """Run exactly three pairs unless blocked or the overall deadline expires."""
     started = monotonic()
     trials = []
     for index, case in enumerate(CASES):
