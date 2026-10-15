@@ -158,6 +158,28 @@ async def consume_turn(client, arm, evidence, *, model, input_items, tools):
         evidence.total_seconds = monotonic() - started
 
 
+def initial_status(evidence: SanitizedTurnEvidence, case: Case, arm: Arm) -> str:
+    if evidence.unexpected_tool_calls:
+        return "unexpected_tool"
+    if not evidence.answered or not evidence.native_items:
+        return "initial_answer_not_established"
+    if not evidence.search_calls or evidence.search_calls != evidence.search_completed:
+        return "search_not_established"
+    if case.requires_open and not (
+        evidence.open_target_requested if arm == "client" else evidence.open_target_completed
+    ):
+        return "open_not_established"
+    return "completed"
+
+
+def followup_status(evidence: SanitizedTurnEvidence) -> str:
+    if evidence.unexpected_tool_calls or evidence.search_calls:
+        return "unexpected_tool"
+    if not evidence.answered:
+        return "followup_answer_not_established"
+    return "completed"
+
+
 async def run_trial(result, case, model, token, *, transport=None):
     evidence = result.initial
 
@@ -215,31 +237,16 @@ async def run_trial(result, case, model, token, *, transport=None):
                 client, result.arm, evidence, model=model,
                 input_items=original, tools=[dict(SEARCH_TOOL)],
             )
-            if evidence.unexpected_tool_calls:
-                result.status = "unexpected_tool"
-            elif not evidence.answered or not evidence.native_items:
-                result.status = "initial_answer_not_established"
-            elif not evidence.search_calls or evidence.search_calls != evidence.search_completed:
-                result.status = "search_not_established"
-            elif case.requires_open and not (
-                evidence.open_target_requested if result.arm == "client"
-                else evidence.open_target_completed
-            ):
-                result.status = "open_not_established"
-            else:
+            result.status = initial_status(evidence, case, result.arm)
+            if result.status == "completed":
                 evidence = result.followup
                 await consume_turn(
                     client, result.arm, evidence, model=model,
                     input_items=[*original, *native, {"role": "user", "content": FOLLOWUP}],
                     tools=[],
                 )
-                if evidence.unexpected_tool_calls or evidence.search_calls:
-                    result.status = "unexpected_tool"
-                elif not evidence.answered:
-                    result.status = "followup_answer_not_established"
-                else:
-                    result.status = "completed"
-                    result.gate_pass = True
+                result.status = followup_status(evidence)
+                result.gate_pass = result.status == "completed"
     except Exception as exc:
         result.status = "error"
         result.error = classify_error(exc)

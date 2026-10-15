@@ -101,6 +101,23 @@ async def test_natural_eof_distinguishes_empty_undecoded_and_events(body, expect
     assert report["followup"]["outcome"] == "not_run" and len(requests) == 1
 
 
+@pytest.mark.parametrize("ending,expected", [
+    ("error", "event_error"),
+    ("response.failed", "event_failed"),
+    ("response.incomplete", "event_incomplete"),
+    ("response.completed", "completed"),
+])
+async def test_terminal_event_flushed_at_line_eof_preserves_eof_evidence(ending, expected):
+    body = f'data: {json.dumps({"type": ending})}'.encode()
+    report, code, requests = await run([httpx.Response(200, content=body)])
+    trace = report["initial"]
+    assert trace["terminal_kind"] == expected
+    assert trace["outcome"] == expected
+    assert trace["natural_eof"] is True
+    assert len(requests) == 1
+    assert code == (1 if ending == "response.completed" else 3)
+
+
 @pytest.mark.parametrize("failure,expected,code", [
     (httpx.StreamConsumed(), "stream_error", 3),
     (httpx.ConnectError(PRIVATE), "transport_error", 1),

@@ -1,5 +1,3 @@
-"""Private, scoped stream observation for the bounded built-in follow-up probe."""
-
 from __future__ import annotations
 
 import asyncio
@@ -143,7 +141,6 @@ class StreamObserver:
                 if kind in TERMINALS:
                     trace.terminal_kind = TERMINALS[kind]
                 yield event
-            trace.natural_eof = True
 
     async def request(self, request):
         if self.requests >= 2:
@@ -168,6 +165,7 @@ class StreamObserver:
                 async for line in decoded:
                     trace.decoded_lines += 1
                     yield line
+                trace.natural_eof = True
 
         def lines():
             iterator = decoded_lines()
@@ -222,13 +220,8 @@ async def diagnose(model, token, *, transport=None):
                 initial.outcome = "completed"
             finally:
                 await observer.close_turn()
-            if evidence.unexpected_tool_calls:
-                gate = "unexpected_tool"
-            elif not evidence.answered or not evidence.native_items:
-                gate = "initial_answer_not_established"
-            elif not evidence.search_calls or evidence.search_calls != evidence.search_completed:
-                gate = "search_not_established"
-            else:
+            gate = probe.initial_status(evidence, probe.CASES[0], "builtin")
+            if gate == "completed":
                 trace = observer.trace = followup
                 evidence = probe.SanitizedTurnEvidence()
                 try:
@@ -242,12 +235,7 @@ async def diagnose(model, token, *, transport=None):
                     followup.outcome = "completed"
                 finally:
                     await observer.close_turn()
-                if evidence.unexpected_tool_calls or evidence.search_calls:
-                    gate = "unexpected_tool"
-                elif not evidence.answered:
-                    gate = "followup_answer_not_established"
-                else:
-                    gate = "completed"
+                gate = probe.followup_status(evidence)
             code = 0 if gate == "completed" else 1
     except Exception as exc:
         trace.outcome = outcome(exc, trace)
