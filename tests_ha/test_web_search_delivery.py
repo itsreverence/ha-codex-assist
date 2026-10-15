@@ -245,7 +245,7 @@ async def test_search_delivers_only_final_text_through_real_ha(
     assert any(tool.get("name") == "web_search" for tool in first_model["tools"])
 
 
-@pytest.mark.parametrize("replay_boundary", ["ha_handoff", "next_user"])
+@pytest.mark.parametrize("replay_boundary", ["ha_handoff", "next_user", "failed_final"])
 async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     hass: HomeAssistant, search_entry, backend, monkeypatch, replay_boundary, caplog, request,
 ):
@@ -305,11 +305,18 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     ])
     # Neither the fact nor the URL is repeated by the handoff or final message.
     final_text = "The reading is seven."
-    model_round(planned, text_events(final_text) + [COMPLETED])
+    model_round(planned, [{"type": "response.failed", "response": {"error": {
+        "code": "server_error", "message": "Synthetic final failure",
+    }}}] if replay_boundary == "failed_final" else text_events(final_text) + [COMPLETED])
     result = await conversation.async_converse(
         hass, "Search and get the test reading.", None, Context(),
         agent_id="conversation.codex_assist",
     )
+    if replay_boundary == "failed_final":
+        assert "Synthetic final failure" in result.response.speech["plain"]["speech"]
+        assert not result.response.card
+        assert executed == ["reading-1"]
+        return
     assert result.response.speech["plain"]["speech"] == final_text
     assert url in result.response.card["simple"]["content"]
     handoff = requests[-1][1]["input"]

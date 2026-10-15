@@ -264,9 +264,12 @@ class CodexAssistConversationEntity(
                 )
             )
 
-        result = conversation.async_get_result_from_chat_log(user_input, chat_log)
-        _attach_citations_card(result, citations)
-        return result
+        else:
+            result = conversation.async_get_result_from_chat_log(user_input, chat_log)
+            _attach_citations_card(result, citations)
+            return result
+
+        return conversation.async_get_result_from_chat_log(user_input, chat_log)
 
 
 def _request_failure_text(err: BaseException) -> str:
@@ -342,7 +345,10 @@ async def _codex_stream_to_assistant_deltas(
     citation_sink: list[CodexCitation] | None = None,
 ) -> AsyncIterator[AssistantContentDeltaDict]:
     started = False
+    has_answer = False
+    has_tool_handoff = False
     seen_urls: set[str] = set()
+    staged_citations: list[CodexCitation] = []
     response_items: list[dict[str, Any]] = []
     try:
         async for delta in stream:
@@ -353,21 +359,20 @@ async def _codex_stream_to_assistant_deltas(
                 citation = _safe_citation(delta.citation)
                 if citation is not None and citation.url not in seen_urls:
                     seen_urls.add(citation.url)
-                    if citation_sink is not None and all(
-                        existing.url != citation.url for existing in citation_sink
-                    ):
-                        citation_sink.append(citation)
+                    staged_citations.append(citation)
                 continue
             if not started:
                 yield {"role": "assistant"}
                 started = True
             if isinstance(delta, CodexTextDelta):
+                has_answer = has_answer or bool(delta.text.strip())
                 yield {"content": delta.text}
             elif isinstance(delta, CodexToolCallDelta):
                 if not allow_tools:
                     raise RuntimeError(
                         "Codex Assist final synthesis returned a tool call while tools are disabled"
                     )
+                has_tool_handoff = True
                 if on_tool_call is not None:
                     on_tool_call()
                 yield {
@@ -383,6 +388,13 @@ async def _codex_stream_to_assistant_deltas(
         if started:
             err.retry_allowed = False
         raise
+    if not has_answer and not has_tool_handoff:
+        raise RuntimeError("Codex returned no answer text")
+    if citation_sink is not None:
+        citation_sink.extend(
+            citation for citation in staged_citations
+            if all(existing.url != citation.url for existing in citation_sink)
+        )
     if native_state := native_state_from_response_items(response_items):
         if not started:
             yield {"role": "assistant"}

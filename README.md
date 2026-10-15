@@ -58,6 +58,11 @@ tool calls wait for that response to complete, and incomplete AI Task text or
 images are not returned as successful results. The integration does not retry
 interrupted responses automatically.
 
+Completed responses must contain nonblank answer text or a Home Assistant tool
+handoff. Codex Assist recovers missing text from completed assistant messages
+when it can match that text safely to the stream. Ambiguous or conflicting text
+fails explicitly. Failed conversation responses do not include a Sources card.
+
 ### Assist conversations
 
 - Registers as a normal Home Assistant Assist conversation agent.

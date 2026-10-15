@@ -75,6 +75,32 @@ async def test_completed_message_delivers_full_answer(
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
+@pytest.mark.parametrize("output", [
+    [],
+    [{"type": "response.output_text.delta", "delta": " \n"}],
+    [{"type": "response.output_item.done", "item": {**ANSWER["item"], "phase": "commentary"}}],
+])
+async def test_silent_completed_response_is_failure(
+    hass, task_entry, stream_backend, surface, output,
+):
+    events, requests = stream_backend
+    events.extend([*output, COMPLETED])
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
+        )
+        assert "Codex returned no answer text" in result.response.speech["plain"]["speech"]
+        assert not result.response.card
+    else:
+        with pytest.raises(HomeAssistantError, match="Codex returned no answer text"):
+            await ai_task.async_generate_data(
+                hass, task_name="Test", instructions="Give a test answer.",
+                entity_id="ai_task.codex_assist_ai_task",
+            )
+    assert requests == ["/backend-api/codex/responses"]
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task"])
 async def test_recovered_answer_prevents_auth_replay(hass, task_entry, stream_backend, surface):
     events, requests = stream_backend
     events.extend([ANSWER, AUTH_FAILURE])
