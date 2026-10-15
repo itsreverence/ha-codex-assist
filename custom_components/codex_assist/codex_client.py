@@ -6,7 +6,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .codex_image import image_model_quality, validate_image_size
@@ -128,6 +128,188 @@ class CodexResponseItemDelta:
 CodexStreamDelta = (
     CodexTextDelta | CodexToolCallDelta | CodexCitationDelta | CodexResponseItemDelta
 )
+
+
+_TEXT_CONFLICT = "Codex returned inconsistent answer text"
+
+
+@dataclass(eq=False)
+class _TextMessage:
+    order: int
+    item_id: str | None = None
+    output_index: int | None = None
+    role: str | None = None
+    phase: str | None = None
+    parts: dict[int | None, str] = field(default_factory=dict)
+    unindexed: bool = False
+    completed: dict[int, str] | None = None
+
+
+class _ResponseTextLedger:
+    def __init__(self) -> None:
+        self.messages: list[_TextMessage] = []
+        self.by_id: dict[str, _TextMessage] = {}
+        self.by_index: dict[int, _TextMessage] = {}
+        self.emitted: list[tuple[_TextMessage, int | None]] = []
+        self.anonymous_text = False
+
+    def _message(self, event: dict[str, Any], item: dict[str, Any]) -> _TextMessage:
+        if item.get("id") and event.get("item_id") and item["id"] != event["item_id"]:
+            raise RuntimeError(_TEXT_CONFLICT)
+        item_id = item.get("id") or event.get("item_id")
+        index = event.get("output_index")
+        by_id = self.by_id.get(item_id)
+        by_index = self.by_index.get(index)
+        if by_id is not None and by_index is not None and by_id is not by_index:
+            raise RuntimeError(_TEXT_CONFLICT)
+        message = by_id or by_index
+        if message is None:
+            anonymous = [m for m in self.messages if m.item_id is None and m.output_index is None]
+            if len(self.messages) == 1 and anonymous and anonymous[0].completed is None:
+                message = anonymous[0]
+            elif item_id is None and index is None and len(self.messages) == 1:
+                message = self.messages[0]
+            else:
+                message = _TextMessage(order=len(self.messages))
+                self.messages.append(message)
+        if item_id is not None:
+            if message.item_id is not None and message.item_id != item_id:
+                raise RuntimeError(_TEXT_CONFLICT)
+            message.item_id = item_id
+            self.by_id[item_id] = message
+        if index is not None:
+            if message.output_index is None:
+                message.output_index = index
+                self.by_index[index] = message
+                self._validate_order()
+            elif message.output_index != index:
+                raise RuntimeError(_TEXT_CONFLICT)
+        for key in ("role", "phase"):
+            if (value := item.get(key)) is not None:
+                previous = getattr(message, key)
+                if previous is not None and previous != value:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                setattr(message, key, value)
+        return message
+
+    def _validate_order(self) -> None:
+        output_index = -1
+        content_indices: dict[_TextMessage, int] = {}
+        for message, index in self.emitted:
+            if message.output_index is not None:
+                if message.output_index < output_index:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                output_index = message.output_index
+            if index is not None:
+                if index < content_indices.get(message, -1):
+                    raise RuntimeError(_TEXT_CONFLICT)
+                content_indices[message] = index
+
+    def _record(self, message: _TextMessage, index: int | None, text: str) -> None:
+        if text and (not self.emitted or self.emitted[-1] != (message, index)):
+            if message.parts and (
+                self.emitted[-1][0] is not message or index in message.parts
+            ):
+                raise RuntimeError(_TEXT_CONFLICT)
+            self.emitted.append((message, index))
+            self._validate_order()
+        message.parts[index] = message.parts.get(index, "") + text
+
+    def _bind_part(self, message: _TextMessage, index: int) -> None:
+        if None not in message.parts:
+            return
+        if index in message.parts:
+            raise RuntimeError(_TEXT_CONFLICT)
+        message.parts[index] = message.parts.pop(None)
+        self.emitted = [
+            (m, index if m is message and i is None else i) for m, i in self.emitted
+        ]
+        self._validate_order()
+
+    def observe(self, event: dict[str, Any]) -> list[str]:
+        event_type = event.get("type")
+        if event_type == "response.output_text.delta":
+            text = event.get("delta")
+            if not isinstance(text, str) or not text:
+                return []
+            if event.get("item_id") is None and event.get("output_index") is None:
+                if len(self.messages) > 1:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                self.anonymous_text = True
+            message = self._message(event, {})
+            if message.completed is not None:
+                raise RuntimeError(_TEXT_CONFLICT)
+            index = event.get("content_index")
+            if index is None:
+                message.unindexed = True
+                if len(message.parts) > 1:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                index = next(iter(message.parts), None)
+            else:
+                self._bind_part(message, index)
+            self._record(message, index, text)
+            return [text]
+        if event_type not in {"response.output_item.added", "response.output_item.done"}:
+            return []
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "message":
+            return []
+        message = self._message(event, item)
+        if event_type == "response.output_item.added":
+            return []
+        if message.role != "assistant" or message.phase == "commentary":
+            return []
+        parts = {
+            index: part["text"] for index, part in enumerate(item.get("content") or [])
+            if isinstance(part, dict) and part.get("type") == "output_text"
+            and isinstance(part.get("text"), str)
+        }
+        if parts and message.item_id is None and message.output_index is None:
+            self.anonymous_text = True
+        if self.anonymous_text and (len(self.messages) != 1 or len(parts) > 1):
+            raise RuntimeError(_TEXT_CONFLICT)
+        for other in self.messages:
+            if other is message:
+                continue
+            distinct_ids = message.item_id is not None and other.item_id is not None
+            distinct_indices = message.output_index is not None and other.output_index is not None
+            if not distinct_ids and not distinct_indices:
+                raise RuntimeError(_TEXT_CONFLICT)
+        if message.completed is not None:
+            identified = (
+                item.get("id") or event.get("item_id") or event.get("output_index") is not None
+            )
+            if not identified or message.completed != parts:
+                raise RuntimeError(_TEXT_CONFLICT)
+            return []
+        if message.unindexed:
+            if len(parts) != 1:
+                raise RuntimeError(_TEXT_CONFLICT)
+            index = next(iter(parts))
+            self._bind_part(message, index)
+        if message.parts.keys() - parts.keys():
+            raise RuntimeError(_TEXT_CONFLICT)
+        recovered = []
+        for index, text in parts.items():
+            delivered = message.parts.get(index, "")
+            if not text.startswith(delivered):
+                raise RuntimeError(_TEXT_CONFLICT)
+            suffix = text[len(delivered):]
+            if not suffix:
+                continue
+            for other, other_index in self.emitted:
+                if other is message:
+                    later = other_index is None or other_index > index
+                elif message.output_index is not None and other.output_index is not None:
+                    later = other.output_index > message.output_index
+                else:
+                    later = other.order > message.order
+                if later:
+                    raise RuntimeError(_TEXT_CONFLICT)
+            self._record(message, index, suffix)
+            recovered.append(suffix)
+        message.completed = parts
+        return recovered
 
 
 class CodexClient:
@@ -377,8 +559,13 @@ class CodexClient:
             completed_tool_call_ids: set[str] = set()
             held_tool_calls: list[CodexToolCallDelta] = []
             anonymous_call_index = 0
+            text_ledger = _ResponseTextLedger()
             async for event in _aiter_completed_response_events(response):
                 event_type = event.get("type")
+                for text in text_ledger.observe(event):
+                    yield CodexTextDelta(text)
+                if event_type == "response.output_text.delta":
+                    continue
                 for citation in _citations_from_event(event):
                     yield CodexCitationDelta(citation)
                 if event_type == "response.output_item.added":

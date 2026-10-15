@@ -57,6 +57,29 @@ but cannot trigger replay. Incomplete streams have no automatic retry, and
 failed streams do not publish completed native transcript state. Text already
 streamed to a listener cannot be retracted.
 
+Each backend response has a private text ledger. Message IDs and output indices
+identify the same record, and content indices distinguish its text parts.
+Completed assistant message items can supply missing text or an exact missing
+suffix. Recovery preserves whitespace, excludes explicit commentary, and fails
+on conflicting identities, divergent text, or insertion before text already
+delivered. Anonymous text can be reconciled only in a single-message,
+single-part response. Repeated identified completions do not repeat speech.
+The ledger retains transitions between delivered text parts, coalescing only
+adjacent chunks of the same part. Once delivery leaves a message or content part,
+that message or part cannot resume, even when output indices are absent. The
+existing parts dictionary identifies prior delivery, so transition history is
+bounded by distinct delivered parts. Known numeric ordering is checked on new
+transitions and alias binding, even when completion supplies no missing suffix.
+The ledger does not recover from `response.completed` snapshots. Recovered text
+passes through the existing search-round buffer and still requires response
+completion.
+
+The shared Conversation and AI Task adapter rejects successful exhaustion with
+neither nonblank text nor an allowed tool handoff, before publishing native
+state. It stages citations until that check passes. Only successful conversation
+processing attaches a Sources card, including when an earlier tool handoff
+retained citations before a later failure.
+
 Replay keeps whole user turns within the existing 24-item input limit. Older
 turns are dropped as complete groups, including their search and HA tool pairs.
 If the current turn alone exceeds that limit, the owner fails explicitly rather
