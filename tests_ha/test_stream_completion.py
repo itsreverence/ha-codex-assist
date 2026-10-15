@@ -75,6 +75,38 @@ async def test_completed_message_delivers_full_answer(
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
+@pytest.mark.parametrize("event", ["done", "added"])
+async def test_late_index_alias_rejects_reordered_answer(
+    hass, task_entry, stream_backend, surface, event,
+):
+    events, requests = stream_backend
+    later = {**ANSWER["item"], "id": "b", "content": [{"type": "output_text", "text": "Later"}]}
+    earlier = {
+        **ANSWER["item"], "id": "a", "content": [{"type": "output_text", "text": "Earlier"}],
+    }
+    events.extend([
+        {"type": "response.output_item.done", "item": later},
+        {"type": "response.output_item.done", "item": earlier, "output_index": 0},
+        {"type": f"response.output_item.{event}", "item": later, "output_index": 1},
+        COMPLETED,
+    ])
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
+        )
+        speech = result.response.speech["plain"]["speech"]
+        assert "Codex returned inconsistent answer text" in speech
+        assert not result.response.card
+    else:
+        with pytest.raises(HomeAssistantError, match="Codex returned inconsistent answer text"):
+            await ai_task.async_generate_data(
+                hass, task_name="Test", instructions="Give a test answer.",
+                entity_id="ai_task.codex_assist_ai_task",
+            )
+    assert requests == ["/backend-api/codex/responses"]
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task"])
 @pytest.mark.parametrize("output", [
     [],
     [{"type": "response.output_text.delta", "delta": " \n"}],

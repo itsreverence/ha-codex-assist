@@ -182,6 +182,11 @@ class _ResponseTextLedger:
                 raise RuntimeError(_TEXT_CONFLICT)
             message.output_index = index
             self.by_index[index] = message
+            emitted_indices = [
+                m.output_index for m, _ in self.emitted if m.output_index is not None
+            ]
+            if emitted_indices != sorted(emitted_indices):
+                raise RuntimeError(_TEXT_CONFLICT)
         for key in ("role", "phase"):
             if (value := item.get(key)) is not None:
                 previous = getattr(message, key)

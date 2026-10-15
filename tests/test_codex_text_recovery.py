@@ -108,6 +108,44 @@ async def test_ambiguous_conflicting_or_out_of_order_recovery_fails(events):
         await collect([*events, COMPLETED], [])
 
 
+@pytest.mark.parametrize("event", ["done", "added"])
+@pytest.mark.parametrize("late_item", ["a", "b"])
+@pytest.mark.parametrize("middle", [[], [message("Middle", item_id="c")]])
+async def test_late_index_alias_rejects_reordered_recovered_text(event, late_item, middle):
+    delivered = []
+    events = [
+        message("Later", item_id="b", output_index=None if late_item == "b" else 1),
+        *middle,
+        message("Earlier", item_id="a", output_index=None if late_item == "a" else 0),
+        message(
+            "Earlier" if late_item == "a" else "Later", item_id=late_item,
+            output_index=0 if late_item == "a" else 1, event=event,
+        ),
+        COMPLETED,
+    ]
+    with pytest.raises(RuntimeError, match="^Codex returned inconsistent answer text$"):
+        await collect(events, delivered)
+    assert delivered == (["Later", "Middle", "Earlier"] if middle else ["Later", "Earlier"])
+
+
+@pytest.mark.parametrize("event", ["done", "added"])
+@pytest.mark.parametrize("late_item", ["a", "b"])
+async def test_valid_late_index_alias_preserves_recovered_text(event, late_item):
+    delivered = []
+    await collect([
+        message("Earlier", item_id="a", output_index=None if late_item == "a" else 0),
+        message("Later", item_id="b", output_index=None if late_item == "b" else 1),
+        message(
+            "Earlier" if late_item == "a" else "Later", item_id=late_item,
+            output_index=0 if late_item == "a" else 1, event=event,
+        ),
+        message("Earlier", item_id="a", output_index=0),
+        message("Later", item_id="b", output_index=1),
+        COMPLETED,
+    ], delivered)
+    assert delivered == ["Earlier", "Later"]
+
+
 async def test_recovered_text_still_requires_response_completion():
     delivered = []
     with pytest.raises(RuntimeError, match="before response.completed"):
