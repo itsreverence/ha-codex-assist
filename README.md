@@ -72,6 +72,19 @@ responses do not include a Sources card.
 - Supports simple follow-up actions through Home Assistant's native Assist LLM API.
 - Can optionally search through Codex's standalone search endpoint. Search is off by default. The integration asks the model to omit raw URLs and source blocks from spoken responses, but this is not guaranteed. It includes validated source metadata in the response; the previously inspected stock Assist browser did not render that card.
 
+Codex Assist asks the model to clarify ambiguous actions or targets before execution.
+It asks for one concise question as the final sentence, with language-appropriate
+question punctuation and nothing after it, and discourages unnecessary closing
+questions after answers, completed actions, or cancellation. This internal guidance
+preserves your saved prompt and applies only to conversations, not AI Task.
+
+Home Assistant decides whether to continue from the final reply. The tested HA
+versions recognize `?`, ASCII `;` (U+003B), and fullwidth `？`. Other question punctuation,
+such as Arabic `؟`, does not trigger that native check. Codex Assist does not rewrite
+the reply or force English. Model compliance and satellite listening are not
+guaranteed. See the [clarification follow-up checks](docs/TESTING.md#clarification-follow-ups)
+for live verification.
+
 ### AI Task
 
 - Generates plain text or structured data from Home Assistant AI Task actions.

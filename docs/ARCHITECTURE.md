@@ -46,6 +46,28 @@ flowchart LR
 6. When search is enabled, Codex Assist includes validated source metadata in the response. The previously inspected stock Assist browser did not render the Sources card. The integration asks the model to keep raw URLs and source blocks out of speech, without guaranteeing that it will.
 7. Codex Assist returns the final response to Home Assistant.
 
+`_instructions_for_turn` appends conversation-only clarification guidance after
+Home Assistant assembles the configured prompt, Assist LLM API context, template
+values, and extra system prompt. Optional citation guidance is included alongside it. The model
+is asked to resolve ambiguous actions or targets before execution and to place one
+concise, direct clarification question last, with language-appropriate question
+punctuation and nothing after it. Ordinary answers, completed actions, and
+cancellation should not acquire unnecessary closing questions.
+
+This composition leaves config-entry prompts and chat-log system content unchanged.
+Each request, including auth retries and native tool handoffs, appends the internal
+guidance once. AI Task continues to use its existing instruction path. The guidance
+is a model instruction, not an execution guard.
+
+`conversation.async_get_result_from_chat_log` still supplies the result and
+continuation flag. In the tested HA versions, the final assistant message triggers
+continuation when its stripped text ends in `?`, ASCII `;` (U+003B), or fullwidth `？`.
+Other punctuation, including Arabic `؟`, does not match. The integration preserves
+the model's text and language, conversation ID, and history. It does not override
+continuation flags, microphone settings, timeouts, or cancellation behavior.
+Scripted contract tests establish this routing, not live model compliance or
+physical satellite listening.
+
 For stateless multi-turn requests, Codex Assist keeps completed provider output items in Home Assistant's in-memory chat log and replays them before later user or function-output items. This can include encrypted reasoning state and assistant message phase. The integration does not decrypt that state. Native state is removed from normal delta listeners, uses redacted debug formatting, and serializes as an item count rather than provider content in conversation traces.
 
 Conversation and AI Task retain the existing single auth-refresh retry only

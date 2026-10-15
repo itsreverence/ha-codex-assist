@@ -52,6 +52,13 @@ MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_ATTACHMENTS = 4
 MAX_TOTAL_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 LOGGER = logging.getLogger(__name__)
+_CLARIFICATION_INSTRUCTIONS = (
+    "When clarification is required, ask one concise, direct question as the final "
+    "sentence, ending with the appropriate question mark for the user's language and "
+    "nothing after it. Resolve ambiguous actions or targets before executing them. "
+    "Do not add unnecessary closing questions after ordinary answers, completed "
+    "actions, or cancellation."
+)
 _WEB_SEARCH_CITATION_INSTRUCTIONS = (
     "When using web search, do not include raw URLs, markdown links, or a Source/Sources "
     "section in the response text. Refer to sources by human-readable names only. The "
@@ -499,6 +506,7 @@ def _instructions_for_turn(
     web_search: bool,
 ) -> str:
     instructions = _instructions_from_chat_log(chat_log, fallback_prompt)
+    instructions = f"{instructions}\n\n{_CLARIFICATION_INSTRUCTIONS}"
     if not web_search:
         return instructions
     return f"{instructions.rstrip()}\n\n{_WEB_SEARCH_CITATION_INSTRUCTIONS}"
