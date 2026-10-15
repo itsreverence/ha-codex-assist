@@ -86,6 +86,30 @@ If the current turn alone exceeds that limit, the owner fails explicitly rather
 than dropping evidence, splitting tool pairs, or stripping reasoning. Search
 retention does not implement the CLI's encrypted search-output or ref-ID protocol.
 
+### Conversation error boundary
+
+The conversation owner maps caught exceptions to fixed speech locally. Existing
+authentication exception types select "Codex Assist needs attention in Home
+Assistant." Rate-limit exceptions select "Codex Assist is temporarily unavailable.
+Please try again later." Other caught failures, including temporary authentication
+failures, select "Sorry, I couldn't complete that." The shared AI Task error
+formatter is unchanged.
+
+Conversation-owned failure logs contain a fixed stage, the exception class, and
+fixed retry and reauthentication decisions. They omit exception messages,
+tracebacks, chains, response bodies, and URLs. Existing catch boundaries,
+cancellation propagation, refresh limits, and reauthentication actions are
+unchanged. A failed final synthesis does not replay completed native actions.
+
+Each conversation request appends short-error guidance after the configured
+prompt and HA context, alongside optional citation guidance. It asks the model
+to omit unsolicited diagnostics, error codes, request IDs, HTTP details, stack
+traces, and reporting instructions. Explicitly requested troubleshooting remains
+allowed. This is prompt guidance, not an output filter. Model-generated text,
+already streamed text, and HA-native errors converted into tool results can
+still contain details. Framework-owned `ConverseError` results pass through
+unchanged. This boundary does not promise secrecy across all HA logs or traces.
+
 ## AI Task flow
 
 1. Home Assistant sends an AI Task request to the Codex Assist AI Task entity.

@@ -72,6 +72,21 @@ responses do not include a Sources card.
 - Supports simple follow-up actions through Home Assistant's native Assist LLM API.
 - Can optionally search through Codex's standalone search endpoint. Search is off by default. The integration asks the model to omit raw URLs and source blocks from spoken responses, but this is not guaranteed. It includes validated source metadata in the response; the previously inspected stock Assist browser did not render that card.
 
+Caught Codex request, credential, and tool-handling failures use fixed, short
+conversation responses:
+
+- General failures say "Sorry, I couldn't complete that."
+- Authentication failures say "Codex Assist needs attention in Home Assistant."
+- Usage and rate limits say "Codex Assist is temporarily unavailable. Please try again later."
+
+The agent logs the failure stage, exception class, and retry or reauthentication
+decision without raw exception details. It also asks the model to keep error
+responses short and omit unsolicited diagnostics and reporting instructions.
+Requested troubleshooting is allowed. This prompt guidance does not filter model
+output or Home Assistant tool results, so generated replies can still contain
+details. These protections do not cover every Home Assistant log or trace.
+AI Task error behavior is unchanged.
+
 ### AI Task
 
 - Generates plain text or structured data from Home Assistant AI Task actions.
