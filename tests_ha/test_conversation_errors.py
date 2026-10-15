@@ -104,6 +104,7 @@ async def assert_safe_delivery(hass, result, error_backend, caplog, expected):
             assert field in record.getMessage()
         assert re.search(r"location=[a-z_]+\.py:[1-9][0-9]*(?: |$)", record.getMessage())
     logs = "\n".join(record.getMessage() for record in records)
+    assert "external.py" not in logs
     assert str(Path(__file__).parent.parent) not in logs
     for marker in MARKERS:
         assert marker not in history
