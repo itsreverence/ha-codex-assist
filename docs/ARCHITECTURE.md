@@ -16,11 +16,10 @@ flowchart LR
 
     Codex --> Reply[Streamed conversation reply]
     Codex --> Search[Optional web search on the Codex search endpoint]
-    Search --> Citations[Validated visual citations]
+    Search --> Codex
     Codex --> TaskResult[Text, structured data, or generated image]
 
     Reply --> Assist
-    Citations --> Assist
     TaskResult --> AITask
 ```
 
@@ -33,7 +32,7 @@ flowchart LR
 - **Runtime token coordinator** serializes refresh-token rotation per config entry. Concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another.
 - **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream. Text/tool and image streams share a completion reader. Success requires `response.completed`; EOF or `[DONE]` alone is not success. The reader stops at completion without waiting for the connection to close and preserves explicit backend error classifications. Text can stream before completion, but tool-call deltas are held until completion so a truncated response cannot dispatch native actions. An interrupted image stream fails even if it supplied a preview. Existing preview-image acceptance after completion is unchanged.
 - **Native transcript state** retains completed provider output items for stateless replay. The state is deep-copy isolated and remains opaque to normal Home Assistant logs, listeners, and conversation traces, which receive only redacted metadata.
-- **Hosted web search** is an explicit option. To avoid reported failures of the built-in search tool on the Codex backend, the client offers a `web_search` function and sends its calls to `alpha/search`, an undocumented endpoint also used by Codex CLI. This is a restricted query/direct-URL adapter, not an implementation of the CLI's complete search protocol. Each `stream_turn` invocation allows at most four search calls across four rounds, then removes the search tool for synthesis; a batch exceeding the remaining call budget or a search call after removal fails explicitly. A Home Assistant tool handoff ends that invocation. Search-only rounds stay inside the client: their text and annotations are withheld from visible output, while their complete ordinary function-call/output history, messages, and reasoning items are retained privately in `CodexNativeState`. That evidence is replayed after an HA tool handoff and on later user turns even when the final answer omits searched facts or URLs. In mixed search and HA rounds, HA tools take priority: search calls are not executed but receive explicit skipped outputs, preserving call/output closure and the round's reasoning. Consequently, search-enabled answer text waits for response completion while search remains available. Results use the Home Assistant country setting. The source card lists retrieved top results, not necessarily sources supporting individual claims; unsafe URLs are discarded. Native search-reference continuation and full-page extraction are not promised.
+- **Hosted web search** is an explicit option. To avoid reported failures of the built-in search tool on the Codex backend, the client offers a `web_search` function and sends its calls to `alpha/search`, an undocumented endpoint also used by Codex CLI. This is a restricted query/direct-URL adapter, not an implementation of the CLI's complete search protocol. Each `stream_turn` invocation allows at most four search calls across four rounds, then removes the search tool for synthesis; a batch exceeding the remaining call budget or a search call after removal fails explicitly. A Home Assistant tool handoff ends that invocation. Search-only rounds stay inside the client: their text and annotations are withheld from visible output, while their complete ordinary function-call/output history, messages, and reasoning items are retained privately in `CodexNativeState`. That evidence is replayed after an HA tool handoff and on later user turns even when the final answer omits searched facts or URLs. In mixed search and HA rounds, HA tools take priority: search calls are not executed but receive explicit skipped outputs, preserving call/output closure and the round's reasoning. Consequently, search-enabled answer text waits for response completion while search remains available. Results use the Home Assistant country setting. Search text, including URLs, remains available to the model. Completed provider items retain their raw annotations for private replay. The integration does not extract citations or attach a separate Sources card. Native search-reference continuation and full-page extraction are not promised.
 - **Assist tool bridge** maps model-requested device actions into Home Assistant's Assist LLM API. It does not call services directly.
 
 ## Assist conversation flow
@@ -43,13 +42,13 @@ flowchart LR
 3. Codex Assist sends the conversation to the Codex-compatible backend.
 4. If Codex requests a Home Assistant tool call, Codex Assist waits for that backend response to complete, then maps the request into Home Assistant's Assist LLM API.
 5. Home Assistant validates and executes the tool call using its normal exposed-entity controls.
-6. When search is enabled, Codex Assist includes validated source metadata in the response. The previously inspected stock Assist browser did not render the Sources card. The integration asks the model to keep raw URLs and source blocks out of speech, without guaranteeing that it will.
+6. When search is enabled, the integration asks the model to keep raw URLs, markdown links, and source blocks out of speech and use human-readable source names only, without guaranteeing compliance. Conversation responses have no separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`. The previously inspected stock Assist browser did not render it.
 7. Codex Assist returns the final response to Home Assistant.
 
 `_instructions_for_turn` appends conversation-only clarification guidance after
 Home Assistant assembles the configured prompt, Assist LLM API context, template
-values, and extra system prompt. Optional citation guidance is included alongside it. The model
-is asked to resolve ambiguous actions or targets before execution and to place one
+values, and extra system prompt. Optional search speech guidance is included
+alongside it. The model is asked to resolve ambiguous actions or targets before execution and to place one
 concise, direct clarification question last, with language-appropriate question
 punctuation and nothing after it. Ordinary answers, completed actions, and
 cancellation should not acquire unnecessary closing questions.
@@ -72,7 +71,7 @@ For stateless multi-turn requests, Codex Assist keeps completed provider output 
 
 Conversation and AI Task retain the existing single auth-refresh retry only
 while the current stream invocation has not delivered text or tool deltas to
-its caller. Hidden search-round output and buffered citations do not prevent
+its caller. Hidden search-round output and raw response items do not prevent
 that retry.
 An auth failure after delivered output keeps its authentication classification
 but cannot trigger replay. Incomplete streams have no automatic retry, and
@@ -98,9 +97,7 @@ completion.
 
 The shared Conversation and AI Task adapter rejects successful exhaustion with
 neither nonblank text nor an allowed tool handoff, before publishing native
-state. It stages citations until that check passes. Only successful conversation
-processing attaches a Sources card, including when an earlier tool handoff
-retained citations before a later failure.
+state. Neither successful nor failed conversation responses attach a Sources card.
 
 Replay keeps whole user turns within the existing 24-item input limit. Older
 turns are dropped as complete groups, including their search and HA tool pairs.
@@ -130,7 +127,7 @@ cancellation propagation, refresh limits, and reauthentication actions are
 unchanged. A failed final synthesis does not replay completed native actions.
 
 Each conversation request appends short-error guidance after the configured
-prompt and HA context, alongside optional citation guidance. It asks the model
+prompt and HA context, alongside optional search speech guidance. It asks the model
 to omit unsolicited diagnostics, error codes, request IDs, HTTP details, stack
 traces, and reporting instructions. Explicitly requested troubleshooting remains
 allowed. This is prompt guidance, not an output filter. Model-generated text,
@@ -142,7 +139,7 @@ unchanged. This boundary does not promise secrecy across all HA logs or traces.
 
 1. Home Assistant sends an AI Task request to the Codex Assist AI Task entity.
 2. For data-generation tasks, Codex Assist translates the instructions and supported image attachments into Codex-compatible input items.
-3. If Home Assistant supplies a structure, Codex Assist sends it as a native JSON Schema response format and validates the returned data against that structure. Hosted web search stays disabled for this path so citations cannot invalidate the result.
+3. If Home Assistant supplies a structure, Codex Assist sends it as a native JSON Schema response format and validates the returned data against that structure. Hosted web search stays disabled for this path to preserve structured output.
 4. For image-generation tasks, Codex Assist requests an image using the configured quality and size.
 5. Codex Assist returns text, structured data, or generated image bytes through Home Assistant's native AI Task result types.
 

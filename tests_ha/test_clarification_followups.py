@@ -64,6 +64,15 @@ def assert_clarification_guidance(instructions):
         assert instructions.count(requirement) == 1
 
 
+def assert_search_speech_guidance(instructions, enabled):
+    for requirement in (
+        "do not include raw URLs, markdown links, or a Source/Sources section",
+        "Refer to sources by human-readable names only.",
+    ):
+        assert instructions.count(requirement) == int(enabled)
+    assert "renders structured citations separately" not in instructions
+
+
 @pytest.mark.parametrize("web_search", [False, True])
 @pytest.mark.parametrize(("entry_settings", "expected", "absent"), [
     (({}, {}), "You are a concise Home Assistant Assist conversation agent.", None),
@@ -102,8 +111,7 @@ async def test_outbound_clarification_guidance_preserves_ha_prompt(
         assert instructions.startswith(system + "\n\n")
         if absent is not None:
             assert absent not in instructions
-        assert ("do not include raw URLs" in instructions) is web_search
-        assert ("renders structured citations separately" in instructions) is web_search
+        assert_search_speech_guidance(instructions, web_search)
     assert (dict(clarification_entry.data), dict(clarification_entry.options)) == stored
     assert len(requests) == 2
 
@@ -149,7 +157,7 @@ async def test_native_ha_continuation_keeps_scripted_text_and_history(
 
 
 @pytest.mark.parametrize("web_search", [True])
-async def test_recovered_question_keeps_native_continuation_and_sources(
+async def test_recovered_question_keeps_native_continuation_without_source_card(
     hass, clarification_entry, backend,
 ):
     planned, requests = backend
@@ -165,19 +173,16 @@ async def test_recovered_question_keeps_native_continuation_and_sources(
     )
     assert result.response.speech["plain"]["speech"] == question
     assert result.continue_conversation is True
-    assert result.response.card["simple"] == {
-        "title": "Sources",
-        "content": "- Example Documentation — <https://example.com/docs>",
-    }
+    assert not result.response.card
     for path, payload in requests:
         if path.endswith("/responses"):
             assert_clarification_guidance(payload["instructions"])
-            assert "do not include raw URLs" in payload["instructions"]
+            assert_search_speech_guidance(payload["instructions"], True)
 
 
 @pytest.mark.parametrize("web_search", [False, True])
 async def test_clarification_then_native_action_preserves_guidance_through_retry_and_handoff(
-    hass, clarification_entry, backend,
+    hass, clarification_entry, backend, web_search,
 ):
     """A fixed script proves routing only, not that the model waits for clarification."""
     executed = []
@@ -226,6 +231,7 @@ async def test_clarification_then_native_action_preserves_guidance_through_retry
     assert len(model_requests) == 4
     for payload in model_requests:
         assert_clarification_guidance(payload["instructions"])
+        assert_search_speech_guidance(payload["instructions"], web_search)
     assert model_requests[0]["instructions"] == model_requests[1]["instructions"]
     assert model_requests[2]["instructions"] == model_requests[3]["instructions"]
     assert model_requests[2]["input"] == [

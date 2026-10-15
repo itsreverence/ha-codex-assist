@@ -30,8 +30,6 @@ from custom_components.codex_assist.ai_task import (
     _structured_output_format,
 )
 from custom_components.codex_assist.codex_client import (
-    CodexCitation,
-    CodexCitationDelta,
     CodexClient,
     CodexResponseItemDelta,
     CodexTextDelta,
@@ -387,45 +385,7 @@ async def test_conversation_replays_native_codex_output_on_next_turn(
     assert "'item_count': 2" in serialized_trace_text
 
 
-async def test_web_search_citations_are_displayable_but_not_spoken(
-    hass: HomeAssistant,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entry = await _setup_entry(hass)
-    hass.config_entries.async_update_entry(entry, options={"web_search": True})
-
-    async def fake_stream_turn(self: CodexClient, **kwargs: object):
-        tools = kwargs["tools"]
-        assert isinstance(tools, list)
-        assert {"type": "web_search"} in tools
-        yield CodexTextDelta("IANA maintains the reserved domains.")
-        yield CodexCitationDelta(
-            CodexCitation(
-                title="IANA Reserved Domains",
-                url="https://www.iana.org/help/example-domains",
-                start_index=0,
-                end_index=4,
-            )
-        )
-
-    monkeypatch.setattr(CodexClient, "stream_turn", fake_stream_turn)
-
-    result = await conversation.async_converse(
-        hass,
-        "Who maintains the reserved domains?",
-        None,
-        Context(),
-        agent_id="conversation.codex_assist",
-    )
-
-    assert result.response.speech["plain"]["speech"] == ("IANA maintains the reserved domains.")
-    assert result.response.card["simple"] == {
-        "title": "Sources",
-        "content": ("- IANA Reserved Domains — <https://www.iana.org/help/example-domains>"),
-    }
-
-
-async def test_multi_turn_web_search_sources_are_not_spoken_after_ha_tool_call(
+async def test_web_search_enabled_handoff_delivers_final_speech_without_source_card(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -459,14 +419,6 @@ async def test_multi_turn_web_search_sources_are_not_spoken_after_ha_tool_call(
         call_count += 1
         if call_count == 1:
             yield CodexTextDelta("I found the background information.")
-            yield CodexCitationDelta(
-                CodexCitation(
-                    title="Background source",
-                    url="https://example.com/background",
-                    start_index=0,
-                    end_index=4,
-                )
-            )
             yield CodexToolCallDelta(
                 CodexToolCall(
                     id="call-1",
@@ -476,14 +428,6 @@ async def test_multi_turn_web_search_sources_are_not_spoken_after_ha_tool_call(
             )
             return
         yield CodexTextDelta("The harmless tool completed successfully.")
-        yield CodexCitationDelta(
-            CodexCitation(
-                title="Final source",
-                url="https://example.com/final",
-                start_index=0,
-                end_index=4,
-            )
-        )
 
     monkeypatch.setattr(CodexClient, "stream_turn", fake_stream_turn)
 
@@ -499,13 +443,7 @@ async def test_multi_turn_web_search_sources_are_not_spoken_after_ha_tool_call(
     assert result.response.speech["plain"]["speech"] == (
         "The harmless tool completed successfully."
     )
-    assert result.response.card["simple"] == {
-        "title": "Sources",
-        "content": (
-            "- Background source — <https://example.com/background>\n"
-            "- Final source — <https://example.com/final>"
-        ),
-    }
+    assert not result.response.card
 
 
 async def test_diagnostics_redact_tokens_on_real_entry(hass: HomeAssistant) -> None:

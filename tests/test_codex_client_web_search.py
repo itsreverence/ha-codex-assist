@@ -5,11 +5,9 @@ import httpx
 import pytest
 
 from custom_components.codex_assist.codex_client import (
-    MAX_SEARCH_CITATIONS,
     MAX_SEARCH_OUTPUT_CHARS,
     MAX_SEARCH_ROUNDS,
     CodexAuthenticationError,
-    CodexCitationDelta,
     CodexClient,
     CodexRateLimitError,
     CodexResponseItemDelta,
@@ -211,18 +209,20 @@ async def test_stream_turn_runs_search_and_hides_search_round_from_caller():
     assert [delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)] == [
         *second_input[1:], _message("IANA maintains them.")
     ]
-    assert [
-        (delta.citation.title, delta.citation.url)
-        for delta in deltas
-        if isinstance(delta, CodexCitationDelta)
-    ] == [("IANA Reserved Domains", "https://www.iana.org/help/example-domains")]
+    assert [delta.text for delta in deltas if isinstance(delta, CodexTextDelta)] == [
+        "IANA maintains them."
+    ]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("search_first", [False, True])
-async def test_stream_turn_discards_search_round_text_and_annotations(search_first):
+async def test_stream_turn_keeps_search_round_text_and_annotations_private(search_first):
     search_call = _function_call("call-s1", "web_search", {"queries": ["example domains"]})
     preamble = _message("Let me look that up.")
+    preamble["content"][0]["annotations"] = [{
+        "type": "url_citation", "title": "Internal preamble citation",
+        "url": "https://example.org/preamble",
+    }]
     reasoning = {"type": "reasoning", "encrypted_content": "search-round"}
     text_events = (
         _event({"type": "response.output_text.delta", "delta": "Let me look that up."})
@@ -262,9 +262,6 @@ async def test_stream_turn_discards_search_round_text_and_annotations(search_fir
     ]
     assert not any(isinstance(delta, CodexToolCallDelta) for delta in deltas)
     assert [delta.text for delta in deltas if isinstance(delta, CodexTextDelta)] == [final_text]
-    assert [delta.citation.title for delta in deltas if isinstance(delta, CodexCitationDelta)] == [
-        "IANA Reserved Domains"
-    ]
     replay = http.stream_calls[1][2]["json"]["input"]
     assert replay[1:-1] == (
         [reasoning, search_call, preamble] if search_first else [reasoning, preamble, search_call]
@@ -353,10 +350,10 @@ async def test_stream_turn_drops_search_tool_after_round_limit(unexpected_search
 
 
 @pytest.mark.asyncio
-async def test_web_search_sends_open_urls_and_limits_output_and_citations():
+async def test_web_search_sends_open_urls_and_limits_output():
     results = [
         {"title": f"Page {n}", "url": f"https://example.com/{n}"}
-        for n in range(MAX_SEARCH_CITATIONS + 3)
+        for n in range(8)
     ]
     payload = {
         "output": "x" * (MAX_SEARCH_OUTPUT_CHARS + 50),
@@ -373,10 +370,7 @@ async def test_web_search_sends_open_urls_and_limits_output_and_citations():
         "search_query": [{"q": "a"}],
         "open": [{"ref_id": "https://example.com/0"}],
     }
-    assert len(result.text) == MAX_SEARCH_OUTPUT_CHARS
-    assert [citation.url for citation in result.citations] == [
-        result["url"] for result in results[:MAX_SEARCH_CITATIONS]
-    ]
+    assert result.text == "x" * MAX_SEARCH_OUTPUT_CHARS
 
 
 @pytest.mark.asyncio
@@ -389,7 +383,6 @@ async def test_web_search_rejects_malformed_success_payload(payload):
     result = await client.web_search("gpt-test", {"queries": ["a"]}, {})
     assert result.text == "Web search failed: invalid response output."
     assert "found nothing" not in result.text
-    assert result.citations == ()
 
 
 @pytest.mark.asyncio
@@ -403,7 +396,6 @@ async def test_web_search_accepts_valid_output_without_result_cards(output, resu
     client = CodexClient(http_client=http, access_token="token-1")
     result = await client.web_search("gpt-test", {"queries": ["a"]}, {})
     assert result.text == (output if output.strip() else "Web search found nothing.")
-    assert result.citations == ()
 
 
 @pytest.mark.asyncio
@@ -422,7 +414,6 @@ async def test_web_search_reports_failures_to_the_model():
     )
     failed = await client.web_search("gpt-test", {"queries": ["a"]}, {})
     assert failed.text == "Web search failed (HTTP 500): search backend down"
-    assert failed.citations == ()
     assert (await client.web_search("gpt-test", {"queries": ["a"]}, {})).text == (
         "Web search found nothing."
     )

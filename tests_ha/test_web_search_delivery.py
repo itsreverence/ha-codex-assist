@@ -141,7 +141,7 @@ async def test_search_final_answer_validation(hass, search_entry, backend, surfa
         speech = result.response.speech["plain"]["speech"]
         if ending == "recovered":
             assert speech == "Recovered answer."
-            assert result.response.card["simple"]["title"] == "Sources"
+            assert not result.response.card
         else:
             assert speech == "Sorry, I couldn't complete that."
             assert not result.response.card
@@ -159,7 +159,7 @@ async def test_search_final_answer_validation(hass, search_entry, backend, surfa
             )
 
 
-async def test_search_auth_retry_does_not_keep_failed_attempt_sources(hass, search_entry, backend):
+async def test_search_auth_retry_discards_failed_attempt_native_state(hass, search_entry, backend):
     planned, requests = backend
     model_round(planned, [call_event("search-1", "web_search", {"queries": ["synthetic"]}),
                           COMPLETED])
@@ -176,6 +176,9 @@ async def test_search_auth_retry_does_not_keep_failed_attempt_sources(hass, sear
     )
     assert result.response.speech["plain"]["speech"] == "Recovered without search."
     assert not result.response.card
+    assert requests[-1][1]["input"] == [
+        {"role": "user", "content": "Look up the documentation."},
+    ]
     assert [path for path, _ in requests].count("/oauth/token") == 1
 
 
@@ -206,16 +209,14 @@ async def test_search_delivers_only_final_text_through_real_ha(
             agent_id="conversation.codex_assist",
         )
         assert result.response.speech["plain"]["speech"] == "The verified final answer."
-        assert result.response.card["simple"] == {
-            "title": "Sources",
-            "content": "- Example Documentation — <https://example.com/docs>",
-        }
+        assert not result.response.card
         model_round(planned, text_events("A follow-up answer.") + [COMPLETED])
         followup = await conversation.async_converse(
             hass, "Summarize that.", result.conversation_id, Context(),
             agent_id="conversation.codex_assist",
         )
         assert followup.response.speech["plain"]["speech"] == "A follow-up answer."
+        assert not followup.response.card
         replay = requests[-1][1]["input"]
         assert replay == [
             *requests[-2][1]["input"],
@@ -246,7 +247,7 @@ async def test_search_delivers_only_final_text_through_real_ha(
 
 
 @pytest.mark.parametrize("replay_boundary", ["ha_handoff", "next_user", "failed_final"])
-async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
+async def test_search_then_ha_tool_preserves_native_tool_pair_and_evidence(
     hass: HomeAssistant, search_entry, backend, monkeypatch, replay_boundary, caplog, request,
 ):
     """Real HA executes a registered harmless tool, not a mocked chat-log stream."""
@@ -285,9 +286,15 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     search_call = call_event("search-1", "web_search", {"queries": ["synthetic"]})
     search_reasoning = {"type": "reasoning", "encrypted_content": "private-search-reasoning"}
     hidden_text = "An unverified search preamble."
+    hidden_message = message(hidden_text)
+    hidden_message["content"][0]["annotations"] = [{
+        "type": "url_citation", "title": "Private annotation marker",
+        "url": "https://example.com/native-annotation",
+    }]
     model_round(planned, [
         {"type": "response.output_item.done", "item": search_reasoning},
-        *text_events(hidden_text), search_call,
+        {"type": "response.output_text.delta", "delta": hidden_text},
+        {"type": "response.output_item.done", "item": hidden_message}, search_call,
         COMPLETED,
     ])
     fact = "Synthetic calibration constant: violet-otter-193."
@@ -319,7 +326,7 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
         assert len(requests) == 4
         return
     assert result.response.speech["plain"]["speech"] == final_text
-    assert url in result.response.card["simple"]["content"]
+    assert not result.response.card
     handoff = requests[-1][1]["input"]
     model_round(planned, text_events("A follow-up answer.") + [COMPLETED])
     followup = await conversation.async_converse(
@@ -327,6 +334,7 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
         agent_id="conversation.codex_assist",
     )
     assert followup.response.speech["plain"]["speech"] == "A follow-up answer."
+    assert not followup.response.card
     assert executed == ["reading-1"]
     assert len(requests) == 5
     replay = handoff if replay_boundary == "ha_handoff" else requests[-1][1]["input"]
@@ -334,7 +342,7 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     assert searched_output in replay, "Searched fact and URL must survive the owner replay boundary"
     assert replay[:7] == [
         {"role": "user", "content": "Search and get the test reading."},
-        search_reasoning, message(hidden_text), search_call["item"], searched_output,
+        search_reasoning, hidden_message, search_call["item"], searched_output,
         mixed_reasoning, skipped_call["item"],
     ]
     assert replay[7] == ha_call["item"]
@@ -359,7 +367,10 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     native_count = len(handoff) - 2  # User and HA result are outside native state.
     assert f"'item_count': {native_count}" in traces
     assert f"CodexNativeState(item_count={native_count})" in caplog.text
-    for private_text in (fact, hidden_text, "private-search-reasoning", "private-mixed-reasoning"):
+    for private_text in (
+        fact, url, hidden_text, "private-search-reasoning", "private-mixed-reasoning",
+        "Private annotation marker", "https://example.com/native-annotation",
+    ):
         assert private_text not in caplog.text
         assert private_text not in traces
         assert private_text not in str(public_events)
@@ -403,6 +414,7 @@ async def test_search_401_refreshes_once_through_real_owner(
             agent_id="conversation.codex_assist",
         )
         assert result.response.speech["plain"]["speech"] == "Recovered after refresh."
+        assert not result.response.card
     else:
         result = await ai_task.async_generate_data(
             hass, task_name="Search task", instructions="Look up the documentation.",

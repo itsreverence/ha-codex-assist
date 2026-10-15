@@ -76,9 +76,10 @@ synthetic HTTPX SSE streams. It checks exact suffixes, whitespace, item aliases,
 multiple text parts, repeat completions, and explicit failure when recovery
 would be ambiguous or reorder delivered text. The real-HA completion and search
 delivery cases also check completed-only answers, silent terminal responses,
-auth failures after recovered text, and Sources cards only on success. An auth
-retry must discard citations from the failed attempt. All backend responses in
-these tests are synthetic; passing them does not establish live Codex behavior.
+auth failures after recovered text, and no Sources card on success or failure.
+An auth retry must discard native state from the failed attempt. All backend
+responses in these tests are synthetic; passing them does not establish live
+Codex behavior.
 
 `tests_ha/test_conversation_errors.py` calls HA's public conversation API with
 synthetic HTTPX responses and registered native test tools. It checks fixed
@@ -90,10 +91,10 @@ Diagnostics distinguish backend failure, empty-answer, and incomplete-stream sit
 by integration filename and line number, without source text or absolute paths.
 Authentication failures without reauthentication use generic speech. Reauthentication
 keeps its short guidance, and quota speech makes no temporary-recovery promise.
-No error result may attach a Sources card. Existing search handoff coverage also
-checks this when an earlier
-round already supplied citations. The request assertions verify that conversation
-error guidance reaches the backend with custom prompts and either search setting.
+No conversation result may attach a Sources card. Existing search handoff coverage
+also checks this after an earlier search round. The request assertions verify
+that conversation error guidance reaches the backend with custom prompts and
+either search setting.
 
 These tests run in both HA contract environments. They do not prove model
 obedience, filter tool-result payloads, or establish framework-wide log or trace
@@ -177,11 +178,12 @@ paths that cannot start another internal search round.
 
 `tests_ha/test_web_search_delivery.py` exercises the real conversation and AI Task
 owners with backend HTTP substituted. It checks search followed by URL opening,
-final-only speech and task data, safe source cards, next-turn native replay,
+final-only speech and task data, absent source cards, next-turn native replay,
 HA tool handoff, and search-endpoint 401 refresh. The handoff and next-user-turn
 checks require a unique searched fact and URL in the outgoing model payload,
 without repeating either in the final answer. They also check complete search
-call/output pairs, preserved reasoning, a single HA execution, and private-state
+call/output pairs, preserved reasoning and raw provider annotations, a single
+HA execution, and private-state
 redaction in HA logs, subscriptions, and traces. These tests do not establish
 live endpoint acceptance or account/model compatibility.
 
@@ -211,20 +213,20 @@ with usable, nonempty normalized output. Errors, malformed output, and empty
 results fail the gate even if the model still answers; direct-stage successes
 cannot substitute for model-selected search success. Completion proves exercised
 transport paths, not semantic answer accuracy.
-The probe does not connect to HA or verify device effects, speech, source cards,
-or other UI behavior. Test those boundaries separately through the real owners.
+The probe does not connect to HA or verify device effects, speech, or UI behavior.
+Test those boundaries separately through the real owners.
 
-When the hosted-search payload, model defaults, citation handling, or backend contract changes:
+When the hosted-search payload, model defaults, search delivery, or backend contract changes:
 
 1. Run `uv run python scripts/probe_web_search_contract.py --model MODEL_ID --dry-run` and its tests.
    The probe checks the backend's built-in `web_search` tool. The integration does not use that
    tool (it runs search on `alpha/search`, see [ARCHITECTURE.md](ARCHITECTURE.md)), so the probe
    shows whether the built-in tool works again, not whether integration search works.
 2. In Home Assistant, enable web search and ask a current-information question that requires search.
-3. Check the spoken answer for raw URLs or a source block. Citation metadata in the
-   response does not prove a client renders links. The previously inspected stock
-   Assist browser ignored the Sources card; test any target client's rendering
-   separately rather than treating backend card presence as a UI pass.
+3. Check the spoken answer for raw URLs, markdown links, or a source block. Confirm
+   the response has no separate Sources card. Custom API consumers no longer receive
+   Sources metadata in `response.card`. Test speech and target-client behavior
+   separately from backend response data.
 4. Verify a long spoken answer completes without a new Codex Assist or audio error.
 5. If an integration-owned OAuth token is available, run the sanitized live probe:
 
@@ -270,9 +272,10 @@ Separate characterization cases check native continuation for final `?`, ASCII
 `;` (U+003B), and fullwidth `？`, retained conversation ID and history, and no continuation
 after ordinary, action, or cancellation acknowledgements. Ellipses, periods,
 trailing prose or quotes, and Arabic `؟` remain unchanged and do not continue.
-A completed-message-only question still reaches speech and retains the Sources
-card after search. A fixed clarification-then-`HassTurnOn` script checks zero calls
-before clarification and exactly one call to a synthetic light service afterward.
+A completed-message-only question still reaches speech and triggers native
+continuation after search, without a separate Sources card. A fixed
+clarification-then-`HassTurnOn` script checks zero calls before clarification and
+exactly one call to a synthetic light service afterward.
 The script never chooses a response based on the new instruction. This proves
 request construction and HA routing only, not model compliance or real device
 behavior. Run the file and the full suite in both HA contract environments.
@@ -296,8 +299,8 @@ instance with integration-owned authentication and complete these checks:
    action occurs and listening ends. Separately test the satellite stop control
    and the existing timeout without changing microphone or pipeline settings.
 6. Check an ordinary answer and a completed action for a false continuation flag
-   and normal idle behavior. Enable search and verify a clarification can preserve
-   validated Sources metadata without URLs or source text after the spoken question.
+   and normal idle behavior. Enable search and verify a clarification has no URLs
+   or source text after the spoken question and no separate Sources card.
 7. Test the languages used by the installation. HA's native check recognizes `?`,
    ASCII `;` (U+003B), and fullwidth `？`. Record other punctuation as a known limitation;
    do not repair output or force English to make the test pass.

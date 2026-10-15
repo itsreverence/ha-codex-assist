@@ -61,8 +61,7 @@ interrupted responses automatically.
 Completed responses must contain nonblank answer text or a Home Assistant tool
 handoff. Codex Assist recovers missing text from completed assistant messages
 when it can match that text safely to the stream. Ambiguous or conflicting text
-fails explicitly, including interleaved messages or text parts. Failed conversation
-responses do not include a Sources card.
+fails explicitly, including interleaved messages or text parts.
 
 ### Assist conversations
 
@@ -70,7 +69,7 @@ responses do not include a Sources card.
 - Streams replies while Codex is answering.
 - Reads and controls only the entities Home Assistant exposes to Assist.
 - Supports simple follow-up actions through Home Assistant's native Assist LLM API.
-- Can optionally search through Codex's standalone search endpoint. Search is off by default. The integration asks the model to omit raw URLs and source blocks from spoken responses, but this is not guaranteed. It includes validated source metadata in the response; the previously inspected stock Assist browser did not render that card.
+- Can optionally search through Codex's standalone search endpoint. Search is off by default. The integration asks the model to omit raw URLs and source blocks from spoken responses, but this is not guaranteed. It does not attach a separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`. The previously inspected stock Assist browser did not render it.
 
 Caught Codex request, credential, and tool-handling failures use fixed, short
 conversation responses:
@@ -110,7 +109,7 @@ for live verification.
 - Generates plain text or structured data from Home Assistant AI Task actions.
 - Accepts supported image attachments on AI Task surfaces.
 - Generates images with curated quality and size controls.
-- Disables hosted web search for schema-constrained tasks so citation text cannot corrupt structured output.
+- Disables hosted web search for schema-constrained tasks to preserve structured output.
 
 Image attachments are limited to four images, 10 MiB per image, and 20 MiB total.
 With nonblank instructions, a missing, unreadable, or oversized image fails

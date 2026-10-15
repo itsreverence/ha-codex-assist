@@ -13,8 +13,6 @@ import pytest
 
 from custom_components.codex_assist.codex_client import (
     CodexAuthenticationError,
-    CodexCitation,
-    CodexCitationDelta,
     CodexResponseItemDelta,
     CodexStreamDelta,
     CodexTextDelta,
@@ -89,42 +87,37 @@ def conversation_module(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", [None, "", " \n"])
-async def test_silent_completed_stream_rejects_native_state_and_citations(
+async def test_silent_completed_stream_rejects_native_state(
     conversation_module, text,
 ):
     async def stream():
-        yield CodexCitationDelta(CodexCitation("Example", "https://example.com"))
         if text is not None:
             yield CodexTextDelta(text)
         yield CodexResponseItemDelta({"type": "reasoning", "encrypted_content": "private"})
 
     delivered = []
-    citations = []
     with pytest.raises(RuntimeError, match="^Codex returned no answer text$"):
         async for item in conversation_module._codex_stream_to_assistant_deltas(
-            stream(), citation_sink=citations,
+            stream(),
         ):
             delivered.append(item)
     assert not any("native" in item for item in delivered)
-    assert citations == []
 
 
 @pytest.mark.asyncio
-async def test_failed_auth_attempt_discards_staged_citations(conversation_module):
-    original = CodexCitation("Kept", "https://example.com/kept")
-    citations = [original]
-
+async def test_failed_auth_attempt_discards_native_state_before_visible_output(conversation_module):
     async def stream():
-        yield CodexCitationDelta(CodexCitation("Discarded", "https://example.com/discarded"))
+        yield CodexResponseItemDelta({"type": "reasoning", "encrypted_content": "private"})
         raise CodexAuthenticationError("Synthetic rejection")
 
+    delivered = []
     with pytest.raises(CodexAuthenticationError) as raised:
-        async for _ in conversation_module._codex_stream_to_assistant_deltas(
-            stream(), citation_sink=citations,
+        async for item in conversation_module._codex_stream_to_assistant_deltas(
+            stream(),
         ):
-            pass
+            delivered.append(item)
     assert raised.value.retry_allowed
-    assert citations == [original]
+    assert delivered == []
 
 
 @pytest.mark.asyncio
@@ -255,80 +248,6 @@ def test_codex_tools_pass_home_country_to_web_search(conversation_module):
     ]
 
 
-@pytest.mark.asyncio
-async def test_codex_stream_captures_citations_without_streaming_urls(conversation_module):
-    async def stream():
-        yield CodexTextDelta("IANA maintains the reserved domains.")
-        citation = CodexCitation(
-            title="IANA [Reserved] Domains",
-            url="https://www.iana.org/help/example-domains",
-            start_index=0,
-            end_index=4,
-        )
-        yield CodexCitationDelta(citation)
-        yield CodexCitationDelta(citation)
-        yield CodexCitationDelta(
-            CodexCitation(
-                title="Unsafe",
-                url="javascript:alert(1)",
-                start_index=0,
-                end_index=4,
-            )
-        )
-
-    captured = []
-    deltas = [
-        delta
-        async for delta in conversation_module._codex_stream_to_assistant_deltas(
-            stream(),
-            citation_sink=captured,
-        )
-    ]
-
-    assert deltas == [
-        {"role": "assistant"},
-        {"content": "IANA maintains the reserved domains."},
-    ]
-    assert captured == [
-        CodexCitation(
-            title="IANA \\[Reserved\\] Domains",
-            url="https://www.iana.org/help/example-domains",
-            start_index=0,
-            end_index=4,
-        )
-    ]
-
-
-def test_citation_result_keeps_sources_in_card_without_changing_speech(conversation_module):
-    class Response:
-        def __init__(self):
-            self.speech = {"plain": {"speech": "IANA maintains the reserved domains."}}
-            self.card = {}
-
-        def async_set_card(self, title, content):
-            self.card["simple"] = {"title": title, "content": content}
-
-    result = type("Result", (), {"response": Response()})()
-    citations = [
-        CodexCitation(
-            title="IANA",
-            url="https://www.iana.org/help/example-domains",
-            start_index=0,
-            end_index=4,
-        )
-    ]
-
-    conversation_module._attach_citations_card(result, citations)
-
-    assert result.response.speech["plain"]["speech"] == (
-        "IANA maintains the reserved domains."
-    )
-    assert result.response.card["simple"] == {
-        "title": "Sources",
-        "content": "- IANA — <https://www.iana.org/help/example-domains>",
-    }
-
-
 def test_web_search_instructions_suppress_spoken_source_urls(conversation_module):
     chat_log = FakeChatLog([FakeContent(role="system", content="Be concise.")])
 
@@ -345,7 +264,10 @@ def test_web_search_instructions_suppress_spoken_source_urls(conversation_module
 
     assert instructions.startswith("Be concise.\n\n")
     assert "do not include raw URLs" in instructions
-    assert "renders structured citations separately" in instructions
+    assert "markdown links" in instructions
+    assert "Source/Sources section" in instructions
+    assert "human-readable names only" in instructions
+    assert "renders structured citations separately" not in instructions
 
 
 @pytest.mark.asyncio
@@ -950,7 +872,6 @@ async def test_native_transcript_survives_tool_round_and_final_synthesis(
     (None, False),
     (CodexTextDelta("Partial answer"), True),
     (CodexToolCallDelta(CodexToolCall("call-1", "HassTestReading", {})), True),
-    (CodexCitationDelta(CodexCitation("Example", "https://example.com")), False),
     (CodexResponseItemDelta({"type": "reasoning"}), False),
 ])
 async def test_auth_replay_is_disabled_after_visible_deltas(conversation_module, delta, visible):

@@ -30,7 +30,9 @@ This checklist is for maintainers.
    PY
    ```
 
-5. When hosted-search request or citation handling changed, complete the compatibility checks in [TESTING.md](TESTING.md).
+5. When hosted-search requests or search delivery change, complete the compatibility
+   checks in [TESTING.md](TESTING.md). Document changes to exported response fields
+   in the release notes, including their effect on API consumers.
 6. Run all checks in [TESTING.md](TESTING.md).
 7. Commit the scoped release change, open a pull request, and wait for every required check to pass.
 8. Merge through the protected `main` branch and verify the post-merge `main` checks before tagging.
