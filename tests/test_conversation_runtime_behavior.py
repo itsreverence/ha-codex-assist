@@ -194,7 +194,7 @@ async def test_handle_message_reports_friendly_usage_limit_without_status_code(
     assert result[1] is chat_log
     assert len(chat_log.added) == 1
     assert chat_log.added[0].content == (
-        "Codex Assist is temporarily unavailable. Please try again later."
+        "Codex Assist cannot process this request because of an account or usage limit."
     )
     assert "status 429" not in chat_log.added[0].content
     assert "Codex request failed" not in chat_log.added[0].content

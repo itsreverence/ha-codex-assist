@@ -363,7 +363,7 @@ async def test_recovered_answer_prevents_auth_replay(hass, task_entry, stream_ba
             hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
         )
         assert result.response.speech["plain"]["speech"] == (
-            "Codex Assist needs attention in Home Assistant."
+            "Sorry, I couldn't complete that."
         )
         assert not result.response.card
     else:
@@ -434,7 +434,7 @@ async def test_auth_retries_only_before_visible_output(
         )
         speech = result.response.speech["plain"]["speech"]
         if visible:
-            assert speech == "Codex Assist needs attention in Home Assistant."
+            assert speech == "Sorry, I couldn't complete that."
         else:
             assert speech == "A complete answer."
     elif visible:
@@ -505,7 +505,7 @@ async def test_native_tool_executes_only_after_completion(
     elif ending == "incomplete":
         assert speech == "Sorry, I couldn't complete that."
     else:
-        assert speech == "Codex Assist needs attention in Home Assistant."
+        assert speech == "Sorry, I couldn't complete that."
     assert requests == ["/backend-api/codex/responses"] * (2 if complete else 1)
 
 
@@ -524,7 +524,7 @@ async def test_stream_quota_delivers_friendly_error_without_refresh(
         )
         speech = result.response.speech["plain"]["speech"]
         assert speech == (
-            "Codex Assist is temporarily unavailable. Please try again later."
+            "Codex Assist cannot process this request because of an account or usage limit."
         )
     else:
         with pytest.raises(HomeAssistantError, match="Wait a while and try again") as caught:

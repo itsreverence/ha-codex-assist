@@ -4,6 +4,8 @@ import asyncio
 import base64
 import json
 import logging
+import re
+from pathlib import Path
 
 import httpx
 import pytest
@@ -15,10 +17,13 @@ from test_ai_task_delivery import task_entry as task_entry
 
 GENERIC = "Sorry, I couldn't complete that."
 AUTH = "Codex Assist needs attention in Home Assistant."
-QUOTA = "Codex Assist is temporarily unavailable. Please try again later."
+QUOTA = "Codex Assist cannot process this request because of an account or usage limit."
 MODEL_PATH = "/backend-api/codex/responses"
 TOKEN_PATH = "/oauth/token"
-MARKERS = ("synthetic-secret-body", "synthetic-secret-chain", "https://private.example.test")
+MARKERS = (
+    "synthetic-secret-body", "synthetic-secret-chain", "https://private.example.test",
+    "synthetic-private-path",
+)
 COMPLETED = {"type": "response.completed", "response": {"status": "completed"}}
 
 
@@ -35,13 +40,19 @@ def failure(code="server_error"):
 
 
 def chained(error_type):
-    try:
-        raise RuntimeError(MARKERS[1])
-    except RuntimeError as cause:
+    def raise_private():
         try:
+            raise RuntimeError(MARKERS[1])
+        except RuntimeError as cause:
             raise error_type(f"{MARKERS[0]} {MARKERS[2]}") from cause
-        except BaseException as err:
-            return err
+
+    raise_private.__code__ = raise_private.__code__.replace(
+        co_filename="/synthetic-private-path/external.py",
+    )
+    try:
+        raise_private()
+    except BaseException as err:
+        return err
 
 
 @pytest.fixture
@@ -89,9 +100,11 @@ async def assert_safe_delivery(hass, result, error_backend, caplog, expected):
     assert records, "Expected a conversation diagnostic"
     assert all(record.exc_info is None and record.stack_info is None for record in records)
     for record in records:
-        for field in ("stage=", "exception=", "retry=", "reauth="):
+        for field in ("stage=", "exception=", "retry=", "reauth=", "location="):
             assert field in record.getMessage()
+        assert re.search(r"location=[a-z_]+\.py:[1-9][0-9]*(?: |$)", record.getMessage())
     logs = "\n".join(record.getMessage() for record in records)
+    assert str(Path(__file__).parent.parent) not in logs
     for marker in MARKERS:
         assert marker not in history
         assert marker not in logs
@@ -179,9 +192,33 @@ async def test_auth_error_decisions_and_fixed_delivery(
         })
     expected = (
         "A recovered answer." if stage == "retry-success"
-        else GENERIC if stage.startswith("temporary") else AUTH
+        else AUTH if flows else GENERIC
     )
     await assert_safe_delivery(hass, result, error_backend, caplog, expected)
+
+
+async def test_runtime_failure_logs_distinguish_integration_sites(
+    hass, task_entry, error_backend, caplog,
+):
+    planned, requests = error_backend
+    locations = []
+    for reply in (failure(), sse(COMPLETED), sse()):
+        caplog.clear()
+        planned.append((MODEL_PATH, reply))
+        result = await converse(hass)
+        await assert_safe_delivery(hass, result, error_backend, caplog, GENERIC)
+        records = [record.getMessage() for record in caplog.records
+                   if record.name == "custom_components.codex_assist.conversation"]
+        assert len(records) == 1
+        assert "exception=RuntimeError" in records[0]
+        assert "stage=model_request" in records[0]
+        assert "retry=none reauth=none" in records[0]
+        locations.append(re.search(r"location=(\S+)", records[0]).group(1))
+    assert len(set(locations)) == 3
+    assert {location.split(":")[0] for location in locations} == {
+        "conversation.py", "codex_client.py",
+    }
+    assert [path for path, _ in requests] == [MODEL_PATH] * 6
 
 
 @pytest.fixture
@@ -235,6 +272,8 @@ async def test_native_tool_failure_or_failed_synthesis_never_replays_action(
     assert [path for path, _ in requests] == [MODEL_PATH] * (1 if error_type else 2)
     await assert_safe_delivery(hass, result, error_backend, caplog, GENERIC)
     assert executed == ["reading-1"]
+    if error_type:
+        assert "stage=request_preparation_or_tool_processing" in caplog.text
 
 
 async def test_conversation_cancellation_propagates(hass, task_entry, error_backend):
