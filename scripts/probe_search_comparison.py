@@ -304,17 +304,28 @@ def main() -> int:
     parser = SafeArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=model_identifier)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--first-arm", choices=("client", "builtin"), default="client")
+    parser.add_argument("--first-arm", choices=("client", "builtin"), default=None)
+    parser.add_argument("--builtin-followup-only", action="store_true")
     args = parser.parse_args()
+    if args.builtin_followup_only and args.first_arm is not None:
+        parser.error("The diagnostic mode has a fixed arm.")
+    first_arm = args.first_arm or "client"
     if args.dry_run:
         report = {
-            "model": args.model, "first_arm": args.first_arm, "status": "dry_run",
+            "model": args.model, "first_arm": first_arm, "status": "dry_run",
             "cases": [case.name for case in CASES], "live_request_sent": False,
             "max_arms": 6, "max_turns": 12, "max_http_requests": 36,
             "client_max_http_requests_per_arm": 10, "builtin_max_http_requests_per_arm": 2,
             "turn_seconds": TURN_SECONDS, "arm_seconds": ARM_SECONDS,
             "total_seconds": TOTAL_SECONDS,
         }
+        if args.builtin_followup_only:
+            report = {
+                "mode": "builtin_followup_only", "model": args.model, "status": "dry_run",
+                "cases": [CASES[0].name], "live_request_sent": False,
+                "max_arms": 1, "max_turns": 2, "max_http_requests": 2,
+                "turn_seconds": TURN_SECONDS, "total_seconds": ARM_SECONDS,
+            }
         code = 0
     else:
         token = os.environ.get("CODEX_ASSIST_ACCESS_TOKEN", "").strip()
@@ -324,7 +335,12 @@ def main() -> int:
             }
             code = 2
         else:
-            report, code = asyncio.run(compare(args.model, token, args.first_arm))
+            if args.builtin_followup_only:
+                from scripts.search_stream_diagnostic import diagnose
+
+                report, code = asyncio.run(diagnose(args.model, token))
+            else:
+                report, code = asyncio.run(compare(args.model, token, first_arm))
     print(json.dumps(report, sort_keys=True))
     return code
 

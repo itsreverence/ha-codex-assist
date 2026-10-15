@@ -270,6 +270,53 @@ requests and their small timing differences cannot establish a performance or
 quality ranking. Synthetic tests exercise current-client routing, native replay,
 failure gates, redaction, cancellation, and request bounds without live calls.
 
+For a narrower diagnosis of built-in search followed by native replay, run:
+
+```bash
+uv run python scripts/probe_search_comparison.py --model MODEL_ID --builtin-followup-only --dry-run
+```
+
+This mode uses only the fixed IANA maintainer case and rejects an explicit
+`--first-arm`. It allows at most two HTTP requests and two turns, with 60 seconds
+per turn and 120 seconds overall. A request hook blocks a third send. There are
+no retries. The existing initial completion, answer, native-item, and search
+gates must pass before the tools-disabled follow-up replays the complete native
+history in its original order. Payloads and history are not repaired or changed.
+
+The separate diagnostic report records each turn's stage, HTTP status class,
+exact HTTP 200 success, decoded-line count, allowlisted event counts, terminal
+kind, and natural EOF. Closed outcomes distinguish explicit error, failed, and
+incomplete events from empty EOF, undecoded EOF, EOF after events, HTTP rejection,
+stream misuse, transport failure, timeout, typed authentication or usage errors,
+known probe errors, unattributed runtime errors, and unexpected errors. Exception
+messages are never parsed. An unattributed runtime error does not establish
+whether the probe, HTTPX, or backend caused the failure. Closure and cancellation
+do not count as natural EOF, and completion does not wait for EOF.
+
+Replay evidence comes from the actual outgoing JSON. It contains closed item-type
+counts, the first 32 item types and an omitted count, presence counts for fixed
+fields, encrypted-reasoning presence and nonempty-string counts, and the actual
+encrypted-reasoning include flag, tool count, and store flag. Reports retain no
+event bodies, text, identifiers, field values, unknown key names, headers, URLs,
+queries, backend codes, exception objects, or tracebacks. The validated CLI model
+identifier remains visible. Exit codes remain 0 for passing gates, 1 for evaluated
+failure, 2 for missing credentials or typed authentication or usage blocks, and
+3 for incomplete or unclassified results. Overall timeout exits 3.
+
+The private observer temporarily wraps the production SSE iterator and delegates
+all parsing to it. It yields the same event objects and observes only responses
+owned by the diagnostic HTTP client. An exclusive nonblocking scope rejects
+overlapping diagnostics before another client or request. Cleanup closes owned
+iterators and restores the original iterator on success, failure, timeout, or
+cancellation. The normal comparison installs no observer and keeps its report
+schema. `tests/test_search_stream_diagnostic.py` verifies these contracts offline
+through the real client, HTTPX transports, and CLI subprocesses. These checks do
+not establish live backend acceptance or the cause of a previous failed run.
+This script-only change needs no integration install or Home Assistant restart.
+A new live run requires a separate handoff naming the exact reviewed commit and
+the integration-owned credential environment. Offline verification alone does
+not authorize that run.
+
 When the hosted-search payload, model defaults, citation handling, or backend contract changes:
 
 1. Run `uv run python scripts/probe_web_search_contract.py --model MODEL_ID --dry-run` and its tests.
