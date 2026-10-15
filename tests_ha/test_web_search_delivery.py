@@ -290,9 +290,11 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
-@pytest.mark.parametrize("after_search", [False, True])
+@pytest.mark.parametrize("after_search,rejection", [
+    (False, "http"), (True, "http"), (True, "flat-error"), (True, "nested-error"),
+])
 async def test_search_401_refreshes_once_through_real_owner(
-    hass: HomeAssistant, search_entry, backend, surface, after_search,
+    hass: HomeAssistant, search_entry, backend, surface, after_search, rejection,
 ):
     planned, requests = backend
     first = [
@@ -305,7 +307,12 @@ async def test_search_401_refreshes_once_through_real_owner(
     rejected_path = (
         "/backend-api/codex/responses" if after_search else "/backend-api/codex/alpha/search"
     )
-    planned.append((rejected_path, 401, {"detail": "expired access token"}))
+    if rejection == "http":
+        planned.append((rejected_path, 401, {"detail": "expired access token"}))
+    else:
+        detail = {"code": "token_invalidated", "message": "Synthetic auth rejection"}
+        model_round(planned, [{"type": "error", **detail} if rejection == "flat-error" else
+                              {"type": "error", "error": detail}])
     planned.append(("/oauth/token", 200, {
         "access_token": "test-new-access", "refresh_token": "test-new-refresh",
     }))

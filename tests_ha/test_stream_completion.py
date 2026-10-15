@@ -21,7 +21,12 @@ AUTH_FAILURE = {
 
 
 @pytest.fixture
-async def stream_backend(monkeypatch):
+def retry_events():
+    return [{"type": "response.output_text.delta", "delta": "A complete answer."}, COMPLETED]
+
+
+@pytest.fixture
+async def stream_backend(monkeypatch, retry_events):
     events = []
     requests = []
 
@@ -32,9 +37,7 @@ async def stream_backend(monkeypatch):
                 "access_token": "test-refreshed", "refresh_token": "test-rotated",
             })
         assert request.url.path == "/backend-api/codex/responses"
-        payload = events if len(requests) == 1 else [
-            {"type": "response.output_text.delta", "delta": "A complete answer."}, COMPLETED,
-        ]
+        payload = events if len(requests) == 1 else retry_events
         return httpx.Response(200, content="".join(
             f"data: {json.dumps(event)}\n\n" for event in payload
         ))
@@ -88,11 +91,18 @@ async def test_incomplete_image_is_not_persisted(
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
 @pytest.mark.parametrize("visible", [False, True])
+@pytest.mark.parametrize("failure", [
+    AUTH_FAILURE,
+    {"type": "error", "code": "token_invalidated", "message": "Synthetic auth rejection"},
+    {"type": "error", "error": {
+        "code": "token_invalidated", "detail": "Synthetic auth rejection",
+    }},
+], ids=["response-failed", "flat-error", "nested-error"])
 async def test_auth_retries_only_before_visible_output(
-    hass, task_entry, stream_backend, surface, visible,
+    hass, task_entry, stream_backend, surface, visible, failure,
 ):
     events, requests = stream_backend
-    events.extend([TEXT, AUTH_FAILURE] if visible else [AUTH_FAILURE])
+    events.extend([TEXT, failure] if visible else [failure])
     if surface == "conversation":
         result = await conversation.async_converse(
             hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
@@ -119,9 +129,9 @@ async def test_auth_retries_only_before_visible_output(
     ])
 
 
-@pytest.mark.parametrize("complete", [False, True])
+@pytest.mark.parametrize("ending", ["complete", "incomplete", "flat-error", "nested-error"])
 async def test_native_tool_executes_only_after_completion(
-    hass, task_entry, stream_backend, monkeypatch, complete,
+    hass, task_entry, stream_backend, monkeypatch, ending,
 ):
     executed = []
 
@@ -152,8 +162,14 @@ async def test_native_tool_executes_only_after_completion(
         "type": "function_call", "call_id": "reading-1", "name": "HassTestReading",
         "arguments": "{}", "status": "completed",
     }})
+    complete = ending == "complete"
     if complete:
         events.append(COMPLETED)
+    elif ending.endswith("error"):
+        events.insert(0, TEXT)
+        detail = {"code": "token_invalidated", "message": "Synthetic auth rejection"}
+        events.append({"type": "error", **detail} if ending == "flat-error" else
+                      {"type": "error", "error": detail})
     result = await conversation.async_converse(
         hass, "Get the test reading.", None, Context(), agent_id="conversation.codex_assist",
     )
@@ -161,6 +177,93 @@ async def test_native_tool_executes_only_after_completion(
     speech = result.response.speech["plain"]["speech"]
     if complete:
         assert speech == "A complete answer."
-    else:
+    elif ending == "incomplete":
         assert "before response.completed" in speech
+    else:
+        assert "authentication failed" in speech
     assert requests == ["/backend-api/codex/responses"] * (2 if complete else 1)
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task", "image"])
+@pytest.mark.parametrize("nested", [False, True])
+async def test_stream_quota_delivers_friendly_error_without_refresh(
+    hass, task_entry, stream_backend, surface, nested,
+):
+    events, requests = stream_backend
+    detail = {"code": "quota_exceeded", "message": "Synthetic quota rejection"}
+    events.append({"type": "error", "error": detail} if nested else
+                  {"type": "error", **detail})
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
+        )
+        speech = result.response.speech["plain"]["speech"]
+        assert speech == (
+            "Codex Assist has hit your ChatGPT/Codex usage limit or is being "
+            "rate limited. Wait a while and try again, or check your plan's usage limits."
+        )
+    else:
+        with pytest.raises(HomeAssistantError, match="Wait a while and try again") as caught:
+            if surface == "image":
+                await hass.services.async_call("ai_task", "generate_image", {
+                    "task_name": "Test", "instructions": "Draw a test image.",
+                    "entity_id": "ai_task.codex_assist_ai_task",
+                }, blocking=True, return_response=True)
+            else:
+                await ai_task.async_generate_data(
+                    hass, task_name="Test", instructions="Give a test answer.",
+                    entity_id="ai_task.codex_assist_ai_task",
+                )
+        assert "Synthetic quota rejection" not in str(caught.value)
+    assert requests == ["/backend-api/codex/responses"]
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task", "image"])
+@pytest.mark.parametrize("nested", [False, True])
+async def test_repeated_stream_auth_failure_refreshes_only_once(
+    hass, task_entry, stream_backend, retry_events, surface, nested,
+):
+    events, requests = stream_backend
+    detail = {"code": "token_invalidated", "message": "Synthetic auth rejection"}
+    failure = {"type": "error", "error": detail} if nested else {"type": "error", **detail}
+    events.append(failure)
+    retry_events[:] = [failure]
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
+        )
+        assert "sign in again" in result.response.speech["plain"]["speech"]
+    else:
+        with pytest.raises(HomeAssistantError, match="sign in again"):
+            await hass.services.async_call("ai_task", "generate_image" if surface == "image"
+                                           else "generate_data", {
+                "task_name": "Test", "instructions": "Give a test result.",
+                "entity_id": "ai_task.codex_assist_ai_task",
+            }, blocking=True, return_response=True)
+    assert requests == [
+        "/backend-api/codex/responses", "/oauth/token", "/backend-api/codex/responses",
+    ]
+
+
+@pytest.mark.parametrize("nested", [False, True])
+async def test_image_stream_auth_refresh_delivers_image(
+    hass, task_entry, stream_backend, retry_events, tmp_path, nested,
+):
+    events, requests = stream_backend
+    detail = {"code": "token_invalidated", "message": "Synthetic auth rejection"}
+    events.append({"type": "error", "error": detail} if nested else
+                  {"type": "error", **detail})
+    retry_events[:] = [{"type": "response.output_item.done", "item": {
+        "type": "image_generation_call", "result": base64.b64encode(PNG_BYTES).decode(),
+    }}, COMPLETED]
+    result = await hass.services.async_call("ai_task", "generate_image", {
+        "task_name": "Test", "instructions": "Draw a test image.",
+        "entity_id": "ai_task.codex_assist_ai_task",
+    }, blocking=True, return_response=True)
+    assert result["mime_type"] == "image/png"
+    images = list((tmp_path / "ai_task" / "image").glob("*"))
+    assert len(images) == 1
+    assert await hass.async_add_executor_job(images[0].read_bytes) == PNG_BYTES
+    assert requests == [
+        "/backend-api/codex/responses", "/oauth/token", "/backend-api/codex/responses",
+    ]
