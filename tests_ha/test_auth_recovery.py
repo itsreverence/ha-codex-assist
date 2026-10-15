@@ -207,7 +207,7 @@ async def test_public_request_recovers_after_temporary_refresh_failure(
         assert "private-auth-marker" not in "".join(traceback.format_exception(caught.value))
     else:
         failure_text = await call()
-        assert "Codex Assist failed" in failure_text
+        assert failure_text == "Sorry, I couldn't complete that."
         assert "private-auth-marker" not in failure_text
     assert dict(entry.data) == original
     assert "private-auth-marker" not in caplog.text

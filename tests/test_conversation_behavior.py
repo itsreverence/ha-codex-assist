@@ -9,7 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import httpx
 import pytest
 
 from custom_components.codex_assist.codex_client import (
@@ -86,15 +85,6 @@ def conversation_module(monkeypatch):
     install_homeassistant_fakes(monkeypatch)
     module = importlib.import_module("custom_components.codex_assist.conversation")
     return importlib.reload(module)
-
-
-def test_request_failure_text_names_blank_transport_error(conversation_module):
-    assert conversation_module._request_failure_text(httpx.ReadTimeout("")) == (
-        "Codex Assist failed: ReadTimeout"
-    )
-    assert conversation_module._request_failure_text(RuntimeError("backend failed")) == (
-        "Codex Assist failed: backend failed"
-    )
 
 
 @pytest.mark.asyncio
@@ -342,12 +332,11 @@ def test_citation_result_keeps_sources_in_card_without_changing_speech(conversat
 def test_web_search_instructions_suppress_spoken_source_urls(conversation_module):
     chat_log = FakeChatLog([FakeContent(role="system", content="Be concise.")])
 
-    assert (
-        conversation_module._instructions_for_turn(
-            chat_log, "fallback", web_search=False
-        )
-        == "Be concise."
+    plain_instructions = conversation_module._instructions_for_turn(
+        chat_log, "fallback", web_search=False
     )
+    assert plain_instructions.startswith("Be concise.")
+    assert "do not include raw URLs" not in plain_instructions
     instructions = conversation_module._instructions_for_turn(
         chat_log, "fallback", web_search=True
     )

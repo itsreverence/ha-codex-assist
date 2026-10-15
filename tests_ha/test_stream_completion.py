@@ -98,7 +98,7 @@ async def test_late_index_alias_rejects_reordered_answer(
             hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
         )
         speech = result.response.speech["plain"]["speech"]
-        assert "Codex returned inconsistent answer text" in speech
+        assert speech == "Sorry, I couldn't complete that."
         assert not result.response.card
     else:
         with pytest.raises(HomeAssistantError, match="Codex returned inconsistent answer text"):
@@ -216,7 +216,7 @@ async def test_delivered_order_controls_success_and_native_state(
         )
         speech = result.response.speech["plain"]["speech"]
         if expected is None:
-            assert "Codex returned inconsistent answer text" in speech
+            assert speech == "Sorry, I couldn't complete that."
         else:
             assert speech == expected
         assert not result.response.card
@@ -304,7 +304,7 @@ async def test_anonymous_delta_controls_native_commit_and_sources(
         )
         speech = result.response.speech["plain"]["speech"]
         if expected is None:
-            assert "Codex returned inconsistent answer text" in speech
+            assert speech == "Sorry, I couldn't complete that."
             assert not result.response.card
         else:
             assert speech == expected
@@ -343,7 +343,7 @@ async def test_silent_completed_response_is_failure(
         result = await conversation.async_converse(
             hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
         )
-        assert "Codex returned no answer text" in result.response.speech["plain"]["speech"]
+        assert result.response.speech["plain"]["speech"] == "Sorry, I couldn't complete that."
         assert not result.response.card
     else:
         with pytest.raises(HomeAssistantError, match="Codex returned no answer text"):
@@ -362,7 +362,9 @@ async def test_recovered_answer_prevents_auth_replay(hass, task_entry, stream_ba
         result = await conversation.async_converse(
             hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
         )
-        assert "authentication failed" in result.response.speech["plain"]["speech"]
+        assert result.response.speech["plain"]["speech"] == (
+            "Codex Assist needs attention in Home Assistant."
+        )
         assert not result.response.card
     else:
         with pytest.raises(HomeAssistantError, match="authentication failed"):
@@ -381,7 +383,7 @@ async def test_incomplete_text_is_reported_as_failure(hass, task_entry, stream_b
         result = await conversation.async_converse(
             hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
         )
-        assert "before response.completed" in result.response.speech["plain"]["speech"]
+        assert result.response.speech["plain"]["speech"] == "Sorry, I couldn't complete that."
     else:
         with pytest.raises(HomeAssistantError, match="before response.completed"):
             await ai_task.async_generate_data(
@@ -432,7 +434,7 @@ async def test_auth_retries_only_before_visible_output(
         )
         speech = result.response.speech["plain"]["speech"]
         if visible:
-            assert "authentication failed" in speech
+            assert speech == "Codex Assist needs attention in Home Assistant."
         else:
             assert speech == "A complete answer."
     elif visible:
@@ -501,9 +503,9 @@ async def test_native_tool_executes_only_after_completion(
     if complete:
         assert speech == "A complete answer."
     elif ending == "incomplete":
-        assert "before response.completed" in speech
+        assert speech == "Sorry, I couldn't complete that."
     else:
-        assert "authentication failed" in speech
+        assert speech == "Codex Assist needs attention in Home Assistant."
     assert requests == ["/backend-api/codex/responses"] * (2 if complete else 1)
 
 
@@ -522,8 +524,7 @@ async def test_stream_quota_delivers_friendly_error_without_refresh(
         )
         speech = result.response.speech["plain"]["speech"]
         assert speech == (
-            "Codex Assist has hit your ChatGPT/Codex usage limit or is being "
-            "rate limited. Wait a while and try again, or check your plan's usage limits."
+            "Codex Assist is temporarily unavailable. Please try again later."
         )
     else:
         with pytest.raises(HomeAssistantError, match="Wait a while and try again") as caught:
@@ -555,7 +556,9 @@ async def test_repeated_stream_auth_failure_refreshes_only_once(
         result = await conversation.async_converse(
             hass, "Give a test answer.", None, Context(), agent_id="conversation.codex_assist",
         )
-        assert "sign in again" in result.response.speech["plain"]["speech"]
+        assert result.response.speech["plain"]["speech"] == (
+            "Codex Assist needs attention in Home Assistant."
+        )
     else:
         with pytest.raises(HomeAssistantError, match="sign in again"):
             await hass.services.async_call("ai_task", "generate_image" if surface == "image"
