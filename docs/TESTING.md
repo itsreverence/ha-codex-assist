@@ -246,8 +246,8 @@ clarification guidance accompanies default, custom, options, template, and extra
 prompts without mutating stored prompts or accumulating across turns. They also
 check search guidance, auth retries, native tool handoffs, and AI Task exclusion.
 
-Separate characterization cases check native continuation for final `?`, Greek
-`;`, and fullwidth `？`, retained conversation ID and history, and no continuation
+Separate characterization cases check native continuation for final `?`, ASCII
+`;` (U+003B), and fullwidth `？`, retained conversation ID and history, and no continuation
 after ordinary, action, or cancellation acknowledgements. Ellipses, periods,
 trailing prose or quotes, and Arabic `؟` remain unchanged and do not continue.
 A completed-message-only question still reaches speech and retains the Sources
@@ -279,7 +279,7 @@ instance with integration-owned authentication and complete these checks:
    and normal idle behavior. Enable search and verify a clarification can preserve
    validated Sources metadata without URLs or source text after the spoken question.
 7. Test the languages used by the installation. HA's native check recognizes `?`,
-   Greek `;`, and fullwidth `？`. Record other punctuation as a known limitation;
+   ASCII `;` (U+003B), and fullwidth `？`. Record other punctuation as a known limitation;
    do not repair output or force English to make the test pass.
 
 Report observed failures as well as successes. Do not claim live model compliance,

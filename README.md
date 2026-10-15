@@ -79,7 +79,7 @@ questions after answers, completed actions, or cancellation. This internal guida
 preserves your saved prompt and applies only to conversations, not AI Task.
 
 Home Assistant decides whether to continue from the final reply. The tested HA
-versions recognize `?`, Greek `;`, and fullwidth `？`. Other question punctuation,
+versions recognize `?`, ASCII `;` (U+003B), and fullwidth `？`. Other question punctuation,
 such as Arabic `؟`, does not trigger that native check. Codex Assist does not rewrite
 the reply or force English. Model compliance and satellite listening are not
 guaranteed. See the [clarification follow-up checks](docs/TESTING.md#clarification-follow-ups)

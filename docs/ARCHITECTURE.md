@@ -48,7 +48,7 @@ flowchart LR
 
 `_instructions_for_turn` appends conversation-only clarification guidance after
 Home Assistant assembles the configured prompt, Assist LLM API context, template
-values, and extra system prompt. Optional citation guidance follows it. The model
+values, and extra system prompt. Optional citation guidance is included alongside it. The model
 is asked to resolve ambiguous actions or targets before execution and to place one
 concise, direct clarification question last, with language-appropriate question
 punctuation and nothing after it. Ordinary answers, completed actions, and
@@ -61,7 +61,7 @@ is a model instruction, not an execution guard.
 
 `conversation.async_get_result_from_chat_log` still supplies the result and
 continuation flag. In the tested HA versions, the final assistant message triggers
-continuation when its stripped text ends in `?`, Greek `;`, or fullwidth `？`.
+continuation when its stripped text ends in `?`, ASCII `;` (U+003B), or fullwidth `？`.
 Other punctuation, including Arabic `؟`, does not match. The integration preserves
 the model's text and language, conversation ID, and history. It does not override
 continuation flags, microphone settings, timeouts, or cancellation behavior.
