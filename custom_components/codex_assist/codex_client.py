@@ -178,11 +178,12 @@ class _ResponseTextLedger:
             message.item_id = item_id
             self.by_id[item_id] = message
         if index is not None:
-            if message.output_index is not None and message.output_index != index:
+            if message.output_index is None:
+                message.output_index = index
+                self.by_index[index] = message
+                self._validate_order()
+            elif message.output_index != index:
                 raise RuntimeError(_TEXT_CONFLICT)
-            message.output_index = index
-            self.by_index[index] = message
-            self._validate_order()
         for key in ("role", "phase"):
             if (value := item.get(key)) is not None:
                 previous = getattr(message, key)
@@ -205,10 +206,14 @@ class _ResponseTextLedger:
                 content_indices[message] = index
 
     def _record(self, message: _TextMessage, index: int | None, text: str) -> None:
-        message.parts[index] = message.parts.get(index, "") + text
         if text and (not self.emitted or self.emitted[-1] != (message, index)):
+            if message.parts and (
+                self.emitted[-1][0] is not message or index in message.parts
+            ):
+                raise RuntimeError(_TEXT_CONFLICT)
             self.emitted.append((message, index))
             self._validate_order()
+        message.parts[index] = message.parts.get(index, "") + text
 
     def _bind_part(self, message: _TextMessage, index: int) -> None:
         if None not in message.parts:
@@ -290,8 +295,6 @@ class _ResponseTextLedger:
             suffix = text[len(delivered):]
             if not suffix:
                 continue
-            if delivered and self.emitted[-1] != (message, index):
-                raise RuntimeError(_TEXT_CONFLICT)
             for other, other_index in self.emitted:
                 if other is message:
                     later = other_index is None or other_index > index

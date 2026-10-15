@@ -65,8 +65,11 @@ on conflicting identities, divergent text, or insertion before text already
 delivered. Anonymous text can be reconciled only in a single-message,
 single-part response. Repeated identified completions do not repeat speech.
 The ledger retains transitions between delivered text parts, coalescing only
-adjacent chunks of the same part. Known message and content ordering is checked
-on delivery and alias binding, even when completion supplies no missing suffix.
+adjacent chunks of the same part. Once delivery leaves a message or content part,
+that message or part cannot resume, even when output indices are absent. The
+existing parts dictionary identifies prior delivery, so transition history is
+bounded by distinct delivered parts. Known numeric ordering is checked on new
+transitions and alias binding, even when completion supplies no missing suffix.
 The ledger does not recover from `response.completed` snapshots. Recovered text
 passes through the existing search-round buffer and still requires response
 completion.

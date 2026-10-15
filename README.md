@@ -61,7 +61,8 @@ interrupted responses automatically.
 Completed responses must contain nonblank answer text or a Home Assistant tool
 handoff. Codex Assist recovers missing text from completed assistant messages
 when it can match that text safely to the stream. Ambiguous or conflicting text
-fails explicitly. Failed conversation responses do not include a Sources card.
+fails explicitly, including interleaved messages or text parts. Failed conversation
+responses do not include a Sources card.
 
 ### Assist conversations
 
