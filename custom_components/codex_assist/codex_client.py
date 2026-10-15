@@ -905,35 +905,42 @@ def _event_error_detail(event: dict[str, Any]) -> str:
 def _stream_event_exception(event: dict[str, Any]) -> RuntimeError | None:
     event_type = event.get("type")
     if event_type == "error":
-        return RuntimeError(_event_error_detail(event))
-    if event_type == "response.incomplete":
+        error_value = event.get("error")
+        code_value = (error_value if isinstance(error_value, dict) else event).get("code")
+        error = CodexResponseError(
+            _event_error_detail(event),
+            code_value if isinstance(code_value, str) else None,
+        )
+    elif event_type == "response.incomplete":
         response = event.get("response")
         details = response.get("incomplete_details") if isinstance(response, dict) else None
         reason = details.get("reason") if isinstance(details, dict) else None
         reason_text = reason if isinstance(reason, str) and reason else "unknown reason"
         return RuntimeError(f"Codex response incomplete: {reason_text}")
-    if event_type != "response.failed":
-        return None
-
-    response = event.get("response")
-    error_value = response.get("error") if isinstance(response, dict) else None
-    if isinstance(error_value, dict):
-        code_value = error_value.get("code")
-        message_value = error_value.get("message") or error_value.get("detail") or code_value
-        error = CodexResponseError(
-            message_value if isinstance(message_value, str) else "unknown error",
-            code_value if isinstance(code_value, str) else None,
-        )
-    elif isinstance(error_value, str):
-        error = CodexResponseError(error_value)
+    elif event_type == "response.failed":
+        response = event.get("response")
+        error_value = response.get("error") if isinstance(response, dict) else None
+        if isinstance(error_value, dict):
+            code_value = error_value.get("code")
+            message_value = error_value.get("message") or error_value.get("detail") or code_value
+            error = CodexResponseError(
+                message_value if isinstance(message_value, str) else "unknown error",
+                code_value if isinstance(code_value, str) else None,
+            )
+        elif isinstance(error_value, str):
+            error = CodexResponseError(error_value)
+        else:
+            error = CodexResponseError("response.failed event received")
     else:
-        error = CodexResponseError("response.failed event received")
+        return None
 
     if error.code == "token_invalidated":
         return CodexAuthenticationError(f"Codex authentication failed: {error.detail}")
     if _is_rate_limit_response(200, error):
         return CodexRateLimitError(f"Codex usage limit or rate limit reached: {error.detail}")
-    return RuntimeError(f"Codex stream failed: {error.detail}")
+    return RuntimeError(
+        error.detail if event_type == "error" else f"Codex stream failed: {error.detail}"
+    )
 
 
 def extract_output_text(payload: dict[str, Any]) -> str:
