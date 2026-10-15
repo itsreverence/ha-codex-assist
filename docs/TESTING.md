@@ -293,14 +293,32 @@ messages are never parsed. An unattributed runtime error does not establish
 whether the probe, HTTPX, or backend caused the failure. Closure and cancellation
 do not count as natural EOF, and completion does not wait for EOF.
 
+Each trace also has `structured_errors`, null unless an `error` or
+`response.failed` event was observed. Its bounded list keeps separate `source`
+labels for top-level `event` fields, nested `event_error` fields, and
+`response_error` fields. A top-level error can retain both identities, without
+choosing one over the other. Each identity contains only `source`, `code`, `type`,
+and `param`. The envelope `type: error` never becomes an identity type.
+Code and type labels use a literal allowlist for authentication, usage limits,
+request validation, and server errors in `scripts/search_stream_diagnostic.py`.
+These are reported labels, not confirmed causes or a promised backend vocabulary.
+Absent fields become `missing`; null, non-string, and unknown fields become
+`other`. Missing or malformed error objects report `missing` for each field.
+Param labels allow only `input`, `tools`, `model`, `store`, `previous_response_id`,
+`include`, and `reasoning`. Paths and all other values become `other`.
+An unknown param with a missing code does not establish a history error.
+The observer never reads messages, details, or other free-form fields to classify
+errors. These labels do not change gates, exit codes, deadlines, or request limits.
+
 Replay evidence comes from the actual outgoing JSON. It contains closed item-type
 counts, the first 32 item types and an omitted count, presence counts for fixed
 fields, encrypted-reasoning presence and nonempty-string counts, and the actual
 encrypted-reasoning include flag, tool count, and store flag. Reports retain no
-event bodies, text, identifiers, field values, unknown key names, headers, URLs,
-queries, backend codes, exception objects, or tracebacks. The validated CLI model
-identifier remains visible. Exit codes remain 0 for passing gates, 1 for evaluated
-failure, 2 for missing credentials or typed authentication or usage blocks, and
+event bodies, text, identifiers, unallowlisted field values, unknown key names,
+headers, URLs, queries, unallowlisted backend codes, exception objects, or
+tracebacks. The validated CLI model identifier remains visible. Exit codes remain
+0 for passing gates, 1 for evaluated failure, 2 for missing credentials or typed
+authentication or usage blocks, and
 3 for incomplete or unclassified results. Overall timeout exits 3.
 
 The private observer temporarily wraps the production SSE iterator and delegates

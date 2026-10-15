@@ -5,6 +5,7 @@ import json
 from contextlib import aclosing
 from dataclasses import asdict, dataclass, field
 from threading import Lock
+from typing import Literal
 
 import httpx
 
@@ -26,6 +27,16 @@ TERMINALS = {
     "response.completed": "completed", "error": "event_error",
     "response.failed": "event_failed", "response.incomplete": "event_incomplete",
 }
+ERROR_IDENTITIES = (
+    "token_invalidated", "invalid_api_key", "authentication_error",
+    "rate_limit_exceeded", "usage_limit_reached", "usage_not_included", "quota_exceeded",
+    "invalid_request_error", "invalid_request", "invalid_prompt", "invalid_value",
+    "missing_required_parameter", "unsupported_parameter", "item_not_found",
+    "server_error", "internal_server_error",
+)
+ERROR_PARAMS = (
+    "input", "tools", "model", "store", "previous_response_id", "include", "reasoning",
+)
 
 
 class ProbeObserverError(RuntimeError):
@@ -38,6 +49,41 @@ class ProbeBudgetError(ProbeObserverError):
 
 def bucket(value, allowed):
     return value if isinstance(value, str) and value in allowed else "other"
+
+
+@dataclass(frozen=True)
+class ErrorIdentity:
+    source: Literal["event", "event_error", "response_error"]
+    code: str
+    type: str
+    param: str
+
+
+def error_identity(payload, source):
+    payload = payload if isinstance(payload, dict) else {}
+
+    def label(key, allowed):
+        return bucket(payload.get(key), allowed) if key in payload else "missing"
+
+    return ErrorIdentity(
+        source=source, code=label("code", ERROR_IDENTITIES),
+        type="missing" if source == "event" else label("type", ERROR_IDENTITIES),
+        param=label("param", ERROR_PARAMS),
+    )
+
+
+def structured_errors(event, kind):
+    if kind == "error":
+        identities = [error_identity(event, "event")]
+        if "error" in event:
+            identities.append(error_identity(event.get("error"), "event_error"))
+        return identities
+    if kind == "response.failed":
+        response = event.get("response")
+        return [error_identity(
+            response.get("error") if isinstance(response, dict) else None, "response_error",
+        )]
+    return None
 
 
 def replay_shape(payload):
@@ -82,6 +128,7 @@ class StreamTrace:
     )
     terminal_kind: str = "none"
     natural_eof: bool = False
+    structured_errors: list[ErrorIdentity] | None = None
     replay: dict | None = None
 
 
@@ -140,6 +187,8 @@ class StreamObserver:
                 trace.events[kind] += 1
                 if kind in TERMINALS:
                     trace.terminal_kind = TERMINALS[kind]
+                if kind in {"error", "response.failed"}:
+                    trace.structured_errors = structured_errors(event, kind)
                 yield event
 
     async def request(self, request):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import runpy
 import subprocess
 import sys
 from contextlib import aclosing
@@ -108,7 +109,8 @@ async def test_natural_eof_distinguishes_empty_undecoded_and_events(body, expect
     ("response.completed", "completed"),
 ])
 async def test_terminal_event_flushed_at_line_eof_preserves_eof_evidence(ending, expected):
-    body = f'data: {json.dumps({"type": ending})}'.encode()
+    event = {"type": ending, "code": "invalid_value", "param": "input"}
+    body = f"data: {json.dumps(event)}".encode()
     report, code, requests = await run([httpx.Response(200, content=body)])
     trace = report["initial"]
     assert trace["terminal_kind"] == expected
@@ -116,6 +118,15 @@ async def test_terminal_event_flushed_at_line_eof_preserves_eof_evidence(ending,
     assert trace["natural_eof"] is True
     assert len(requests) == 1
     assert code == (1 if ending == "response.completed" else 3)
+    assert trace["structured_errors"] == {
+        "error": [{
+            "source": "event", "code": "invalid_value", "type": "missing", "param": "input",
+        }],
+        "response.failed": [{
+            "source": "response_error", "code": "missing", "type": "missing", "param": "missing",
+        }],
+        "response.incomplete": None, "response.completed": None,
+    }[ending]
 
 
 @pytest.mark.parametrize("failure,expected,code", [
@@ -154,19 +165,187 @@ async def test_http_status_and_typed_auth_quota_do_not_retry(status, body, expec
     assert "quota_exceeded" not in json.dumps(report)
 
 
+@pytest.mark.parametrize("followup", [False, True])
 @pytest.mark.parametrize("error_code,expected", [
-    ("token_invalidated", "authentication"), ("quota_exceeded", "rate_limit"),
+    ("token_invalidated", "authentication"), ("rate_limit_exceeded", "rate_limit"),
+    ("usage_limit_reached", "rate_limit"), ("usage_not_included", "rate_limit"),
+    ("quota_exceeded", "rate_limit"),
 ])
-async def test_typed_stream_errors_keep_terminal_evidence(error_code, expected):
-    report, code, _ = await run([httpx.Response(200, content=encode({
+async def test_typed_stream_errors_keep_terminal_evidence(error_code, expected, followup):
+    replies = [success(REASONING, SEARCH, MESSAGE)] if followup else []
+    replies.append(httpx.Response(200, content=encode({
         "type": "response.failed", "response": {"error": {
             "code": error_code, "message": PRIVATE,
         }},
+    })))
+    report, code, requests = await run(replies)
+    trace = report["followup" if followup else "initial"]
+    assert code == 2 and trace["outcome"] == expected
+    assert trace["terminal_kind"] == "event_failed" and not trace["natural_eof"]
+    assert len(requests) == (2 if followup else 1)
+    assert trace["structured_errors"] == [{
+        "source": "response_error", "code": error_code, "type": "missing", "param": "missing",
+    }]
+
+
+@pytest.mark.parametrize("followup", [False, True])
+@pytest.mark.parametrize("event,identities,outcome,exit_code", [
+    ({"type": "error", "code": "invalid_value", "param": "input"}, [
+        {"source": "event", "code": "invalid_value", "type": "missing", "param": "input"},
+    ], "event_error", 3),
+    ({"type": "error", "error": {
+        "code": "invalid_request", "type": "invalid_request_error", "param": "include",
+    }}, [
+        {"source": "event", "code": "missing", "type": "missing", "param": "missing"},
+        {"source": "event_error", "code": "invalid_request",
+         "type": "invalid_request_error", "param": "include"},
+    ], "event_error", 3),
+    ({"type": "response.failed", "response": {"error": {
+        "code": "item_not_found", "type": "invalid_request_error", "param": "previous_response_id",
+    }}}, [
+        {"source": "response_error", "code": "item_not_found",
+         "type": "invalid_request_error", "param": "previous_response_id"},
+    ], "event_failed", 3),
+    ({"type": "error", "code": "token_invalidated", "param": "model", "error": {
+        "code": "server_error", "type": "internal_server_error", "param": "tools",
+    }}, [
+        {"source": "event", "code": "token_invalidated", "type": "missing", "param": "model"},
+        {"source": "event_error", "code": "server_error",
+         "type": "internal_server_error", "param": "tools"},
+    ], "event_error", 3),
+    ({"type": "error", "param": "input[0].encrypted_content"}, [
+        {"source": "event", "code": "missing", "type": "missing", "param": "other"},
+    ], "event_error", 3),
+    ({"type": "error", "error": {"type": "authentication_error"}}, [
+        {"source": "event", "code": "missing", "type": "missing", "param": "missing"},
+        {"source": "event_error", "code": "missing",
+         "type": "authentication_error", "param": "missing"},
+    ], "event_error", 3),
+    ({"type": "response.failed", "response": {"error": {"code": "token_invalidated"}}}, [
+        {"source": "response_error", "code": "token_invalidated",
+         "type": "missing", "param": "missing"},
+    ], "authentication", 2),
+    ({"type": "response.failed", "response": {"error": {"code": "quota_exceeded"}}}, [
+        {"source": "response_error", "code": "quota_exceeded",
+         "type": "missing", "param": "missing"},
+    ], "rate_limit", 2),
+])
+async def test_structured_error_sources_are_independent_of_outcome(
+    followup, event, identities, outcome, exit_code,
+):
+    replies = [success(REASONING, SEARCH, MESSAGE)] if followup else []
+    replies.append(httpx.Response(200, content=encode(event)))
+    report, code, requests = await run(replies)
+    trace = report["followup" if followup else "initial"]
+    assert json.loads(json.dumps(trace["structured_errors"])) == identities
+    assert trace["outcome"] == outcome and code == exit_code
+    assert len(requests) == report["http_requests"] == (2 if followup else 1)
+    assert trace["events"][event["type"]] == 1 and trace["http_200"] is True
+    assert trace["natural_eof"] is False
+    assert report["initial" if followup else "followup"]["structured_errors"] is None
+
+
+@pytest.mark.parametrize("followup", [False, True])
+@pytest.mark.parametrize("label", [
+    "token_invalidated", "invalid_api_key", "authentication_error",
+    "rate_limit_exceeded", "usage_limit_reached", "usage_not_included", "quota_exceeded",
+    "invalid_request_error", "invalid_request", "invalid_prompt", "invalid_value",
+    "missing_required_parameter", "unsupported_parameter", "item_not_found",
+    "server_error", "internal_server_error",
+])
+async def test_exact_identity_labels_are_reported_without_changing_top_level_exit(label, followup):
+    event = {"type": "error", "code": label, "error": {"code": label, "type": label}}
+    replies = [success(REASONING, SEARCH, MESSAGE)] if followup else []
+    replies.append(httpx.Response(200, content=encode(event)))
+    report, code, _ = await run(replies)
+    assert code == 3
+    assert report["followup" if followup else "initial"]["structured_errors"] == [
+        {"source": "event", "code": label, "type": "missing", "param": "missing"},
+        {"source": "event_error", "code": label, "type": label, "param": "missing"},
+    ]
+
+
+@pytest.mark.parametrize("param", [
+    "input", "tools", "model", "store", "previous_response_id", "include", "reasoning",
+])
+async def test_exact_param_labels_are_reported(param):
+    report, code, _ = await run([httpx.Response(200, content=encode({
+        "type": "response.failed", "response": {"error": {"param": param}},
     }))])
-    assert code == 2 and report["initial"]["outcome"] == expected
-    assert report["initial"]["terminal_kind"] == "event_failed"
-    assert not report["initial"]["natural_eof"]
-    assert error_code not in json.dumps(report)
+    assert code == 3 and report["initial"]["structured_errors"] == [{
+        "source": "response_error", "code": "missing", "type": "missing", "param": param,
+    }]
+
+
+@pytest.mark.parametrize("followup", [False, True])
+@pytest.mark.parametrize("value", [
+    None, [], {PRIVATE: PRIVATE}, True, 42, "", "INVALID_REQUEST", PRIVATE * 1000,
+    "https://example.invalid/private-redaction-sentinel", "input[0].encrypted_content",
+])
+async def test_hostile_error_fields_and_keys_never_escape(followup, value):
+    error = {
+        "code": value, "type": value, "param": value,
+        "message": PRIVATE * 1000, "detail": {PRIVATE: PRIVATE},
+        "payload": PRIVATE, "traceback": PRIVATE, PRIVATE: PRIVATE,
+    }
+    events = [
+        {**error, "type": "error", "error": error},
+        {"type": "response.failed", "response": {"error": error, PRIVATE: PRIVATE},
+         "error": error, "code": "token_invalidated", "param": "input", PRIVATE: PRIVATE},
+    ]
+    for event, expected in zip(events, [
+        [{"source": "event", "code": "other", "type": "missing", "param": "other"},
+         {"source": "event_error", "code": "other", "type": "other", "param": "other"}],
+        [{"source": "response_error", "code": "other", "type": "other", "param": "other"}],
+    ], strict=True):
+        replies = [success(REASONING, SEARCH, MESSAGE)] if followup else []
+        replies.append(httpx.Response(200, content=encode(event)))
+        report, code, _ = await run(replies)
+        assert code == 3
+        assert report["followup" if followup else "initial"]["structured_errors"] == expected
+
+
+@pytest.mark.parametrize("value", [None, [], PRIVATE * 1000, True, 7, {}])
+@pytest.mark.parametrize("followup", [False, True])
+async def test_missing_or_malformed_error_containers_have_no_identity_fields(value, followup):
+    for event, sources in [
+        ({"type": "error", "error": value}, ["event", "event_error"]),
+        ({"type": "response.failed", "response": {"error": value}}, ["response_error"]),
+        ({"type": "response.failed", "response": value}, ["response_error"]),
+        ({"type": "response.failed"}, ["response_error"]),
+    ]:
+        replies = [success(REASONING, SEARCH, MESSAGE)] if followup else []
+        replies.append(httpx.Response(200, content=encode(event)))
+        report, code, _ = await run(replies)
+        assert code == 3
+        assert report["followup" if followup else "initial"]["structured_errors"] == [
+            {"source": source, "code": "missing", "type": "missing", "param": "missing"}
+            for source in sources
+        ]
+
+
+async def test_success_ignores_error_looking_fields_and_new_invocation_does_not_inherit_errors():
+    report, code, _ = await run([httpx.Response(200, content=encode({
+        "type": "error", "code": "invalid_prompt", "param": "input",
+    }))])
+    assert code == 3 and report["initial"]["structured_errors"] == [{
+        "source": "event", "code": "invalid_prompt", "type": "missing", "param": "input",
+    }]
+    untrusted = {
+        "error": {"code": "token_invalidated", "type": "authentication_error", "param": "input"},
+        "code": PRIVATE, "param": PRIVATE, "response": {"error": {"code": "quota_exceeded"}},
+        PRIVATE: PRIVATE,
+    }
+    report, code, _ = await run([
+        httpx.Response(200, content=encode(
+            item(SEARCH), item(MESSAGE), {"type": "response.output_text.delta", "delta": PRIVATE},
+            {**COMPLETED, **untrusted},
+        )),
+        success(MESSAGE),
+    ])
+    assert code == 0 and report["gate_pass"] is True
+    assert report["initial"]["structured_errors"] is None
+    assert report["followup"]["structured_errors"] is None
 
 
 @pytest.mark.parametrize("encrypted", [True, False])
@@ -408,8 +587,28 @@ async def test_unrelated_response_passes_through_without_contamination():
         assert observer._responses == {} and observer._iterators == []
 
 
-async def test_observer_yields_identical_objects_and_closes_original(monkeypatch):
-    event = {"type": "response.completed", PRIVATE: PRIVATE}
+@pytest.mark.parametrize("kind", ["response.completed", "error", "response.failed"])
+async def test_observer_yields_identical_objects_without_reading_freeform_fields(kind, monkeypatch):
+    class StructuredOnly(dict):
+        def get(self, key, default=None):
+            assert key in {"type", "code", "param", "error", "response"}
+            return super().get(key, default)
+
+        def __iter__(self):
+            pytest.fail("The observer must not enumerate event fields")
+
+    class PrivateValue:
+        def __str__(self):
+            pytest.fail("The observer must not stringify unknown values")
+
+    error = StructuredOnly(
+        code="invalid_value", type="invalid_request_error", param=PrivateValue(),
+        message=PRIVATE, detail=PRIVATE, payload=PRIVATE, traceback=PRIVATE,
+    )
+    event = StructuredOnly(
+        type=kind, code="server_error", param="tools", error=error,
+        response=StructuredOnly(error=error), message=PRIVATE, detail=PRIVATE,
+    )
     closed = False
 
     async def original(response):
@@ -428,7 +627,22 @@ async def test_observer_yields_identical_objects_and_closes_original(monkeypatch
         assert await anext(iterator) is event
         await observer.close_turn()
         assert closed and not observer.trace.natural_eof
-        assert observer.trace.terminal_kind == "completed"
+        assert observer.trace.terminal_kind == {
+            "response.completed": "completed", "error": "event_error",
+            "response.failed": "event_failed",
+        }[kind]
+        assert asdict(observer.trace)["structured_errors"] == {
+            "response.completed": None,
+            "error": [
+                {"source": "event", "code": "server_error", "type": "missing", "param": "tools"},
+                {"source": "event_error", "code": "invalid_value",
+                 "type": "invalid_request_error", "param": "other"},
+            ],
+            "response.failed": [
+                {"source": "response_error", "code": "invalid_value",
+                 "type": "invalid_request_error", "param": "other"},
+            ],
+        }[kind]
         assert PRIVATE not in json.dumps(asdict(observer.trace))
     assert codex_client._aiter_sse_events is original
 
@@ -495,7 +709,11 @@ async def test_default_comparison_never_installs_observer():
 
 def test_cli_main_failed_followup_is_sanitized_json_exit_three(monkeypatch, capsys):
     actual_client = httpx.AsyncClient
-    replies = [success(REASONING, SEARCH, MESSAGE), httpx.Response(500, text=PRIVATE)]
+    replies = [success(REASONING, SEARCH, MESSAGE), httpx.Response(200, content=encode({
+        "type": "error", "code": "invalid_value", "param": "input", "message": PRIVATE,
+        "error": {"code": PRIVATE, "type": "invalid_request_error", "param": PRIVATE,
+                  "detail": PRIVATE, PRIVATE: PRIVATE},
+    }))]
 
     def offline_client(**kwargs):
         kwargs["transport"] = httpx.MockTransport(lambda request: replies.pop(0))
@@ -504,11 +722,19 @@ def test_cli_main_failed_followup_is_sanitized_json_exit_three(monkeypatch, caps
     monkeypatch.setattr(probe.httpx, "AsyncClient", offline_client)
     monkeypatch.setenv("CODEX_ASSIST_ACCESS_TOKEN", PRIVATE)
     monkeypatch.setattr(sys, "argv", ["probe", "--model", "gpt-test", "--builtin-followup-only"])
-    assert probe.main() == 3
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_path(str(Path(probe.__file__)), run_name="__main__")
+    assert stopped.value.code == 3
     output = capsys.readouterr()
     report = json.loads(output.out)
-    assert report["followup"]["outcome"] == "http_status" and report["http_requests"] == 2
+    assert report["followup"]["outcome"] == "event_error" and report["http_requests"] == 2
+    assert report["followup"]["structured_errors"] == [
+        {"source": "event", "code": "invalid_value", "type": "missing", "param": "input"},
+        {"source": "event_error", "code": "other",
+         "type": "invalid_request_error", "param": "other"},
+    ]
     assert report["initial"]["outcome"] == "completed"
+    assert report["initial"]["structured_errors"] is None
     assert not replies and PRIVATE not in output.out and not output.err
 
 
