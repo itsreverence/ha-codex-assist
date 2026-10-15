@@ -17,6 +17,7 @@ from homeassistant.components import ai_task, conversation
 from homeassistant.components.conversation import trace as conversation_trace
 from homeassistant.components.conversation.chat_log import async_subscribe_chat_logs
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -112,6 +113,73 @@ def search_reply(planned):
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
+@pytest.mark.parametrize("ending", ["silent", "failed", "recovered"])
+async def test_search_final_answer_validation(hass, search_entry, backend, surface, ending):
+    planned, _requests = backend
+    model_round(planned, [
+        {"type": "response.output_item.done", "item": message("Hidden search preamble.")},
+        call_event("search-1", "web_search", {"queries": ["synthetic"]}), COMPLETED,
+    ])
+    search_reply(planned)
+    if ending == "failed":
+        events = [{"type": "response.failed", "response": {"error": {
+            "code": "server_error", "message": "Synthetic failure",
+        }}}]
+    elif ending == "silent":
+        events = [{"type": "response.output_item.done", "item": {
+            "type": "reasoning", "encrypted_content": "private",
+        }}, COMPLETED]
+    else:
+        events = [{"type": "response.output_item.done", "item": message("Recovered answer.")},
+                  COMPLETED]
+    model_round(planned, events)
+    if surface == "conversation":
+        result = await conversation.async_converse(
+            hass, "Look up the documentation.", None, Context(),
+            agent_id="conversation.codex_assist",
+        )
+        speech = result.response.speech["plain"]["speech"]
+        if ending == "recovered":
+            assert speech == "Recovered answer."
+            assert result.response.card["simple"]["title"] == "Sources"
+        else:
+            assert "no answer text" in speech if ending == "silent" else "failed" in speech
+            assert not result.response.card
+    elif ending == "recovered":
+        result = await ai_task.async_generate_data(
+            hass, task_name="Test", instructions="Look up the documentation.",
+            entity_id="ai_task.codex_assist_ai_task",
+        )
+        assert result.data == "Recovered answer."
+    else:
+        with pytest.raises(HomeAssistantError, match="no answer text|failed"):
+            await ai_task.async_generate_data(
+                hass, task_name="Test", instructions="Look up the documentation.",
+                entity_id="ai_task.codex_assist_ai_task",
+            )
+
+
+async def test_search_auth_retry_does_not_keep_failed_attempt_sources(hass, search_entry, backend):
+    planned, requests = backend
+    model_round(planned, [call_event("search-1", "web_search", {"queries": ["synthetic"]}),
+                          COMPLETED])
+    search_reply(planned)
+    model_round(planned, [{"type": "response.failed", "response": {"error": {
+        "code": "token_invalidated", "message": "Synthetic auth rejection",
+    }}}])
+    planned.append(("/oauth/token", 200, {
+        "access_token": "test-new-access", "refresh_token": "test-new-refresh",
+    }))
+    model_round(planned, text_events("Recovered without search.") + [COMPLETED])
+    result = await conversation.async_converse(
+        hass, "Look up the documentation.", None, Context(), agent_id="conversation.codex_assist",
+    )
+    assert result.response.speech["plain"]["speech"] == "Recovered without search."
+    assert not result.response.card
+    assert [path for path, _ in requests].count("/oauth/token") == 1
+
+
+@pytest.mark.parametrize("surface", ["conversation", "ai_task"])
 async def test_search_delivers_only_final_text_through_real_ha(
     hass: HomeAssistant, search_entry, backend, surface,
 ):
@@ -177,7 +245,7 @@ async def test_search_delivers_only_final_text_through_real_ha(
     assert any(tool.get("name") == "web_search" for tool in first_model["tools"])
 
 
-@pytest.mark.parametrize("replay_boundary", ["ha_handoff", "next_user"])
+@pytest.mark.parametrize("replay_boundary", ["ha_handoff", "next_user", "failed_final"])
 async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     hass: HomeAssistant, search_entry, backend, monkeypatch, replay_boundary, caplog, request,
 ):
@@ -237,11 +305,18 @@ async def test_search_then_ha_tool_preserves_native_tool_pair_and_sources(
     ])
     # Neither the fact nor the URL is repeated by the handoff or final message.
     final_text = "The reading is seven."
-    model_round(planned, text_events(final_text) + [COMPLETED])
+    model_round(planned, [{"type": "response.failed", "response": {"error": {
+        "code": "server_error", "message": "Synthetic final failure",
+    }}}] if replay_boundary == "failed_final" else text_events(final_text) + [COMPLETED])
     result = await conversation.async_converse(
         hass, "Search and get the test reading.", None, Context(),
         agent_id="conversation.codex_assist",
     )
+    if replay_boundary == "failed_final":
+        assert "Synthetic final failure" in result.response.speech["plain"]["speech"]
+        assert not result.response.card
+        assert executed == ["reading-1"]
+        return
     assert result.response.speech["plain"]["speech"] == final_text
     assert url in result.response.card["simple"]["content"]
     handoff = requests[-1][1]["input"]

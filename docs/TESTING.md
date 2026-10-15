@@ -71,6 +71,15 @@ execution only after completion, and auth retry only before visible output.
 The existing search delivery cases check that hidden search rounds still allow
 the single auth-refresh retry. Run these with both HA contract environments.
 
+`tests/test_codex_text_recovery.py` exercises completed-message recovery through
+synthetic HTTPX SSE streams. It checks exact suffixes, whitespace, item aliases,
+multiple text parts, repeat completions, and explicit failure when recovery
+would be ambiguous or reorder delivered text. The real-HA completion and search
+delivery cases also check completed-only answers, silent terminal responses,
+auth failures after recovered text, and Sources cards only on success. An auth
+retry must discard citations from the failed attempt. All backend responses in
+these tests are synthetic; passing them does not establish live Codex behavior.
+
 The tool-result regression runs a real conversation and checks the outgoing
 Codex payload. On modern HA it removes only the deprecated property to prove
 the integration does not rely on that compatibility shim.
