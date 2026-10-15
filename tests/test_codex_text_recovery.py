@@ -195,3 +195,83 @@ async def test_ordered_multichunk_parts_with_late_index_binding(multiple_parts):
         events.append(message("Earlier", item_id="a", output_index=0))
     await collect([*events, COMPLETED], delivered)
     assert delivered == (["Ear", "lier", "La", "ter"] if multiple_parts else ["Ear", "lier"])
+
+
+@pytest.mark.parametrize("a,b", [
+    pytest.param({"output_index": 0}, {"output_index": 1}, id="full-index"),
+    pytest.param({"output_index": 0}, {}, id="only-a-index"),
+    pytest.param({}, {"output_index": 1}, id="only-b-index"),
+    pytest.param({}, {}, id="no-index"),
+])
+@pytest.mark.parametrize("shape", ["same-part", "different-parts", "within-message"])
+async def test_contiguous_delivery_rejects_message_or_part_resumption(a, b, shape):
+    middle_id = "a" if shape == "within-message" else "b"
+    middle_index = 1 if shape == "within-message" else 0
+    last_index = 1 if shape == "different-parts" else 0
+    delivered = []
+    with pytest.raises(RuntimeError, match="^Codex returned inconsistent answer text$"):
+        await collect([
+            delta("E", item_id="a", content_index=0, **a),
+            delta("X", item_id=middle_id, content_index=middle_index,
+                  **(a if middle_id == "a" else b)),
+            delta("e", item_id="a", content_index=last_index, **a),
+            message(*(["E", "e"] if last_index else ["Ee"]), item_id="a", **a),
+            message("X", item_id="b", **b),
+            COMPLETED,
+        ], delivered)
+    assert delivered == ["E", "X"]
+
+
+@pytest.mark.parametrize("a,b", [
+    pytest.param({"output_index": 0}, {"output_index": 1}, id="full-index"),
+    pytest.param({"output_index": 0}, {}, id="only-a-index"),
+    pytest.param({}, {"output_index": 1}, id="only-b-index"),
+    pytest.param({}, {}, id="no-index"),
+])
+@pytest.mark.parametrize("last_index", [0, 1], ids=["same-part", "different-parts"])
+async def test_contiguous_delivery_preserves_ordered_messages(a, b, last_index):
+    delivered = []
+    await collect([
+        delta("E", item_id="a", content_index=0, **a),
+        delta("e", item_id="a", content_index=last_index, **a),
+        delta("X", item_id="b", content_index=0, **b),
+        message(*(["E", "e"] if last_index else ["Ee"]), item_id="a", **a),
+        message("X", item_id="b", **b),
+        COMPLETED,
+    ], delivered)
+    assert delivered == ["E", "e", "X"]
+
+
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("binding", ["message-alias", "content-index"])
+async def test_contiguous_delivery_resolves_late_identity_before_resumption(binding, resume):
+    events = [
+        delta("E", **({"output_index": 0, "content_index": 0}
+                      if binding == "message-alias" else {"item_id": "a"})),
+        delta("X", item_id="b", content_index=0),
+    ]
+    if binding == "message-alias":
+        events.append(message(item_id="a", output_index=0, event="added"))
+    if resume:
+        events.append(delta("e", item_id="a", content_index=0))
+    events.extend([
+        message("Ee" if resume else "E", item_id="a"),
+        message("X", item_id="b"), COMPLETED,
+    ])
+    delivered = []
+    if resume:
+        with pytest.raises(RuntimeError, match="^Codex returned inconsistent answer text$"):
+            await collect(events, delivered)
+    else:
+        await collect(events, delivered)
+    assert delivered == ["E", "X"]
+
+
+async def test_contiguous_delivery_preserves_long_adjacent_chunks_and_recovered_suffix():
+    delivered = []
+    await collect([
+        *(delta("x", item_id="a") for _ in range(2048)),
+        message("x" * 2048 + "!", item_id="a", output_index=0),
+        message("Next", item_id="b"), COMPLETED,
+    ], delivered)
+    assert delivered == [*["x"] * 2048, "!", "Next"]

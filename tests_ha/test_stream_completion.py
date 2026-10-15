@@ -114,10 +114,10 @@ def text_delta(text, item_id, content_index=0, **identity):
 
 
 def completed_message(*parts, item_id, output_index):
-    return {"type": "response.output_item.done", "output_index": output_index, "item": {
+    return {"type": "response.output_item.done", "item": {
         "type": "message", "role": "assistant", "id": item_id,
         "content": [{"type": "output_text", "text": text} for text in parts],
-    }}
+    }, **({"output_index": output_index} if output_index is not None else {})}
 
 
 @pytest.mark.parametrize("surface", ["conversation", "ai_task"])
@@ -141,6 +141,54 @@ def completed_message(*parts, item_id, output_index):
         text_delta("La", "a", content_index=1), text_delta("ter", "a", content_index=1),
         completed_message("Earlier", "Later", item_id="a", output_index=0),
     ], "EarlierLater", id="ordered-multichunk-parts"),
+    *[
+        pytest.param([
+            text_delta("E", "a", **a), text_delta("X", "b", **b),
+            text_delta("e", "a", content_index=last_index, **a),
+            completed_message(
+                *(["E", "e"] if last_index else ["Ee"]), item_id="a",
+                output_index=a.get("output_index"),
+            ),
+            completed_message("X", item_id="b", output_index=b.get("output_index")),
+        ], None, id=f"resumed-message-part{last_index}-{metadata}")
+        for metadata, a, b in [
+            ("full-index", {"output_index": 0}, {"output_index": 1}),
+            ("only-a-index", {"output_index": 0}, {}),
+            ("only-b-index", {}, {"output_index": 1}),
+            ("no-index", {}, {}),
+        ]
+        for last_index in (0, 1)
+    ],
+    *[
+        pytest.param([
+            text_delta("E", "a", **a), text_delta("e", "a", **a),
+            text_delta("X", "b", **b),
+            completed_message("Ee", item_id="a", output_index=a.get("output_index")),
+            completed_message("X", item_id="b", output_index=b.get("output_index")),
+        ], "EeX", id=f"contiguous-messages-{metadata}")
+        for metadata, a, b in [
+            ("full-index", {"output_index": 0}, {"output_index": 1}),
+            ("only-a-index", {"output_index": 0}, {}),
+            ("only-b-index", {}, {"output_index": 1}),
+            ("no-index", {}, {}),
+        ]
+    ],
+    pytest.param([
+        text_delta("E", "a", content_index=None), text_delta("X", "b"),
+        text_delta("e", "a"),
+        completed_message("Ee", item_id="a", output_index=None),
+        completed_message("X", item_id="b", output_index=None),
+    ], None, id="resumed-message-bound-content-index"),
+    pytest.param([
+        text_delta("E", "a", content_index=None), text_delta("X", "b"),
+        completed_message("E", item_id="a", output_index=None),
+        completed_message("X", item_id="b", output_index=None),
+    ], "EX", id="contiguous-messages-bound-content-index"),
+    pytest.param([
+        *(text_delta("x", "a", content_index=None) for _ in range(2048)),
+        completed_message("x" * 2048 + "!", item_id="a", output_index=0),
+        completed_message("Next", item_id="b", output_index=None),
+    ], "x" * 2048 + "!Next", id="contiguous-long-adjacent-chunks"),
 ])
 async def test_delivered_order_controls_success_and_native_state(
     hass, task_entry, stream_backend, monkeypatch, surface, output, expected,
