@@ -1,9 +1,11 @@
 import json
 
+import httpx
 import pytest
 
 from custom_components.codex_assist.codex_client import (
     CODEX_STREAM_TIMEOUT,
+    CodexAuthenticationError,
     CodexClient,
     CodexRateLimitError,
     CodexResponseItemDelta,
@@ -335,21 +337,71 @@ async def test_stream_turn_omits_advanced_options_for_non_reasoning_models():
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_raises_rate_limit_error_for_429():
-    response = FakeStreamResponse(
-        429,
-        [],
-        body=b'{"error":"quota exceeded"}',
-    )
-    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+async def test_stream_turn_posts_codex_responses_request():
+    requests = []
 
-    with pytest.raises(CodexRateLimitError, match="quota exceeded"):
-        async for _delta in client.stream_turn(
-            model="gpt-5.4",
-            instructions="x",
-            input_items=[{"role": "user", "content": "hello"}],
-        ):
-            pass
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text="\n".join(_event({"type": "response.completed"})))
+
+    tools = [{"type": "function", "name": "HassTurnOn", "parameters": {}}]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = CodexClient(http_client=http, access_token="token-1")
+        deltas = [
+            delta
+            async for delta in client.stream_turn(
+                model="gpt-5.4",
+                instructions="You are a Home Assistant voice agent.",
+                input_items=[{"role": "user", "content": "turn on kitchen"}],
+                tools=tools,
+            )
+        ]
+
+    assert deltas == []
+    [request] = requests
+    assert request.method == "POST"
+    assert str(request.url) == "https://chatgpt.com/backend-api/codex/responses"
+    assert request.headers["Authorization"] == "Bearer token-1"
+    assert request.headers["Accept"] == "text/event-stream"
+    assert request.headers["originator"] == "codex_cli_rs"
+    assert request.headers["User-Agent"].startswith("codex_cli_rs/")
+    assert json.loads(request.content) == {
+        "model": "gpt-5.4",
+        "instructions": "You are a Home Assistant voice agent.",
+        "input": [{"role": "user", "content": "turn on kitchen"}],
+        "tools": tools,
+        "store": False,
+        "stream": True,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,body,error", [
+    (401, {"detail": "Synthetic rejection"}, CodexAuthenticationError),
+    (403, {"error": {"code": "token_invalidated", "message": "Synthetic rejection"}},
+     CodexAuthenticationError),
+    (401, {"detail": {"code": "rate_limit_exceeded", "message": "Synthetic rejection"}},
+     CodexAuthenticationError),
+    (429, {"error": "Synthetic rejection"}, CodexRateLimitError),
+    (403, {"detail": {"code": "usage_limit_reached", "message": "Synthetic rejection"}},
+     CodexRateLimitError),
+    (400, {"detail": "Synthetic rejection"}, RuntimeError),
+])
+async def test_stream_turn_classifies_http_error_status(status, body, error):
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(status, json=body)
+    )) as http:
+        client = CodexClient(http_client=http, access_token="token-1")
+        with pytest.raises(RuntimeError) as caught:
+            async for _delta in client.stream_turn(
+                model="gpt-5.4",
+                instructions="x",
+                input_items=[{"role": "user", "content": "hello"}],
+            ):
+                pass
+
+    assert type(caught.value) is error
+    assert "Synthetic rejection" in str(caught.value)
 
 
 @pytest.mark.asyncio
