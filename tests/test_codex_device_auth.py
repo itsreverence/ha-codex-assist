@@ -2,9 +2,6 @@ import httpx
 import pytest
 
 from custom_components.codex_assist.codex_auth import (
-    CODEX_DEVICE_AUTH_TOKEN_URL,
-    CODEX_DEVICE_AUTH_USER_CODE_URL,
-    CODEX_DEVICE_VERIFICATION_URL,
     CODEX_OAUTH_CLIENT_ID,
     CODEX_OAUTH_TOKEN_URL,
     CodexAuthClient,
@@ -54,11 +51,11 @@ async def test_request_device_code_posts_codex_json_request_and_returns_pairing_
 
     assert code.user_code == "ABCD-EFGH"
     assert code.device_auth_id == "device-auth-1"
-    assert code.verification_uri == CODEX_DEVICE_VERIFICATION_URL
+    assert code.verification_uri == "https://auth.openai.com/codex/device"
     assert code.interval == 7
     assert http.calls == [
         (
-            CODEX_DEVICE_AUTH_USER_CODE_URL,
+            "https://auth.openai.com/api/accounts/deviceauth/usercode",
             {
                 "json": {"client_id": CODEX_OAUTH_CLIENT_ID},
                 "headers": {"Content-Type": "application/json"},
@@ -90,7 +87,7 @@ async def test_poll_device_code_returns_none_while_authorization_is_pending(stat
     assert result is None
     assert http.calls == [
         (
-            CODEX_DEVICE_AUTH_TOKEN_URL,
+            "https://auth.openai.com/api/accounts/deviceauth/token",
             {
                 "json": {
                     "device_auth_id": "device-auth-1",

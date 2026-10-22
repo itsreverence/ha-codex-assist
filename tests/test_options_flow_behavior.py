@@ -139,11 +139,13 @@ async def test_options_flow_uses_multiline_prompt_selector_and_preserves_markdow
     assert result["data"][module.CONF_PROMPT] == prompt
 
 
-def test_section_input_is_flattened_for_existing_runtime_settings(monkeypatch):
+async def test_section_input_is_saved_as_flat_runtime_settings(monkeypatch):
     install_homeassistant_fakes(monkeypatch)
     module = importlib.reload(importlib.import_module("custom_components.codex_assist.config_flow"))
+    flow = module.CodexAssistOptionsFlow()
+    flow.config_entry = SimpleNamespace(data={}, options={})
 
-    flattened = module._flatten_settings_input(
+    result = await flow.async_step_init(
         {
             module.SECTION_CHAT_SETTINGS: {
                 "model": "gpt-5.4",
@@ -161,7 +163,8 @@ def test_section_input_is_flattened_for_existing_runtime_settings(monkeypatch):
         }
     )
 
-    assert flattened == {
+    assert result["type"] == "create_entry"
+    assert result["data"] == {
         "model": "gpt-5.4",
         "text_verbosity": "low",
         "web_search": True,

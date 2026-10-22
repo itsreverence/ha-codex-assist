@@ -74,17 +74,24 @@ async def test_generate_image_uses_codex_responses_image_generation_tool():
     )
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
+    input_items = [
+        {"role": "user", "content": "Earlier turn about the porch light"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Redraw the attached floor plan as a line icon"},
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,Zmxvb3ItcGxhbg==",
+                    "detail": "auto",
+                },
+            ],
+        },
+    ]
 
     result = await client.generate_image(
-        prompt="draw a tidy smart home dashboard icon",
-        input_items=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": "draw a tidy smart home dashboard icon"}
-                ],
-            }
-        ],
+        prompt="Redraw the attached floor plan as a line icon",
+        input_items=input_items,
         chat_model="gpt-5.4",
         image_model="gpt-image-2-high",
         size="1536x1024",
@@ -101,6 +108,7 @@ async def test_generate_image_uses_codex_responses_image_generation_tool():
     assert url == "https://chatgpt.com/backend-api/codex/responses"
     assert kwargs["headers"]["Accept"] == "text/event-stream"
     assert payload["model"] == "gpt-5.4"
+    assert payload["input"] == input_items
     assert payload["stream"] is True
     assert payload["tools"] == [
         {
@@ -143,16 +151,16 @@ async def test_generate_image_accepts_partial_image_b64_events_without_type():
 
 @pytest.mark.asyncio
 async def test_generate_image_rejects_unsupported_image_options_before_request():
-    client = CodexClient(
-        http_client=FakeHttpClient(FakeStreamResponse()),
-        access_token="token-1",
-    )
+    http = FakeHttpClient(FakeStreamResponse())
+    client = CodexClient(http_client=http, access_token="token-1")
 
     with pytest.raises(ValueError, match="Unsupported Codex Assist image model"):
         await client.generate_image(prompt="draw it", image_model="gpt-image-2-ultra")
 
     with pytest.raises(ValueError, match="Unsupported Codex Assist image size"):
         await client.generate_image(prompt="draw it", size="2048x2048")
+
+    assert http.calls == []
 
 
 @pytest.mark.asyncio

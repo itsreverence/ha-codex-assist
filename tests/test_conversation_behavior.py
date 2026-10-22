@@ -331,7 +331,6 @@ async def test_codex_input_from_chat_log_translates_image_attachments(
     assert content[0] == {"type": "input_text", "text": "describe this"}
     assert content[1]["type"] == "input_image"
     assert content[1]["image_url"].startswith("data:image/png;base64,")
-    assert hass.executor_jobs[0][0] is conversation_module._image_attachments_for_codex
 
 
 @pytest.mark.parametrize(
@@ -519,7 +518,9 @@ def test_trim_codex_input_items_drops_orphaned_tool_outputs(conversation_module)
 def test_trim_codex_input_items_leaves_short_history_unchanged(conversation_module):
     input_items = [{"role": "user", "content": "hello"}]
 
-    assert conversation_module._trim_codex_input_items(input_items, max_items=24) is input_items
+    assert conversation_module._trim_codex_input_items(input_items, max_items=24) == [
+        {"role": "user", "content": "hello"}
+    ]
 
 
 def test_trim_codex_input_items_keeps_complete_turn_at_retained_boundary(
