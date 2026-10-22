@@ -57,9 +57,16 @@ class Actor:
     name: str
     coro: Coroutine
     started: bool = False
-    waiting: object = None
+    waiting: asyncio.Future | None = None
     done: bool = False
     error: BaseException | None = None
+
+    def blocked_in(self) -> list[str]:
+        frames, coro = [], self.coro
+        while hasattr(coro, "cr_code"):
+            frames.append(coro.cr_code.co_qualname)
+            coro = coro.cr_await
+        return frames
 
 
 class AuthServer:
@@ -185,6 +192,8 @@ class World:
     def apply(self, label: str, choice) -> None:
         kind = choice[0]
         if kind == "answer":
+            # The answer and the resumption are one step: the auth server's
+            # effect runs inside the actor, so splitting them adds no ordering.
             _, actor, gate, outcome = choice
             del self.gates[gate.future]
             self.note(label)
@@ -199,28 +208,37 @@ class World:
             choice[1][1](self)
 
     def step(self, actor: Actor) -> None:
-        # A gate answer resumes its actor in the same step: the auth server's
-        # effect runs inside the actor, so splitting them adds no new ordering.
         actor.started = True
         try:
             actor.waiting = actor.coro.send(None)
         except StopIteration:
             actor.done = True
             return
-        except Exception as err:  # noqa: BLE001
+        except (Exception, asyncio.CancelledError) as err:
             actor.done, actor.error = True, err
             return
         if actor.waiting is not None and not isinstance(actor.waiting, asyncio.Future):
             self.violate(f"NoUnsupportedAwait: {actor.name} yielded {actor.waiting!r}")
+            actor.done = True
 
     def check_final(self) -> None:
-        stuck = [actor.name for actor in self.actors if not actor.done]
-        if stuck:
-            self.violate(f"NoDeadlock: {stuck} never finished")
+        stuck = [actor for actor in self.actors if not actor.done]
+        # Only gates, lock handoffs and bare yields can be resumed here. A
+        # future that needs the event loop (a task, shield, sleep(>0)) never is.
+        unsupported = [a for a in stuck if "Lock.acquire" not in a.blocked_in()]
+        for actor in unsupported:
+            self.violate(
+                f"NoUnsupportedAwait: {actor.name} waits in {actor.blocked_in()[-1]} on "
+                f"{actor.waiting!r}, which only the event loop can complete"
+            )
+        if stuck and not unsupported:
+            self.violate(f"NoDeadlock: {[actor.name for actor in stuck]} never finished")
         for actor in self.actors:
             actor.coro.close()
             if actor.error is not None:
                 self.violate(f"NoCrash: {actor.name} raised {actor.error!r}")
+        if stuck:
+            return
         stored = self.entry.data["refresh_token"]
         family = self.server.family_of[stored]
         if family != self.server.families:
@@ -382,6 +400,7 @@ VERIFIED = {
         ("conversation-1", "discovery-1"), tool_rounds=2
     ),
     "tool_rounds_across_reauth": Scenario(("conversation-1",), ("reauth",), tool_rounds=2),
+    "two_requests_with_tool_rounds": Scenario(("conversation-1", "ai_task-1"), tool_rounds=2),
 }
 
 

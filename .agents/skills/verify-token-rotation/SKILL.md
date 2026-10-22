@@ -26,7 +26,7 @@ These properties replace the four hand-ordered concurrency tests that used to li
 uv run pytest tests/test_codex_runtime_interleavings.py -q -s
 ```
 
-The run takes about 2 s. A healthy run reports `8 passed`, and `-s` prints the schedule count for each scenario. A failure prints the counterexample.
+The run takes about 6 s. A healthy run reports `9 passed`, and `-s` prints the schedule count for each scenario. A failure prints the counterexample.
 
 The tool is a stateless model checker written in the test file. It drives the **real** `RuntimeTokenCoordinator` coroutines by hand with `send` and replays each scenario from scratch, depth-first, once for every ordering. Every point where an actor suspends is a choice:
 
@@ -34,7 +34,7 @@ The tool is a stateless model checker written in the test file. It drives the **
 - An await on a lock held by another actor, or a bare `yield` such as `asyncio.sleep(0)`, makes the actor runnable, and resuming it is a separate choice.
 - Each HA event step is a choice.
 
-Code between two suspensions runs as one step, which matches asyncio, so a new `await` in the coordinator becomes a new scheduling point without any harness change. An actor that yields anything other than an asyncio future or `None` reports `NoUnsupportedAwait`: the harness needs extending. There are no other dependencies.
+Code between two suspensions runs as one step, which matches asyncio. A new `await` on a gate, an `asyncio.Lock` or a bare yield becomes a new scheduling point without any harness change. The explorer never yields to the event loop, so it cannot resume an await on anything only the loop completes: a task, `asyncio.shield`, `ensure_future`, `sleep` with a delay, `to_thread`, or an executor job. Those runs, and any actor that yields something other than a future or `None`, report `NoUnsupportedAwait`, which means the harness needs extending, not that the product deadlocks. Actors also run inside the test's own task, so `asyncio.current_task()`, context variables and `asyncio.timeout` see the test task: a timeout around a coordinator await is never explored. There are no other dependencies.
 
 ## Does my change touch this?
 
@@ -74,6 +74,7 @@ For a change in `codex_runtime.py`, just rerun. The real code is under test, and
 - `request_and_discovery_across_reauth`: Conversation and discovery while a reauth reloads (9,600 schedules)
 - `tool_rounds_and_discovery_share_refreshes`: Conversation with two tool rounds, each able to refresh once, and discovery (3,558 schedules)
 - `tool_rounds_across_reauth`: Conversation with two tool rounds while a reauth reloads (310 schedules)
+- `two_requests_with_tool_rounds`: Conversation and AI Task, each with two tool rounds (39,106 schedules)
 
 A request actor runs `tool_rounds` rounds, one by default. Each round sends a Codex request, and a 401 refreshes and retries once, as the tool-round loops in `conversation.py` and `ai_task.py` do. A second 401 ends the actor, which models the reauth start. The retry in the last round, and discovery's retry, are left out because their answers never reach the coordinator.
 
@@ -105,7 +106,7 @@ The coordinator used to live in `entry.runtime_data`, which HA deletes on every 
 3. `ai_task-1` calls `resolve()` and gets coordinator#2, whose lock is free. The stored token is still R1 and expiring, so it sends `refresh(R1)`.
 4. The server rotates R1 for `conversation-1`, rejects R1 from `ai_task-1` as reused, and `ai_task-1` starts reauth.
 
-`runtime_token_coordinator` now keeps one coordinator per entry object in a `weakref.WeakKeyDictionary`, so a reload keeps the lock and a removed entry frees it. If a change moves the coordinator back into `runtime_data`, `requests_across_plain_reload` fails. The model has no `hass.data` and does not run `async_unload_entry`, so a store that unload clears some other way would pass the model. `test_token_coordinator_survives_reload_but_not_removal` catches that case in real HA.
+`runtime_token_coordinator` now keeps one coordinator per entry object in a `weakref.WeakKeyDictionary`, so a reload keeps the lock, and a removed and re-added entry gets a new one. If a change moves the coordinator back into `runtime_data`, `requests_across_plain_reload` fails. The model has no `hass.data` and does not run `async_unload_entry`, so a store that unload clears some other way would pass the model. `test_token_coordinator_survives_reload_but_not_removal` catches that case in real HA.
 
 ## Real bug or modeling error?
 
@@ -114,7 +115,7 @@ Read the printed counterexample one step at a time against the code.
 - If every step is something the code and HA can really do, it is a bug. Report it in those terms. Do not weaken the property or remove the scenario.
 - If a step is something the code cannot do, the harness is wrong. Examples: an actor looks up the coordinator where the caller captures it, an event happens that HA never triggers, or the auth fake answers differently from `CodexAuthClient.refresh`. Fix the actor or event and cite the line it mirrors.
 
-`NoDeadlock` and `NoCrash` violations usually mean the harness is broken, for example a new await the explorer cannot resolve or an exception type the actors don't catch. They are rarely product bugs.
+`NoUnsupportedAwait`, `NoDeadlock` and `NoCrash` violations usually mean the harness is broken, for example a new await the explorer cannot resume or an exception type the actors don't catch. They are rarely product bugs. When an actor is stuck, the run skips the final-state checks, so a stuck run reports no `StoredTokenUsable`.
 
 ## Proof that it can fail
 
