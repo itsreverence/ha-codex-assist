@@ -513,11 +513,11 @@ async def test_options_flow_uses_real_home_assistant_contract(
             },
             SECTION_ADVANCED_SETTINGS: {
                 "prompt": prompt,
-                "reasoning_effort": "low",
+                "reasoning_effort": "medium",
             },
             SECTION_IMAGE_SETTINGS: {
-                "image_model": "gpt-image-2-medium",
-                "image_size": "1024x1024",
+                "image_model": "gpt-image-2-high",
+                "image_size": "1536x1024",
             },
         },
     )
@@ -528,9 +528,9 @@ async def test_options_flow_uses_real_home_assistant_contract(
         "text_verbosity": "low",
         "web_search": True,
         "prompt": prompt,
-        "reasoning_effort": "low",
-        "image_model": "gpt-image-2-medium",
-        "image_size": "1024x1024",
+        "reasoning_effort": "medium",
+        "image_model": "gpt-image-2-high",
+        "image_size": "1536x1024",
     }
 
 

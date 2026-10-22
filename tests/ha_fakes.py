@@ -189,18 +189,10 @@ def install_homeassistant_fakes(monkeypatch):
         pass
 
     class Any:
-        def __init__(self, *validators):
-            self.validators = validators
-
-        def __call__(self, value):
-            return value
+        """isinstance target only. Composed validators are tested in tests_ha."""
 
     class All:
-        def __init__(self, *validators):
-            self.validators = validators
-
-        def __call__(self, value):
-            return value
+        """isinstance target only. Composed validators are tested in tests_ha."""
 
     config_entries.ConfigFlow = ConfigFlow
     config_entries.ConfigEntry = ConfigEntry
