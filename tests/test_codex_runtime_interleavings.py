@@ -351,12 +351,6 @@ VERIFIED = {
     "request_and_discovery_share_one_refresh": Scenario(("conversation-1", "discovery-1")),
     "request_across_reauth": Scenario(("conversation-1",), ("reauth",)),
     "discovery_across_reauth": Scenario(("discovery-1",), ("reauth",)),
-}
-
-# Each reload deletes entry.runtime_data, so requests still in flight hold the old
-# coordinator lock while new requests take a fresh one. Remove a scenario from here
-# when the coordinator outlives reloads; strict xfail flags that change.
-KNOWN_FINDINGS = {
     "requests_across_plain_reload": Scenario(("conversation-1", "ai_task-1"), ("reload",)),
     "request_and_discovery_across_reauth": Scenario(
         ("conversation-1", "discovery-1"), ("reauth",)
@@ -369,14 +363,3 @@ async def test_rotation_holds_for_every_interleaving(name: str) -> None:
     runs, failing = await explore(VERIFIED[name])
     assert failing is None, _report(failing)
     print(f"{name}: {runs} schedules")
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding: a reload replaces the coordinator lock while a refresh is in "
-    "flight, so a second refresh can spend the same rotating token.",
-)
-@pytest.mark.parametrize("name", sorted(KNOWN_FINDINGS))
-async def test_known_finding_still_reproduces(name: str) -> None:
-    _, failing = await explore(KNOWN_FINDINGS[name])
-    assert failing is None, _report(failing)
