@@ -5,6 +5,13 @@ import types
 from dataclasses import dataclass
 
 
+class FakeConfigEntry(types.SimpleNamespace):
+    """Identity-hashed like ``ConfigEntry``, so it can key per-entry state."""
+
+    __eq__ = object.__eq__
+    __hash__ = object.__hash__
+
+
 def install_homeassistant_fakes(monkeypatch):
     """Install minimal Home Assistant modules needed for behavior-unit tests."""
 

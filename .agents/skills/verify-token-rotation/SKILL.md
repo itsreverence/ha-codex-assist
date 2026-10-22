@@ -26,7 +26,7 @@ These properties replace the four hand-ordered concurrency tests that used to li
 uv run pytest tests/test_codex_runtime_interleavings.py -q -s
 ```
 
-The run takes about 3 s. A healthy run reports `4 passed, 2 xfailed`, and `-s` prints the schedule count for each verified scenario. To print a known finding's counterexample, add `--runxfail -k <scenario>`.
+The run takes about 2 s. A healthy run reports `6 passed`, and `-s` prints the schedule count for each scenario. A failure prints the counterexample.
 
 The tool is a stateless model checker written in the test file. It runs the **real** `RuntimeTokenCoordinator` and replays the scenario from scratch, depth-first, once for every ordering. Every await the coordinator makes on the outside world is a `Gate`: an auth-server answer (`ok` / `temporary`) or a Codex backend answer (`ok` / `401`). The explorer chooses which gate resolves next, with which outcome, and when each actor starts or each HA event step runs. asyncio is single-threaded, so code between two awaits is one indivisible step in the product too. `_settle` runs everything until all coroutines are blocked; it reads CPython's `loop._ready`. There are no other dependencies.
 
@@ -36,13 +36,13 @@ Yes, if it changes any of these:
 
 | Covered code | What the check relies on |
 |---|---|
-| `custom_components/codex_assist/codex_runtime.py`: `RuntimeTokenCoordinator.resolve`, `.refresh_after_rejection`, `runtime_token_coordinator`, `resolve_runtime_tokens`, `_persist_runtime_tokens` | Runs as is. Nothing is modeled. |
+| `custom_components/codex_assist/codex_runtime.py`: `RuntimeTokenCoordinator.resolve`, `.refresh_after_rejection`, `runtime_token_coordinator` (one coordinator per entry object, kept in `_COORDINATORS` across reloads), `resolve_runtime_tokens`, `_persist_runtime_tokens` | Runs as is. Nothing is modeled. |
 | `conversation.py`: `resolve(...)` in `async_process`, `_refresh_runtime_tokens` | `request_actor`: coordinator looked up at each call, one retry after a 401 |
 | `ai_task.py`: both `resolve(...)` calls and the 401 retry | `request_actor` (same shape) |
 | `model_discovery.py` `async_entry_model_catalog` | `discovery_actor`: coordinator captured **once** at the start |
-| `config_flow.py` reauth/reconfigure `async_update_reload_and_abort` | `_reauth_writes_new_sign_in`, then `_unload`, `_setup` |
-| `__init__.py` `async_setup_entry` | `_setup` calls `runtime_token_coordinator(entry)` |
-| HA `ConfigEntry.async_unload` deleting `runtime_data` (HA 2026.10 `config_entries.py:1138`) | `_unload` |
+| `config_flow.py` reauth/reconfigure `async_update_reload_and_abort` | `_reauth_writes_new_sign_in`, then `_unload` |
+| `__init__.py` `async_setup_entry` does not look up the coordinator; callers create it on first use | No setup step. If setup starts creating or replacing the coordinator, add a step after `_unload`. |
+| HA `ConfigEntry.async_unload` deleting `runtime_data` (HA 2026.10 `config_entries.py:1138`) | `_unload`. The coordinator no longer lives there, so this must not reset it. |
 | `hass.config_entries.async_update_entry` (synchronous, replaces `entry.data`) | `World.update_entry` |
 | `codex_auth.CodexAuthClient.refresh` error mapping | `ActorAuthClient.refresh`: reuse raises `CodexReauthRequiredError`, `temporary` raises `CodexAuthTemporaryError` |
 
@@ -60,15 +60,14 @@ For a change in `codex_runtime.py`, just rerun. The real code is under test. For
 
 `VERIFIED` lists scenarios that must pass for every schedule:
 
-- `two_requests_share_one_refresh`: Conversation and AI Task (1,452 schedules)
-- `request_and_discovery_share_one_refresh`: Conversation and discovery (1,452 schedules)
-- `request_across_reauth`: Conversation while a reauth writes a new sign-in and reloads (198 schedules)
-- `discovery_across_reauth`: discovery while the same reauth runs (198 schedules)
+- `two_requests_share_one_refresh`: Conversation and AI Task (426 schedules)
+- `request_and_discovery_share_one_refresh`: Conversation and discovery (426 schedules)
+- `request_across_reauth`: Conversation while a reauth writes a new sign-in and reloads (50 schedules)
+- `discovery_across_reauth`: discovery while the same reauth runs (50 schedules)
+- `requests_across_plain_reload`: Conversation and AI Task around a reload with unchanged tokens, such as a manual reload (3,332 schedules)
+- `request_and_discovery_across_reauth`: Conversation and discovery while a reauth reloads (6,272 schedules)
 
-`KNOWN_FINDINGS` lists scenarios that currently break the property. The test is a strict xfail: the run stays green while the finding reproduces, and it turns red as soon as the finding stops reproducing.
-
-- `requests_across_plain_reload`: Conversation and AI Task around a reload with unchanged tokens (a manual reload, for example)
-- `request_and_discovery_across_reauth`
+Each actor stops after its last coordinator call. The retried Codex request that follows never reaches the coordinator, so the check leaves it out.
 
 Assumptions:
 
@@ -87,16 +86,16 @@ Not covered:
 - model-cache coalescing in `ModelDiscoveryCache`
 - the token values the real HTTP auth server returns
 
-## The open finding
+## The reload finding (fixed)
 
-Each reload creates a new coordinator and a new lock, but requests already in flight keep the old one. Shortest counterexample for `requests_across_plain_reload`:
+The coordinator used to live in `entry.runtime_data`, which HA deletes on every unload. Requests still in flight kept the old lock while new requests took a fresh one. The check found this sequence:
 
 1. `conversation-1` calls `resolve()` on coordinator#1 and sends `refresh(R1)`.
 2. HA unloads the entry, deleting `runtime_data`.
-3. `ai_task-1` calls `resolve()`. `runtime_token_coordinator` creates coordinator#2, whose lock is free. The stored token is still R1 and expiring, so it sends `refresh(R1)`.
-4. The server rotates R1 to R2 for `conversation-1`, then rejects R1 from `ai_task-1` as reused, and `ai_task-1` starts reauth.
+3. `ai_task-1` calls `resolve()` and gets coordinator#2, whose lock is free. The stored token is still R1 and expiring, so it sends `refresh(R1)`.
+4. The server rotates R1 for `conversation-1`, rejects R1 from `ai_task-1` as reused, and `ai_task-1` starts reauth.
 
-A fix would make the coordinator outlive reloads, for example by keying it by `entry.entry_id` in `hass.data`. After such a fix, move both scenarios into `VERIFIED`.
+`runtime_token_coordinator` now keeps one coordinator per entry object in a `weakref.WeakKeyDictionary`, so a reload keeps the lock and a removed entry frees it. If a change moves the coordinator back into `runtime_data` or `hass.data` cleared on unload, `requests_across_plain_reload` fails.
 
 ## Real bug or modeling error?
 

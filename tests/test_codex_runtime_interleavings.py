@@ -3,6 +3,8 @@
 Runs the real ``RuntimeTokenCoordinator`` under every ordering of its await
 points for small bounded scenarios and checks that a rotating refresh token is
 never spent twice and that the stored token is still usable afterwards.
+Actors stop after their last coordinator call. The retried Codex request that
+follows never reaches the coordinator, so leaving it out loses no interleaving.
 Maintained through ``.agents/skills/verify-token-rotation/SKILL.md``.
 """
 
@@ -128,7 +130,6 @@ class World:
                 "refresh_token": tokens.refresh_token,
             }
         )
-        self.coordinator_name(runtime_token_coordinator(self.entry))  # __init__.py:22
         self.unstarted = list(scenario.actors)
         self.tasks: dict[str, asyncio.Task] = {}
         self.events = [step for event in scenario.events for step in EVENT_STEPS[event]]
@@ -242,7 +243,6 @@ async def request_actor(world: World, actor: str) -> None:
             "refresh_after_rejection",
             rejected_tokens=tokens,
         )
-        await world.backend(actor, tokens)
     except (CodexReauthRequiredError, CodexAuthTemporaryError) as err:
         world.note(f"{actor}: gives up with {type(err).__name__}")
 
@@ -257,7 +257,6 @@ async def discovery_actor(world: World, actor: str) -> None:
         tokens = await _call(
             world, actor, coordinator, "refresh_after_rejection", rejected_tokens=tokens
         )
-        await world.backend(actor, tokens)
     except (CodexReauthRequiredError, CodexAuthTemporaryError) as err:
         world.note(f"{actor}: gives up with {type(err).__name__}")
 
@@ -280,17 +279,12 @@ def _unload(world: World) -> None:
         del world.entry.runtime_data
 
 
-def _setup(world: World) -> None:
-    world.note(f"  setup uses {world.coordinator_name(runtime_token_coordinator(world.entry))}")
-
-
 ACTORS = {"conversation": request_actor, "ai_task": request_actor, "discovery": discovery_actor}
 EVENT_STEPS = {
-    "reload": [("reload: unload entry", _unload), ("reload: async_setup_entry", _setup)],
+    "reload": [("reload: unload entry", _unload)],
     "reauth": [
         ("reauth: write new sign-in to entry.data", _reauth_writes_new_sign_in),
         ("reauth reload: unload entry", _unload),
-        ("reauth reload: async_setup_entry", _setup),
     ],
 }
 

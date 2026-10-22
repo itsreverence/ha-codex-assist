@@ -16,10 +16,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from homeassistant.helpers.event import async_track_time_interval
 
     from .codex_models import MODEL_CACHE_SECONDS
-    from .codex_runtime import runtime_token_coordinator
     from .model_discovery import async_entry_model_catalog
-
-    runtime_token_coordinator(entry)
 
     await hass.config_entries.async_forward_entry_setups(
         entry,
