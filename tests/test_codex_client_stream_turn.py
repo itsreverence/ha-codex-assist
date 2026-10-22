@@ -15,10 +15,9 @@ from custom_components.codex_assist.codex_client import (
 
 
 class FakeStreamResponse:
-    def __init__(self, status_code, lines, *, body=b""):
+    def __init__(self, status_code, lines):
         self.status_code = status_code
         self._lines = lines
-        self._body = body
 
     async def __aenter__(self):
         return self
@@ -29,9 +28,6 @@ class FakeStreamResponse:
     async def aiter_lines(self):
         for line in self._lines:
             yield line
-
-    async def aread(self):
-        return self._body
 
 
 class FakeHttpClient:
