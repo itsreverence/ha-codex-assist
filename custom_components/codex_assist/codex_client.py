@@ -63,22 +63,10 @@ class AsyncPostClient(Protocol):
 
 
 @dataclass(frozen=True)
-class CodexMessage:
-    role: str
-    content: str | list[dict[str, Any]]
-
-
-@dataclass(frozen=True)
 class CodexToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class CodexTurnResult:
-    text: str
-    tool_calls: list[CodexToolCall]
 
 
 @dataclass(frozen=True)
@@ -306,59 +294,6 @@ class CodexClient:
         self._access_token = access_token
         self._base_url = base_url.rstrip("/")
 
-    async def generate_text(
-        self,
-        *,
-        model: str,
-        instructions: str,
-        messages: list[CodexMessage],
-    ) -> str:
-        result = await self.generate_turn(
-            model=model,
-            instructions=instructions,
-            input_items=codex_messages_to_input_items(messages),
-        )
-        return result.text
-
-    async def generate_turn(
-        self,
-        *,
-        model: str,
-        instructions: str,
-        input_items: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-    ) -> CodexTurnResult:
-        payload = _responses_payload(
-            model=model,
-            instructions=instructions,
-            input_items=input_items,
-            tools=tools,
-        )
-
-        response = await self._http_client.post(
-            f"{self._base_url}/responses",
-            headers=codex_headers(self._access_token),
-            json=payload,
-        )
-        if response.status_code != 200:
-            error = _response_error(response)
-            if response.status_code == 401 or error.code == "token_invalidated":
-                raise CodexAuthenticationError(f"Codex authentication failed: {error.detail}")
-            if _is_rate_limit_response(response.status_code, error):
-                raise CodexRateLimitError(
-                    f"Codex usage limit or rate limit reached: {error.detail}"
-                )
-            raise RuntimeError(
-                f"Codex request failed with status {response.status_code}: {error.detail}"
-            )
-        if response.text:
-            return extract_streamed_turn_result(response.text)
-        payload = response.json()
-        return CodexTurnResult(
-            text=extract_output_text(payload),
-            tool_calls=extract_tool_calls(payload),
-        )
-
     async def stream_turn(
         self,
         *,
@@ -469,7 +404,7 @@ class CodexClient:
             timeout=CODEX_SEARCH_TIMEOUT,
         )
         if response.status_code != 200:
-            error = _response_error(response)
+            error = _response_error(response.text)
             if response.status_code == 401 or error.code == "token_invalidated":
                 raise CodexAuthenticationError(f"Codex authentication failed: {error.detail}")
             if _is_rate_limit_response(response.status_code, error):
@@ -791,10 +726,6 @@ def _supports_reasoning_options(model: str) -> bool:
     return model.startswith(("gpt-5", "o"))
 
 
-def codex_messages_to_input_items(messages: list[CodexMessage]) -> list[dict[str, Any]]:
-    return [{"role": message.role, "content": message.content} for message in messages]
-
-
 def codex_user_content_with_images(
     text: str,
     images: list[tuple[str, bytes]],
@@ -913,120 +844,10 @@ def _function_call_event_key(
     return None
 
 
-def extract_streamed_output_text(stream_text: str) -> str:
-    return extract_streamed_turn_result(stream_text).text
-
-
-def extract_streamed_turn_result(stream_text: str) -> CodexTurnResult:
-    delta_parts: list[str] = []
-    done_parts: list[str] = []
-    tool_calls: list[CodexToolCall] = []
-    pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
-    completed_tool_call_ids: set[str] = set()
-    anonymous_call_index = 0
-
-    for event in _iter_sse_events(stream_text):
-        event_type = event.get("type")
-        if stream_error := _stream_event_exception(event):
-            raise stream_error
-        if event_type == "response.output_text.delta":
-            delta = event.get("delta")
-            if isinstance(delta, str):
-                delta_parts.append(delta)
-            continue
-        if event_type == "response.output_item.added":
-            item = event.get("item")
-            if isinstance(item, dict) and item.get("type") == "function_call":
-                key = _function_call_item_key(item, event)
-                if key is None:
-                    anonymous_call_index += 1
-                    key = f"anonymous-{anonymous_call_index}"
-                pending_tool_calls[key] = (item, str(item.get("arguments") or ""))
-            continue
-        if event_type == "response.function_call_arguments.delta":
-            key = _function_call_event_key(event, pending_tool_calls)
-            delta = event.get("delta")
-            if key is not None and isinstance(delta, str):
-                item, arguments = pending_tool_calls[key]
-                pending_tool_calls[key] = (item, arguments + delta)
-            continue
-        if event_type == "response.function_call_arguments.done":
-            key = _function_call_event_key(event, pending_tool_calls)
-            if key is not None:
-                current_tool_call, current_arguments = pending_tool_calls.pop(key)
-                arguments = event.get("arguments")
-                if isinstance(arguments, str):
-                    current_arguments = arguments
-                tool_call = _tool_call_from_item(current_tool_call, current_arguments)
-                completed_tool_call_ids.add(tool_call.id)
-                tool_calls.append(tool_call)
-            continue
-        if event_type == "response.output_item.done":
-            item = event.get("item")
-            if isinstance(item, dict):
-                if item.get("type") == "function_call":
-                    call_id = str(item.get("call_id") or item.get("id") or "")
-                    key = _function_call_item_key(item, event)
-                    if key is not None:
-                        pending_tool_calls.pop(key, None)
-                    if not call_id or call_id not in completed_tool_call_ids:
-                        tool_calls.append(
-                            _tool_call_from_item(item, str(item.get("arguments") or ""))
-                        )
-                else:
-                    done_parts.append(extract_output_text({"output": [item]}))
-
-    # Codex streams both text deltas and the completed message item. The
-    # completed item repeats the same visible text, so prefer deltas when
-    # present and only fall back to output_item.done when no deltas arrived.
-    parts = delta_parts or done_parts
-    return CodexTurnResult(text="".join(parts).strip(), tool_calls=tool_calls)
-
-
-def _iter_sse_events(stream_text: str):
-    event_name: str | None = None
-    data_lines: list[str] = []
-
-    def flush_event():
-        nonlocal event_name
-        if not data_lines:
-            event_name = None
-            return None
-        event = event_name
-        event_name = None
-        data = "\n".join(data_lines)
-        data_lines.clear()
-        if data == "[DONE]":
-            return None
-        try:
-            payload = json.loads(data)
-        except json.JSONDecodeError:
-            return None
-        if isinstance(payload, dict) and event and "type" not in payload:
-            payload["type"] = event
-        return payload if isinstance(payload, dict) else None
-
-    for line in stream_text.splitlines():
-        if not line.strip():
-            payload = flush_event()
-            if payload is not None:
-                yield payload
-            continue
-        if line.startswith("data:"):
-            data_lines.append(line.removeprefix("data:").strip())
-        elif line.startswith("event:"):
-            event_name = line.removeprefix("event:").strip()
-
-    payload = flush_event()
-    if payload is not None:
-        yield payload
-
-
-def _response_error(response: Any) -> CodexResponseError:
-    text = getattr(response, "text", "") or ""
+def _response_error(text: str) -> CodexResponseError:
     try:
-        payload = json.loads(text) if text else response.json()
-    except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
+        payload = json.loads(text)
+    except json.JSONDecodeError:
         return CodexResponseError(text[:500] if text else "unknown error")
     if isinstance(payload, dict):
         detail = payload.get("detail") or payload.get("message") or payload.get("error")
@@ -1092,29 +913,6 @@ def _stream_event_exception(event: dict[str, Any]) -> RuntimeError | None:
     return RuntimeError(
         error.detail if event_type == "error" else f"Codex stream failed: {error.detail}"
     )
-
-
-def extract_output_text(payload: dict[str, Any]) -> str:
-    parts: list[str] = []
-    for item in payload.get("output") or []:
-        if not isinstance(item, dict):
-            continue
-        for content in item.get("content") or []:
-            if not isinstance(content, dict):
-                continue
-            if content.get("type") == "output_text":
-                text = content.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-    return "".join(parts).strip()
-
-
-def extract_tool_calls(payload: dict[str, Any]) -> list[CodexToolCall]:
-    tool_calls: list[CodexToolCall] = []
-    for item in payload.get("output") or []:
-        if isinstance(item, dict) and item.get("type") == "function_call":
-            tool_calls.append(_tool_call_from_item(item, str(item.get("arguments") or "")))
-    return tool_calls
 
 
 def _tool_call_from_item(item: dict[str, Any], arguments: str) -> CodexToolCall:
@@ -1211,14 +1009,6 @@ async def _stream_response_error(response: Any) -> CodexResponseError:
         text = await response.aread()
     except Exception:
         text = b""
-    text_value = text.decode(errors="replace") if isinstance(text, bytes) else str(text or "")
-
-    class ResponseBody:
-        status_code = response.status_code
-        text = text_value
-
-        @staticmethod
-        def json() -> Any:
-            return json.loads(text_value)
-
-    return _response_error(ResponseBody())
+    return _response_error(
+        text.decode(errors="replace") if isinstance(text, bytes) else str(text or "")
+    )
