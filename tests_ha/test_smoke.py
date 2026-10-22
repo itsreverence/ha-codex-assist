@@ -523,9 +523,15 @@ async def test_options_flow_uses_real_home_assistant_contract(
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"]["text_verbosity"] == "low"
-    assert result["data"]["web_search"] is True
-    assert entry.options["prompt"] == prompt
+    assert dict(entry.options) == {
+        "model": "gpt-5.4",
+        "text_verbosity": "low",
+        "web_search": True,
+        "prompt": prompt,
+        "reasoning_effort": "low",
+        "image_model": "gpt-image-2-medium",
+        "image_size": "1024x1024",
+    }
 
 
 def test_structured_output_uses_real_home_assistant_schema_converter() -> None:

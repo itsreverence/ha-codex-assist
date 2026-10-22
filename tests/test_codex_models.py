@@ -113,6 +113,23 @@ async def test_nonfinite_priorities_and_malformed_entries_do_not_break_valid_res
     ) == ["c", "a", "b"]
 
 
+async def test_cache_reuses_success_without_fetching_until_it_expires():
+    now = [0]
+    cache = ModelDiscoveryCache(clock=lambda: now[0])
+    calls = []
+
+    async def fetch():
+        calls.append(True)
+        return ["model-1"]
+
+    await cache.async_get(fetch)
+    now[0] = MODEL_CACHE_SECONDS - 1
+    reused = await cache.async_get(fetch)
+
+    assert (reused.source, reused.models, reused.error) == ("cached", ("model-1",), None)
+    assert len(calls) == 1
+
+
 async def test_cache_keeps_last_success_on_failure_and_retries_after_backoff():
     now = [0]
     cache = ModelDiscoveryCache(clock=lambda: now[0])
@@ -125,10 +142,6 @@ async def test_cache_keeps_last_success_on_failure_and_retries_after_backoff():
         return [f"model-{len(calls)}"]
 
     assert (await cache.async_get(fetch)).source == "discovered"
-    now[0] = 60 * 60
-    reused = await cache.async_get(fetch)
-    assert (reused.source, reused.models, reused.error) == ("cached", ("model-1",), None)
-    assert len(calls) == 1
     now[0] = MODEL_CACHE_SECONDS
     stale = await cache.async_get(fetch)
     assert (stale.source, stale.models, stale.error) == ("cached", ("model-1",), "unavailable")

@@ -159,6 +159,8 @@ def install_homeassistant_fakes(monkeypatch):
             return self.schema(value)
 
     class Schema:
+        """Does not validate or apply defaults. Real-library semantics belong in tests_ha."""
+
         def __init__(self, schema):
             self.schema = schema
 
@@ -193,8 +195,12 @@ def install_homeassistant_fakes(monkeypatch):
         def __call__(self, value):
             return value
 
-    class All(Any):
-        pass
+    class All:
+        def __init__(self, *validators):
+            self.validators = validators
+
+        def __call__(self, value):
+            return value
 
     config_entries.ConfigFlow = ConfigFlow
     config_entries.ConfigEntry = ConfigEntry

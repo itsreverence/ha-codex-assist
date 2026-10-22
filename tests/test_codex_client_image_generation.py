@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 
 import pytest
@@ -89,6 +90,8 @@ async def test_generate_image_uses_codex_responses_image_generation_tool():
         },
     ]
 
+    expected_input = copy.deepcopy(input_items)
+
     result = await client.generate_image(
         prompt="Redraw the attached floor plan as a line icon",
         input_items=input_items,
@@ -108,7 +111,7 @@ async def test_generate_image_uses_codex_responses_image_generation_tool():
     assert url == "https://chatgpt.com/backend-api/codex/responses"
     assert kwargs["headers"]["Accept"] == "text/event-stream"
     assert payload["model"] == "gpt-5.4"
-    assert payload["input"] == input_items
+    assert payload["input"] == expected_input
     assert payload["stream"] is True
     assert payload["tools"] == [
         {

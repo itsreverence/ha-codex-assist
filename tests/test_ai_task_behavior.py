@@ -76,30 +76,6 @@ def test_structured_data_from_text_restores_nested_optional_omission(ai_task_mod
     ) == {"rooms": [{"name": "Kitchen"}]}
 
 
-def test_structured_data_from_text_preserves_required_nullable_value(ai_task_module):
-    structure = ai_task_module.vol.Schema(
-        {ai_task_module.vol.Required("value"): ai_task_module.vol.Any(str, None)}
-    )
-
-    assert ai_task_module._structured_data_from_text('{"value":null}', structure) == {
-        "value": None
-    }
-
-
-def test_structured_data_from_text_removes_null_composed_key_placeholder(ai_task_module):
-    structure = ai_task_module.vol.Schema(
-        {
-            ai_task_module.vol.Required(
-                ai_task_module.vol.Any("email", "phone")
-            ): str
-        }
-    )
-
-    assert ai_task_module._structured_data_from_text(
-        '{"email":"person@example.com","phone":null}', structure
-    ) == {"email": "person@example.com"}
-
-
 def test_structured_output_format_preserves_optional_semantics_in_nested_schema(
     ai_task_module,
     monkeypatch,
