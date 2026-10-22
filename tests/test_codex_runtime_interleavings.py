@@ -1,10 +1,9 @@
 """Exhaustive interleaving check for refresh-token rotation.
 
-Runs the real ``RuntimeTokenCoordinator`` under every ordering of its await
-points for small bounded scenarios and checks that a rotating refresh token is
+Drives the real ``RuntimeTokenCoordinator`` coroutines by hand, so every point
+where one suspends is a scheduling choice, and runs every ordering of those
+choices for small bounded scenarios. It checks that a rotating refresh token is
 never spent twice and that the stored token is still usable afterwards.
-Actors stop after their last coordinator call. The retried Codex request that
-follows never reaches the coordinator, so leaving it out loses no interleaving.
 Maintained through ``.agents/skills/verify-token-rotation/SKILL.md``.
 """
 
@@ -14,6 +13,7 @@ import asyncio
 import base64
 import json
 import time
+from collections.abc import Coroutine
 from dataclasses import dataclass
 
 import pytest
@@ -27,6 +27,7 @@ from custom_components.codex_assist.codex_runtime import (
     ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
     runtime_token_coordinator,
 )
+from tests.ha_fakes import FakeConfigEntry
 
 FAR_FUTURE = 4_000_000_000
 
@@ -51,11 +52,14 @@ class Gate:
     future: asyncio.Future
 
 
-class Entry:
-    """Config entry: HA replaces ``data`` on update and deletes ``runtime_data`` on unload."""
-
-    def __init__(self, data: dict) -> None:
-        self.data = data
+@dataclass
+class Actor:
+    name: str
+    coro: Coroutine
+    started: bool = False
+    waiting: object = None
+    done: bool = False
+    error: BaseException | None = None
 
 
 class AuthServer:
@@ -117,21 +121,22 @@ class World:
         self.scenario = scenario
         self.trace: list[str] = []
         self.violations: list[str] = []
-        self.gates: list[Gate] = []
+        self.gates: dict[asyncio.Future, Gate] = {}
         self.coordinators: dict[int, int] = {}
         self.rejected: dict[str, CodexTokenSet] = {}
         self.fell_back: set[str] = set()
         self.server = AuthServer(self)
         tokens = self.server.sign_in(time.time() + 60)  # inside the 120 s refresh skew
-        self.entry = Entry(
-            {
+        self.entry = FakeConfigEntry(
+            data={
                 "model": "m",
                 "access_token": tokens.access_token,
                 "refresh_token": tokens.refresh_token,
             }
         )
-        self.unstarted = list(scenario.actors)
-        self.tasks: dict[str, asyncio.Task] = {}
+        self.actors = [
+            Actor(name, ACTORS[name.split("-")[0]](self, name)) for name in scenario.actors
+        ]
         self.events = [step for event in scenario.events for step in EVENT_STEPS[event]]
 
     def coordinator_name(self, coordinator) -> str:
@@ -151,51 +156,71 @@ class World:
 
     async def gate(self, actor: str, what: str, outcomes: tuple[str, ...]) -> str:
         gate = Gate(actor, what, outcomes, self.loop.create_future())
-        self.gates.append(gate)
+        self.gates[gate.future] = gate
         self.note(f"{actor}: sends {what}")
         return await gate.future
 
-    async def backend(self, actor: str, tokens: CodexTokenSet) -> str:
+    async def backend(self, actor: str, tokens: CodexTokenSet, *, last: bool = True) -> str:
         expired = _exp(tokens.access_token) <= time.time()
-        outcomes = ("401",) if expired else ("ok", "401")
+        outcomes = ("401",) if expired else ("done", "401") if last else ("done", "tool", "401")
         return await self.gate(actor, "Codex request", outcomes)
 
     def choices(self) -> list[tuple[str, object]]:
         found: list[tuple[str, object]] = []
-        for name in self.unstarted:
-            found.append((f"start {name}", ("start", name)))
-        for gate in self.gates:
-            for outcome in gate.outcomes:
-                label = f"{gate.actor}: {gate.what} answered {outcome}"
-                found.append((label, ("gate", gate, outcome)))
+        for actor in self.actors:
+            if actor.done:
+                continue
+            gate = self.gates.get(actor.waiting)
+            if gate is not None:
+                for outcome in gate.outcomes:
+                    label = f"{actor.name}: {gate.what} answered {outcome}"
+                    found.append((label, ("answer", actor, gate, outcome)))
+            elif actor.waiting is None or actor.waiting.done():
+                label = f"{actor.name}: resumes" if actor.started else f"start {actor.name}"
+                found.append((label, ("step", actor)))
         if self.events:
             found.append((self.events[0][0], ("event", self.events[0])))
         return found
 
     def apply(self, label: str, choice) -> None:
         kind = choice[0]
-        if kind == "start":
-            name = choice[1]
-            self.unstarted.remove(name)
-            self.note(f"{name}: starts")
-            self.tasks[name] = self.loop.create_task(ACTORS[name.split("-")[0]](self, name))
-        elif kind == "gate":
-            _, gate, outcome = choice
-            self.gates.remove(gate)
+        if kind == "answer":
+            _, actor, gate, outcome = choice
+            del self.gates[gate.future]
             self.note(label)
             gate.future.set_result(outcome)
+            self.step(actor)
+        elif kind == "step":
+            self.note(label)
+            self.step(choice[1])
         else:
             self.events.pop(0)
             self.note(f"HA: {label}")
             choice[1][1](self)
 
+    def step(self, actor: Actor) -> None:
+        # A gate answer resumes its actor in the same step: the auth server's
+        # effect runs inside the actor, so splitting them adds no new ordering.
+        actor.started = True
+        try:
+            actor.waiting = actor.coro.send(None)
+        except StopIteration:
+            actor.done = True
+            return
+        except Exception as err:  # noqa: BLE001
+            actor.done, actor.error = True, err
+            return
+        if actor.waiting is not None and not isinstance(actor.waiting, asyncio.Future):
+            self.violate(f"NoUnsupportedAwait: {actor.name} yielded {actor.waiting!r}")
+
     def check_final(self) -> None:
-        stuck = [name for name, task in self.tasks.items() if not task.done()]
+        stuck = [actor.name for actor in self.actors if not actor.done]
         if stuck:
             self.violate(f"NoDeadlock: {stuck} never finished")
-        for name, task in self.tasks.items():
-            if task.done() and task.exception() is not None:
-                self.violate(f"NoCrash: {name} raised {task.exception()!r}")
+        for actor in self.actors:
+            actor.coro.close()
+            if actor.error is not None:
+                self.violate(f"NoCrash: {actor.name} raised {actor.error!r}")
         stored = self.entry.data["refresh_token"]
         family = self.server.family_of[stored]
         if family != self.server.families:
@@ -229,20 +254,33 @@ async def _call(world: World, actor: str, coordinator, method: str, **kwargs):
 async def request_actor(world: World, actor: str) -> None:
     """Conversation and AI Task: look up the coordinator at each call.
 
-    conversation.py resolve() then _refresh_runtime_tokens() after a 401;
-    ai_task.py follows the same shape.
+    Each tool round sends a Codex request. A 401 calls _refresh_runtime_tokens
+    and retries once, and a second 401 starts reauth (conversation.py
+    async_process loop, ai_task.py run_tool_round). The last retry is left out:
+    its answer never reaches the coordinator.
     """
     try:
         tokens = await _call(world, actor, runtime_token_coordinator(world.entry), "resolve")
-        if await world.backend(actor, tokens) == "ok":
-            return
-        tokens = await _call(
-            world,
-            actor,
-            runtime_token_coordinator(world.entry),
-            "refresh_after_rejection",
-            rejected_tokens=tokens,
-        )
+        rounds = world.scenario.tool_rounds
+        for round_number in range(rounds):
+            last = round_number == rounds - 1
+            answer = await world.backend(actor, tokens, last=last)
+            if answer == "401":
+                tokens = await _call(
+                    world,
+                    actor,
+                    runtime_token_coordinator(world.entry),
+                    "refresh_after_rejection",
+                    rejected_tokens=tokens,
+                )
+                if last:
+                    return
+                answer = await world.backend(actor, tokens, last=last)
+                if answer == "401":
+                    world.note(f"{actor}: starts reauth after the retry was rejected")
+                    return
+            if answer == "done":
+                return
     except (CodexReauthRequiredError, CodexAuthTemporaryError) as err:
         world.note(f"{actor}: gives up with {type(err).__name__}")
 
@@ -252,7 +290,7 @@ async def discovery_actor(world: World, actor: str) -> None:
     coordinator = runtime_token_coordinator(world.entry)
     try:
         tokens = await _call(world, actor, coordinator, "resolve")
-        if await world.backend(actor, tokens) == "ok":
+        if await world.backend(actor, tokens) == "done":
             return
         tokens = await _call(
             world, actor, coordinator, "refresh_after_rejection", rejected_tokens=tokens
@@ -293,22 +331,13 @@ EVENT_STEPS = {
 class Scenario:
     actors: tuple[str, ...]
     events: tuple[str, ...] = ()
-
-
-async def _settle(loop: asyncio.AbstractEventLoop) -> None:
-    # Run every coroutine until it blocks on a Gate or a lock held by one.
-    # _ready is CPython's run queue; empty on resumption means nothing else can run.
-    idle = 0
-    while idle < 2:
-        await asyncio.sleep(0)
-        idle = idle + 1 if not loop._ready else 0  # noqa: SLF001
+    tool_rounds: int = 1
 
 
 async def _run(scenario: Scenario, forced: list[int]) -> tuple[World, list[int]]:
     world = World(scenario)
     widths: list[int] = []
     while True:
-        await _settle(world.loop)
         options = world.choices()
         if not options:
             break
@@ -349,6 +378,10 @@ VERIFIED = {
     "request_and_discovery_across_reauth": Scenario(
         ("conversation-1", "discovery-1"), ("reauth",)
     ),
+    "tool_rounds_and_discovery_share_refreshes": Scenario(
+        ("conversation-1", "discovery-1"), tool_rounds=2
+    ),
+    "tool_rounds_across_reauth": Scenario(("conversation-1",), ("reauth",), tool_rounds=2),
 }
 
 

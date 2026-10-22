@@ -26,9 +26,15 @@ These properties replace the four hand-ordered concurrency tests that used to li
 uv run pytest tests/test_codex_runtime_interleavings.py -q -s
 ```
 
-The run takes about 2 s. A healthy run reports `6 passed`, and `-s` prints the schedule count for each scenario. A failure prints the counterexample.
+The run takes about 2 s. A healthy run reports `8 passed`, and `-s` prints the schedule count for each scenario. A failure prints the counterexample.
 
-The tool is a stateless model checker written in the test file. It runs the **real** `RuntimeTokenCoordinator` and replays the scenario from scratch, depth-first, once for every ordering. Every await the coordinator makes on the outside world is a `Gate`: an auth-server answer (`ok` / `temporary`) or a Codex backend answer (`ok` / `401`). The explorer chooses which gate resolves next, with which outcome, and when each actor starts or each HA event step runs. asyncio is single-threaded, so code between two awaits is one indivisible step in the product too. `_settle` runs everything until all coroutines are blocked; it reads CPython's `loop._ready`. There are no other dependencies.
+The tool is a stateless model checker written in the test file. It drives the **real** `RuntimeTokenCoordinator` coroutines by hand with `send` and replays each scenario from scratch, depth-first, once for every ordering. Every point where an actor suspends is a choice:
+
+- An await on a `Gate` (an auth-server answer `ok` / `temporary`, or a Codex backend answer `ok` / `401`) offers one choice per outcome. The answer and the actor's resumption are one step, because the gate's effect runs inside the actor.
+- An await on a lock held by another actor, or a bare `yield` such as `asyncio.sleep(0)`, makes the actor runnable, and resuming it is a separate choice.
+- Each HA event step is a choice.
+
+Code between two suspensions runs as one step, which matches asyncio, so a new `await` in the coordinator becomes a new scheduling point without any harness change. An actor that yields anything other than an asyncio future or `None` reports `NoUnsupportedAwait`: the harness needs extending. There are no other dependencies.
 
 ## Does my change touch this?
 
@@ -54,32 +60,36 @@ To see whether the covered code changed since then:
 git diff 01f0b88 -- custom_components/codex_assist/codex_runtime.py custom_components/codex_assist/conversation.py custom_components/codex_assist/ai_task.py custom_components/codex_assist/model_discovery.py custom_components/codex_assist/config_flow.py custom_components/codex_assist/__init__.py custom_components/codex_assist/codex_auth.py
 ```
 
-For a change in `codex_runtime.py`, just rerun. The real code is under test. For a change in a caller, reload/reauth, or the auth client, first update the matching actor or event so that it still does what the code does. That includes the order of lookups and awaits and whether the coordinator is captured or looked up again. Then rerun. Move the sync commit forward only after you have confirmed that every row of the table describes the code at the new commit.
+For a change in `codex_runtime.py`, just rerun. The real code is under test, and new awaits are scheduled automatically. For a change in a caller, reload/reauth, or the auth client, first update the matching actor or event so that it still does what the code does. That includes the order of lookups and awaits and whether the coordinator is captured or looked up again. Then rerun. Move the sync commit forward only after you have confirmed that every row of the table describes the code at the new commit.
 
 ## Scenarios and bounds
 
 `VERIFIED` lists scenarios that must pass for every schedule:
 
-- `two_requests_share_one_refresh`: Conversation and AI Task (426 schedules)
-- `request_and_discovery_share_one_refresh`: Conversation and discovery (426 schedules)
+- `two_requests_share_one_refresh`: Conversation and AI Task (548 schedules)
+- `request_and_discovery_share_one_refresh`: Conversation and discovery (548 schedules)
 - `request_across_reauth`: Conversation while a reauth writes a new sign-in and reloads (50 schedules)
 - `discovery_across_reauth`: discovery while the same reauth runs (50 schedules)
-- `requests_across_plain_reload`: Conversation and AI Task around a reload with unchanged tokens, such as a manual reload (3,332 schedules)
-- `request_and_discovery_across_reauth`: Conversation and discovery while a reauth reloads (6,272 schedules)
+- `requests_across_plain_reload`: Conversation and AI Task around a reload with unchanged tokens, such as a manual reload (4,872 schedules)
+- `request_and_discovery_across_reauth`: Conversation and discovery while a reauth reloads (9,600 schedules)
+- `tool_rounds_and_discovery_share_refreshes`: Conversation with two tool rounds, each able to refresh once, and discovery (3,558 schedules)
+- `tool_rounds_across_reauth`: Conversation with two tool rounds while a reauth reloads (310 schedules)
 
-Each actor stops after its last coordinator call. The retried Codex request that follows never reaches the coordinator, so the check leaves it out.
+A request actor runs `tool_rounds` rounds, one by default. Each round sends a Codex request, and a 401 refreshes and retries once, as the tool-round loops in `conversation.py` and `ai_task.py` do. A second 401 ends the actor, which models the reauth start. The retry in the last round, and discovery's retry, are left out because their answers never reach the coordinator.
+
+`tests_ha/test_smoke.py::test_token_coordinator_survives_reload_but_not_removal` pins the fact the fix rests on against real Home Assistant: `async_reload` keeps the same `ConfigEntry` object, so it gets the same coordinator, and a removed and re-added entry gets a new one. The model only assumes this.
 
 Assumptions:
 
 - The stored access token starts inside the 120 s refresh skew but has not expired.
 - Refreshed and reauth tokens never expire.
 - The backend may return 401 for any token, which models opaque tokens and server revocation, and returns only 401 for an expired one.
-- Each actor retries at most once after any 401. The code retries only when `CodexAuthenticationError.retry_allowed` is set, so the check explores a superset of its schedules.
-- Each scenario has at most two actors and at most one reload or reauth.
+- Any 401 may trigger the refresh and retry. The code retries only when `CodexAuthenticationError.retry_allowed` is set, so the actors allow more retries than the code does.
+- Each scenario has at most two actors, at most one reload or reauth, and at most two tool rounds per request actor. The code allows up to six rounds (`MAX_TOOL_ITERATIONS + 1`).
 
 Not covered:
 
-- more actors or repeated events
+- more actors, more tool rounds, or repeated events
 - a refresh the server applied whose response was lost, which no client-side lock can fix
 - clock movement during a run
 - HA cancelling tasks on shutdown
@@ -95,7 +105,7 @@ The coordinator used to live in `entry.runtime_data`, which HA deletes on every 
 3. `ai_task-1` calls `resolve()` and gets coordinator#2, whose lock is free. The stored token is still R1 and expiring, so it sends `refresh(R1)`.
 4. The server rotates R1 for `conversation-1`, rejects R1 from `ai_task-1` as reused, and `ai_task-1` starts reauth.
 
-`runtime_token_coordinator` now keeps one coordinator per entry object in a `weakref.WeakKeyDictionary`, so a reload keeps the lock and a removed entry frees it. If a change moves the coordinator back into `runtime_data` or `hass.data` cleared on unload, `requests_across_plain_reload` fails.
+`runtime_token_coordinator` now keeps one coordinator per entry object in a `weakref.WeakKeyDictionary`, so a reload keeps the lock and a removed entry frees it. If a change moves the coordinator back into `runtime_data`, `requests_across_plain_reload` fails. The model has no `hass.data` and does not run `async_unload_entry`, so a store that unload clears some other way would pass the model. `test_token_coordinator_survives_reload_but_not_removal` catches that case in real HA.
 
 ## Real bug or modeling error?
 
@@ -108,7 +118,7 @@ Read the printed counterexample one step at a time against the code.
 
 ## Proof that it can fail
 
-Each of these guards was removed from `codex_runtime.py` once, and the check was run against the result at `01f0b88`:
+Each of these mutations was applied once to `codex_runtime.py` with the reload fix in place, and the check was run against the result:
 
 | Mutation | Caught by |
 |---|---|
@@ -117,5 +127,6 @@ Each of these guards was removed from `codex_runtime.py` once, and the check was
 | `resolve_runtime_tokens` drops `if latest != tokens: return latest` | StoredTokenUsable |
 | `refresh_after_rejection` drops `if latest != current: return latest` | StoredTokenUsable |
 | `refresh_after_rejection` drops `if current != rejected_tokens: return current` | NoRedundantRefresh |
+| `resolve_runtime_tokens` adds `await asyncio.sleep(0)` before `_persist_runtime_tokens` | StoredTokenUsable |
 
-When you change the harness, repeat all five mutations, then restore the file with `git checkout -- custom_components/codex_assist/codex_runtime.py`.
+When you change the harness, repeat all six mutations. Copy `codex_runtime.py` aside before mutating and copy it back afterwards. Do not restore it with `git checkout`, which also discards uncommitted work in that file.
