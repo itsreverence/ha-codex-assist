@@ -29,7 +29,6 @@ from custom_components.codex_assist.codex_auth import CodexAuthClient  # noqa: E
 from custom_components.codex_assist.codex_client import (  # noqa: E402
     CodexClient,
     CodexToolCallDelta,
-    _aiter_completed_response_events,
 )
 from custom_components.codex_assist.codex_models import fetch_codex_model_ids  # noqa: E402
 
@@ -99,78 +98,94 @@ def _object_arguments(value: Any) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-async def summarize(body: bytes, client_calls: list[tuple[str, dict]]) -> dict[str, Any]:
+def _raw_events(body: bytes) -> list[dict]:
+    """Parse SSE data lines without the client's parser, so its bugs can't hide."""
+    events = []
+    for line in body.decode("utf-8", "replace").splitlines():
+        if not line.startswith("data:") or line[5:].strip() == "[DONE]":
+            continue
+        try:
+            event = json.loads(line[5:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def summarize(
+    body: bytes, client_calls: list[tuple[str, dict]], client_error: str | None
+) -> dict[str, Any]:
     """Compare the raw function-call events with the calls the client yielded."""
     items: list[dict] = []
-    added_ids: set[str] = set()
-    deltas: dict[str, str] = {}
+    announced: set[str] = set()
     arguments_done: dict[str, Any] = {}
     completed = False
-    async for event in _aiter_completed_response_events(httpx.Response(200, content=body)):
+    for event in _raw_events(body):
         kind = event.get("type")
         item = event.get("item")
-        if kind == "response.output_item.added" and isinstance(item, dict):
-            if item.get("type") == "function_call":
-                added_ids.add(str(item.get("id")))
-        elif kind == "response.function_call_arguments.delta":
-            key = str(event.get("item_id"))
-            deltas[key] = deltas.get(key, "") + str(event.get("delta") or "")
-        elif kind == "response.function_call_arguments.done":
-            arguments_done[str(event.get("item_id"))] = event.get("arguments")
-        elif kind == "response.output_item.done" and isinstance(item, dict):
-            if item.get("type") == "function_call":
-                items.append(item)
+        is_call_item = isinstance(item, dict) and item.get("type") == "function_call"
+        if kind == "response.output_item.added" and is_call_item:
+            announced.add(str(item.get("id")))
+        elif kind in {"response.function_call_arguments.delta",
+                      "response.function_call_arguments.done"}:
+            announced.add(str(event.get("item_id")))
+            if kind == "response.function_call_arguments.done":
+                arguments_done[str(event.get("item_id"))] = event.get("arguments")
+        elif kind == "response.output_item.done" and is_call_item:
+            items.append(item)
         elif kind == "response.completed":
             completed = True
 
     item_arguments = {str(item.get("id")): item.get("arguments") for item in items}
-    expected = [
-        (str(item.get("call_id") or item.get("id") or ""),
-         _object_arguments(item.get("arguments")))
-        for item in items
-    ]
-    summary = {
+    call_ids = [str(item.get("call_id") or "") for item in items]
+    expected = [(call_id, _object_arguments(item.get("arguments")))
+                for call_id, item in zip(call_ids, items, strict=True)]
+    checks = {
         "completed": completed,
-        "function_call_items": len(items),
         "items_have_object_arguments": bool(items) and all(
             _object_arguments(item.get("arguments")) is not None for item in items
         ),
-        "every_item_was_added_first": all(key in added_ids for key in item_arguments),
-        "arguments_done_events": len(arguments_done),
+        "announced_calls_completed": announced <= set(item_arguments),
+        "call_ids_unique": all(call_ids) and len(set(call_ids)) == len(call_ids),
         "arguments_done_match_items": all(
-            arguments_done.get(key) == value for key, value in item_arguments.items()
+            arguments_done[key] == value
+            for key, value in item_arguments.items() if key in arguments_done
         ),
-        "delta_events_match_items": all(
-            deltas.get(key) == value for key, value in item_arguments.items()
-        ),
-        "client_tool_calls": len(client_calls),
-        "client_matches_items": client_calls == expected,
+        "client_matches_items": client_error is None and client_calls == expected,
     }
-    summary["result"] = (
-        "consistent"
-        if completed and summary["items_have_object_arguments"] and summary["client_matches_items"]
-        else "inconsistent"
-    )
-    return summary
+    return {
+        "function_call_items": len(items),
+        "arguments_done_events": len(arguments_done),
+        "client_tool_calls": len(client_calls),
+        "client_error": client_error,
+        **checks,
+        "result": "consistent" if all(checks.values()) else "inconsistent",
+    }
 
 
 async def run_probe(
     *, model: str, access_token: str, transport: httpx.AsyncBaseTransport
 ) -> dict[str, Any]:
     recorder = RecordingTransport(transport)
+    calls: list[tuple[str, dict]] = []
+    client_error = None
     async with httpx.AsyncClient(transport=recorder, timeout=60) as http:
         client = CodexClient(http_client=http, access_token=access_token)
-        calls: list[tuple[str, dict]] = []
-        async with asyncio.timeout(120):
-            async for delta in client.stream_turn(
-                model=model,
-                instructions=INSTRUCTIONS,
-                input_items=[{"role": "user", "content": PROMPT}],
-                tools=[TOOL],
-            ):
-                if isinstance(delta, CodexToolCallDelta):
-                    calls.append((delta.tool_call.id, delta.tool_call.arguments))
-    return {"http_status": recorder.status_code, **await summarize(bytes(recorder.body), calls)}
+        try:
+            async with asyncio.timeout(120):
+                async for delta in client.stream_turn(
+                    model=model,
+                    instructions=INSTRUCTIONS,
+                    input_items=[{"role": "user", "content": PROMPT}],
+                    tools=[TOOL],
+                ):
+                    if isinstance(delta, CodexToolCallDelta):
+                        calls.append((delta.tool_call.id, delta.tool_call.arguments))
+        except Exception as err:  # noqa: BLE001 - reported by type only
+            client_error = type(err).__name__
+    return {"http_status": recorder.status_code,
+            **summarize(bytes(recorder.body), calls, client_error)}
 
 
 def synthetic_transport() -> httpx.MockTransport:
@@ -224,16 +239,18 @@ async def main_async(args: argparse.Namespace) -> int:
                                   transport=synthetic_transport())
     else:
         token = os.environ.get("CODEX_ASSIST_ACCESS_TOKEN", "").strip()
-        if not token and args.sign_in:
-            token = await sign_in()
-        if not token:
+        if not token and not args.sign_in:
             print("No integration-owned CODEX_ASSIST_ACCESS_TOKEN is available and --sign-in "
                   "was not given; live probe not run.", file=sys.stderr)
             return 2
-        model = await resolve_model(args.model, token)
-        summary = {"model": model, **await run_probe(
-            model=model, access_token=token, transport=httpx.AsyncHTTPTransport()
-        )}
+        try:
+            token = token or await sign_in()
+            model = await resolve_model(args.model, token)
+            summary = {"model": model, **await run_probe(
+                model=model, access_token=token, transport=httpx.AsyncHTTPTransport()
+            )}
+        except Exception as err:  # noqa: BLE001 - error text may carry account details
+            summary = {"result": "error", "error_type": type(err).__name__}
     print(json.dumps(summary, sort_keys=True))
     return 0 if summary["result"] == "consistent" else 1
 

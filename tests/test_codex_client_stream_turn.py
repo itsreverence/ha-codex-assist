@@ -163,6 +163,46 @@ async def test_stream_turn_yields_each_function_call_once_with_its_completed_arg
         ("call-2", "HassSetPosition", {"name": "Shade", "position": 50}),
         ("call-1", "HassTurnOn", {"name": "Kitchen", "domain": "light"}),
     ]
+    assert [delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)] == [
+        events[5]["item"],
+        events[7]["item"],
+    ]
+
+
+_CALL = {"id": "item-1", "type": "function_call", "call_id": "call-1", "name": "HassTurnOff"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("done_items", [
+    [{key: value for key, value in _CALL.items()}],
+    [{**_CALL, "arguments": '{"name":'}],
+    [{**_CALL, "arguments": '["Kitchen"]'}],
+    [{**_CALL, "call_id": "", "id": "", "arguments": "{}"}],
+    [{**_CALL, "name": "", "arguments": "{}"}],
+    [{**_CALL, "arguments": "{}"}, {**_CALL, "id": "item-2", "arguments": "{}"}],
+], ids=["no-arguments", "truncated-json", "non-object", "no-call-id", "no-name", "repeated"])
+async def test_stream_turn_rejects_a_tool_call_it_cannot_dispatch_exactly(done_items):
+    events = [
+        {"type": "response.function_call_arguments.done", "item_id": "item-1",
+         "arguments": '{"name":"Kitchen"}'},
+        *({"type": "response.output_item.done", "item": item} for item in done_items),
+        {"type": "response.completed", "response": {"status": "completed"}},
+    ]
+    response = FakeStreamResponse(200, [line for event in events for line in _event(event)])
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+    tool_calls = []
+
+    with pytest.raises(RuntimeError, match="tool call"):
+        async for delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Use tools.",
+            input_items=[{"role": "user", "content": "turn off the kitchen"}],
+            tools=[{"type": "function", "name": "HassTurnOff", "parameters": {}}],
+        ):
+            if isinstance(delta, CodexToolCallDelta):
+                tool_calls.append(delta)
+
+    assert tool_calls == []
 
 
 @pytest.mark.asyncio

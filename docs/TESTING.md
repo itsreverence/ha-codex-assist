@@ -79,8 +79,10 @@ uv run python scripts/probe_tool_call_events.py --model discovered --sign-in
 
 `--sign-in` runs the integration's own device-code flow and keeps the token in
 memory; an integration-owned `CODEX_ASSIST_ACCESS_TOKEN` also works. A
-`consistent` result means every completed call item carried object arguments
-and the client yielded exactly those calls.
+`consistent` result means the response completed, every call announced by any
+event ended in a completed item with JSON-object arguments matching its
+`response.function_call_arguments.done`, call IDs were unique, and the client
+yielded exactly those calls. Failures print only the exception type.
 
 `tests_ha/test_stream_completion.py` checks incomplete conversation and AI Task
 delivery, rejection of incomplete images without persisted media, native tool

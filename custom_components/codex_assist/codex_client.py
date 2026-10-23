@@ -474,17 +474,15 @@ class CodexClient:
             async for event in _aiter_completed_response_events(response):
                 for text in text_ledger.observe(event):
                     yield CodexTextDelta(text)
-                if event.get("type") == "response.output_text.delta":
+                item = event.get("item")
+                if event.get("type") != "response.output_item.done" or not isinstance(item, dict):
                     continue
-                if event.get("type") == "response.output_item.done":
-                    item = event.get("item")
-                    if isinstance(item, dict):
-                        yield CodexResponseItemDelta(copy.deepcopy(item))
-                delta = _stream_delta_from_event(event)
-                if isinstance(delta, CodexToolCallDelta):
-                    held_tool_calls.append(delta)
-                elif delta is not None:
-                    yield delta
+                if item.get("type") == "function_call":
+                    tool_call = _tool_call_from_item(item)
+                    if any(held.tool_call.id == tool_call.id for held in held_tool_calls):
+                        raise RuntimeError("Codex response repeated a tool call")
+                    held_tool_calls.append(CodexToolCallDelta(tool_call))
+                yield CodexResponseItemDelta(copy.deepcopy(item))
             for tool_delta in held_tool_calls:
                 yield tool_delta
 
@@ -531,9 +529,9 @@ class CodexClient:
                 found = _extract_image_b64(event)
                 if found:
                     image_b64 = found
-                delta = _stream_delta_from_event(event)
-                if isinstance(delta, CodexTextDelta):
-                    text_parts.append(delta.text)
+                delta = event.get("delta")
+                if event.get("type") == "response.output_text.delta" and isinstance(delta, str):
+                    text_parts.append(delta)
 
         if not image_b64:
             raise RuntimeError("Codex response contained no image_generation result")
@@ -843,23 +841,18 @@ def _stream_event_exception(event: dict[str, Any]) -> RuntimeError | None:
 
 
 def _tool_call_from_item(item: dict[str, Any]) -> CodexToolCall:
+    call_id = item.get("call_id") or item.get("id")
+    name = item.get("name")
     arguments = item.get("arguments")
-    parsed_arguments: dict[str, Any] = {}
-    if isinstance(arguments, str) and arguments:
-        try:
-            loaded = json.loads(arguments)
-        except json.JSONDecodeError:
-            loaded = {}
-        if isinstance(loaded, dict):
-            parsed_arguments = loaded
-
-    call_id = item.get("call_id") or item.get("id") or ""
-    name = item.get("name") or ""
-    return CodexToolCall(
-        id=str(call_id),
-        name=str(name),
-        arguments=parsed_arguments,
-    )
+    try:
+        parsed = json.loads(arguments or "{}") if isinstance(arguments, str) else None
+    except json.JSONDecodeError:
+        parsed = None
+    # A device action must never run with guessed arguments.
+    if not (isinstance(call_id, str) and call_id and isinstance(name, str) and name
+            and isinstance(parsed, dict)):
+        raise RuntimeError("Codex response contained an incomplete tool call")
+    return CodexToolCall(id=call_id, name=name, arguments=parsed)
 
 
 async def _aiter_completed_response_events(response: Any) -> AsyncIterator[dict[str, Any]]:
@@ -909,20 +902,6 @@ def _parse_sse_payload(
     if isinstance(payload, dict) and event_name and "type" not in payload:
         payload["type"] = event_name
     return payload if isinstance(payload, dict) else None
-
-
-def _stream_delta_from_event(event: dict[str, Any]) -> CodexStreamDelta | None:
-    event_type = event.get("type")
-    if stream_error := _stream_event_exception(event):
-        raise stream_error
-    if event_type == "response.output_text.delta":
-        delta = event.get("delta")
-        return CodexTextDelta(delta) if isinstance(delta, str) and delta else None
-    if event_type == "response.output_item.done":
-        item = event.get("item")
-        if isinstance(item, dict) and item.get("type") == "function_call":
-            return CodexToolCallDelta(_tool_call_from_item(item))
-    return None
 
 
 async def _stream_response_error(response: Any) -> CodexResponseError:
