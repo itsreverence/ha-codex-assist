@@ -132,6 +132,7 @@ class World:
         self.coordinators: dict[int, int] = {}
         self.rejected: dict[str, CodexTokenSet] = {}
         self.fell_back: set[str] = set()
+        self.interrupted = False
         self.server = AuthServer(self)
         tokens = self.server.sign_in(time.time() + 60)  # inside the 120 s refresh skew
         self.entry = FakeConfigEntry(
@@ -219,7 +220,7 @@ class World:
             return
         if actor.waiting is not None and not isinstance(actor.waiting, asyncio.Future):
             self.violate(f"NoUnsupportedAwait: {actor.name} yielded {actor.waiting!r}")
-            actor.done = True
+            actor.done = self.interrupted = True
 
     def check_final(self) -> None:
         stuck = [actor for actor in self.actors if not actor.done]
@@ -231,13 +232,13 @@ class World:
                 f"NoUnsupportedAwait: {actor.name} waits in {actor.blocked_in()[-1]} on "
                 f"{actor.waiting!r}, which only the event loop can complete"
             )
-        if stuck and not unsupported:
+        if stuck and not unsupported and not self.interrupted:
             self.violate(f"NoDeadlock: {[actor.name for actor in stuck]} never finished")
         for actor in self.actors:
             actor.coro.close()
             if actor.error is not None:
                 self.violate(f"NoCrash: {actor.name} raised {actor.error!r}")
-        if stuck:
+        if stuck or self.interrupted:
             return
         stored = self.entry.data["refresh_token"]
         family = self.server.family_of[stored]
