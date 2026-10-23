@@ -604,10 +604,11 @@ def test_structured_output_preserves_composition_and_nullable_semantics() -> Non
     assert nullable_schema["type"] == ["string", "null"]
     assert "nullable" not in nullable_schema
     assert _structured_data_from_text(
-        '{"nullable":null,"choices":[{"kind":"a","note":null}]}', structure
+        '{"nullable":null,"choices":[{"kind":"a","note":null},{"kind":"b","count":null}]}',
+        structure,
     ) == {
         "nullable": None,
-        "choices": [{"kind": "a", "note": "default note"}],
+        "choices": [{"kind": "a", "note": "default note"}, {"kind": "b"}],
     }
 
 
