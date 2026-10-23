@@ -11,7 +11,6 @@ itself, so an interrupted or concurrent run cannot leave a mutated file behind.
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -172,27 +171,26 @@ def copy_checkout(tree: Path) -> None:
     ).stdout.decode()
     for name in filter(None, listed.split("\0")):
         source = ROOT / name
-        if source.is_file():
-            target = tree / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
+        if not source.exists(follow_symlinks=False):
+            continue
+        if source.is_symlink() or not source.is_file():
+            raise SystemExit(f"cannot copy {name}: only regular files are supported")
+        target = tree / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
 
 
 def run_pytest(test: str, tree: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-m", "pytest", test, "-q"],
+        # -B: a .pyc from the baseline run could otherwise shadow a same-size mutation.
+        [sys.executable, "-B", "-m", "pytest", test, "-q"],
         cwd=tree,
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
 
 
-def caught(returncode: int, output: str, expect: str) -> bool:
-    return returncode != 0 and expect in output
-
-
-def check(mutation: Mutation, tree: Path) -> str:
+def check(mutation: Mutation, tree: Path) -> tuple[str, str]:
     path = tree / mutation.path
     original = path.read_bytes()
     eol = "\r\n" if b"\r\n" in original else "\n"
@@ -200,16 +198,20 @@ def check(mutation: Mutation, tree: Path) -> str:
     old = mutation.old.replace("\n", eol)
     matches = source.count(old)
     if matches == 0:
-        return "anchor missing"
+        return "anchor missing", ""
     if matches > 1:
-        return f"anchor ambiguous ({matches} matches)"
+        return f"anchor ambiguous ({matches} matches)", ""
     path.write_bytes(source.replace(old, mutation.new.replace("\n", eol)).encode())
     try:
         result = run_pytest(mutation.test, tree)
     finally:
         path.write_bytes(original)
     output = result.stdout + result.stderr
-    return "caught" if caught(result.returncode, output, mutation.expect) else "SURVIVED"
+    if result.returncode == 0:
+        return "SURVIVED (test passed)", output
+    if mutation.expect not in output:
+        return "WRONG FAILURE (expected text not found)", output
+    return "caught", ""
 
 
 def main() -> int:
@@ -233,8 +235,10 @@ def main() -> int:
             print(f"passes unmutated: {test}")
         ok = True
         for mutation in selected:
-            status = check(mutation, tree)
+            status, output = check(mutation, tree)
             print(f"{status}: {mutation.name}")
+            if output:
+                print(output[-3000:])
             ok &= status == "caught"
     return 0 if ok else 1
 

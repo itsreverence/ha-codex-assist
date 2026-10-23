@@ -127,5 +127,6 @@ uv run python scripts/check_mutations.py --suite fast
 
 When you change `codex_runtime.py` or the harness, rerun the script. Every mutation must print `caught`.
 
-- `SURVIVED` means the check no longer catches that breakage. That is a regression in the harness or its properties. Fix it. Do not delete the entry.
+- `SURVIVED (test passed)` means the check passed with the mutation applied. First confirm the anchored code still implements the guard and is not dead or duplicated elsewhere; if it is, re-anchor. Otherwise the harness or its properties regressed. Fix that. Do not delete the entry.
+- `WRONG FAILURE (expected text not found)` means the check failed with a different violation. Read the printed counterexample. Change `expect` only if that violation proves the same guard matters.
 - `anchor missing` or `anchor ambiguous (N matches)` means a code change removed the text the mutation replaces, or made it occur more than once. Re-anchor the mutation to the code that now implements the contract. Do not delete or weaken the entry.

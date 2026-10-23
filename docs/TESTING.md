@@ -145,8 +145,13 @@ CI runs this suite in the Home Assistant 2026.10 job and the token-rotation suit
 (`--suite fast`) in the main test job. Each mutation prints one status:
 
 - `caught`: the test failed and printed the expected text.
-- `SURVIVED`: the tests no longer catch that breakage. This is a test
-  regression. Fix the test, not the table.
+- `SURVIVED (test passed)`: the test passed with the mutation applied. First
+  check that the anchored code still implements the contract, and is not dead
+  or duplicated elsewhere; if it is, re-anchor. Otherwise the tests no longer
+  catch that breakage. That is a test regression, so fix the test.
+- `WRONG FAILURE (expected text not found)`: the test failed, but not with the
+  expected text. Read the printed output. Update `expect` only if the new
+  failure still proves the same contract.
 - `anchor missing`: a code change removed the text the mutation replaces.
 - `anchor ambiguous (N matches)`: the text now occurs more than once, so the
   script cannot tell which occurrence to mutate.
