@@ -160,7 +160,10 @@ def summarize(
         "client_tool_calls": len(client_calls),
         "client_error": client_error,
         **checks,
-        "result": "consistent" if all(checks.values()) else "inconsistent",
+        "result": (
+            "inconclusive" if not items and client_error is None
+            else "consistent" if all(checks.values()) else "inconsistent"
+        ),
     }
 
 

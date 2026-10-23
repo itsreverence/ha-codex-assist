@@ -174,10 +174,10 @@ _CALL = {"id": "item-1", "type": "function_call", "call_id": "call-1", "name": "
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("done_items", [
-    [{key: value for key, value in _CALL.items()}],
+    [dict(_CALL)],
     [{**_CALL, "arguments": '{"name":'}],
     [{**_CALL, "arguments": '["Kitchen"]'}],
-    [{**_CALL, "call_id": "", "id": "", "arguments": "{}"}],
+    [{**_CALL, "call_id": "", "arguments": "{}"}],
     [{**_CALL, "name": "", "arguments": "{}"}],
     [{**_CALL, "arguments": "{}"}, {**_CALL, "id": "item-2", "arguments": "{}"}],
 ], ids=["no-arguments", "truncated-json", "non-object", "no-call-id", "no-name", "repeated"])
@@ -203,6 +203,55 @@ async def test_stream_turn_rejects_a_tool_call_it_cannot_dispatch_exactly(done_i
                 tool_calls.append(delta)
 
     assert tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_dispatches_an_empty_argument_string_as_no_arguments():
+    events = [
+        {"type": "response.output_item.done", "item": {**_CALL, "arguments": ""}},
+        {"type": "response.completed", "response": {"status": "completed"}},
+    ]
+    response = FakeStreamResponse(200, [line for event in events for line in _event(event)])
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    tool_calls = [
+        delta.tool_call
+        async for delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Use tools.",
+            input_items=[{"role": "user", "content": "cancel my timers"}],
+            tools=[{"type": "function", "name": "HassTurnOff", "parameters": {}}],
+        )
+        if isinstance(delta, CodexToolCallDelta)
+    ]
+
+    assert [(call.id, call.arguments) for call in tool_calls] == [("call-1", {})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("terminal", "error"), [
+    ({"type": "response.failed", "response": {"error": {"code": "rate_limit_exceeded",
+                                                          "message": "Synthetic limit"}}},
+     CodexRateLimitError),
+    ({"type": "response.incomplete",
+      "response": {"incomplete_details": {"reason": "max_output_tokens"}}},
+     RuntimeError),
+], ids=["failed", "incomplete"])
+async def test_stream_turn_reports_the_backend_error_over_a_broken_tool_call(terminal, error):
+    events = [{"type": "response.output_item.done", "item": dict(_CALL)}, terminal]
+    response = FakeStreamResponse(200, [line for event in events for line in _event(event)])
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    with pytest.raises(error) as caught:
+        async for _delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Use tools.",
+            input_items=[{"role": "user", "content": "turn off the kitchen"}],
+            tools=[{"type": "function", "name": "HassTurnOff", "parameters": {}}],
+        ):
+            pass
+
+    assert "tool call" not in str(caught.value)
 
 
 @pytest.mark.asyncio

@@ -82,7 +82,8 @@ memory; an integration-owned `CODEX_ASSIST_ACCESS_TOKEN` also works. A
 `consistent` result means the response completed, every call announced by any
 event ended in a completed item with JSON-object arguments matching its
 `response.function_call_arguments.done`, call IDs were unique, and the client
-yielded exactly those calls. Failures print only the exception type.
+yielded exactly those calls. A run where the model made no call reports
+`inconclusive`. Failures print only the exception type.
 
 `tests_ha/test_stream_completion.py` checks incomplete conversation and AI Task
 delivery, rejection of incomplete images without persisted media, native tool

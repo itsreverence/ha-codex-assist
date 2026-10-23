@@ -469,7 +469,7 @@ class CodexClient:
                     f"Codex request failed with status {response.status_code}: {error.detail}"
                 )
 
-            held_tool_calls: list[CodexToolCallDelta] = []
+            call_items: list[dict[str, Any]] = []
             text_ledger = _ResponseTextLedger()
             async for event in _aiter_completed_response_events(response):
                 for text in text_ledger.observe(event):
@@ -478,13 +478,14 @@ class CodexClient:
                 if event.get("type") != "response.output_item.done" or not isinstance(item, dict):
                     continue
                 if item.get("type") == "function_call":
-                    tool_call = _tool_call_from_item(item)
-                    if any(held.tool_call.id == tool_call.id for held in held_tool_calls):
-                        raise RuntimeError("Codex response repeated a tool call")
-                    held_tool_calls.append(CodexToolCallDelta(tool_call))
+                    call_items.append(item)
                 yield CodexResponseItemDelta(copy.deepcopy(item))
-            for tool_delta in held_tool_calls:
-                yield tool_delta
+            # Built after completion, so a backend error later in the stream wins.
+            tool_calls = [_tool_call_from_item(item) for item in call_items]
+            if len({call.id for call in tool_calls}) != len(tool_calls):
+                raise RuntimeError("Codex response repeated a tool call")
+            for tool_call in tool_calls:
+                yield CodexToolCallDelta(tool_call)
 
     async def generate_image(
         self,
@@ -841,7 +842,7 @@ def _stream_event_exception(event: dict[str, Any]) -> RuntimeError | None:
 
 
 def _tool_call_from_item(item: dict[str, Any]) -> CodexToolCall:
-    call_id = item.get("call_id") or item.get("id")
+    call_id = item.get("call_id")
     name = item.get("name")
     arguments = item.get("arguments")
     try:
