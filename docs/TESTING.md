@@ -63,7 +63,24 @@ contract through an HTTPX byte stream. It covers EOF and `[DONE]` without
 completion, text delivery before completion, held tool calls, image previews,
 explicit backend failures, and stopping at completion without waiting for EOF.
 Successful SSE fixtures must include `response.completed` explicitly; generic
-fake transports must not add it automatically.
+fake transports must not add it automatically. Function-call fixtures must end
+each call with its `response.output_item.done` item, which carries the full
+arguments, because the client reads tool calls only from that event.
+
+`scripts/probe_tool_call_events.py` checks that contract against the live
+backend. It asks for two parallel calls to a harmless tool, records the raw
+stream while the real client parses it, and reports counts and booleans only.
+Run it when the tool-call stream handling changes or tool calls misbehave:
+
+```bash
+uv run python scripts/probe_tool_call_events.py --model MODEL_ID --dry-run
+uv run python scripts/probe_tool_call_events.py --model discovered --sign-in
+```
+
+`--sign-in` runs the integration's own device-code flow and keeps the token in
+memory; an integration-owned `CODEX_ASSIST_ACCESS_TOKEN` also works. A
+`consistent` result means every completed call item carried object arguments
+and the client yielded exactly those calls.
 
 `tests_ha/test_stream_completion.py` checks incomplete conversation and AI Task
 delivery, rejection of incomplete images without persisted media, native tool
