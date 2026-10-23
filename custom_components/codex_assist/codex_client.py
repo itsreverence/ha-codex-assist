@@ -469,56 +469,17 @@ class CodexClient:
                     f"Codex request failed with status {response.status_code}: {error.detail}"
                 )
 
-            pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
-            completed_tool_call_ids: set[str] = set()
             held_tool_calls: list[CodexToolCallDelta] = []
-            anonymous_call_index = 0
             text_ledger = _ResponseTextLedger()
             async for event in _aiter_completed_response_events(response):
-                event_type = event.get("type")
                 for text in text_ledger.observe(event):
                     yield CodexTextDelta(text)
-                if event_type == "response.output_text.delta":
+                if event.get("type") == "response.output_text.delta":
                     continue
-                if event_type == "response.output_item.added":
-                    item = event.get("item")
-                    if isinstance(item, dict) and item.get("type") == "function_call":
-                        key = _function_call_item_key(item, event)
-                        if key is None:
-                            anonymous_call_index += 1
-                            key = f"anonymous-{anonymous_call_index}"
-                        pending_tool_calls[key] = (item, str(item.get("arguments") or ""))
-                    continue
-                if event_type == "response.function_call_arguments.delta":
-                    key = _function_call_event_key(event, pending_tool_calls)
-                    delta = event.get("delta")
-                    if key is not None and isinstance(delta, str):
-                        item, arguments = pending_tool_calls[key]
-                        pending_tool_calls[key] = (item, arguments + delta)
-                    continue
-                if event_type == "response.function_call_arguments.done":
-                    key = _function_call_event_key(event, pending_tool_calls)
-                    if key is not None:
-                        pending_tool_call, pending_arguments = pending_tool_calls.pop(key)
-                        arguments = event.get("arguments")
-                        if isinstance(arguments, str):
-                            pending_arguments = arguments
-                        tool_call = _tool_call_from_item(pending_tool_call, pending_arguments)
-                        completed_tool_call_ids.add(tool_call.id)
-                        held_tool_calls.append(CodexToolCallDelta(tool_call))
-                    continue
-                if event_type == "response.output_item.done":
+                if event.get("type") == "response.output_item.done":
                     item = event.get("item")
                     if isinstance(item, dict):
                         yield CodexResponseItemDelta(copy.deepcopy(item))
-                    call_id = ""
-                    if isinstance(item, dict) and item.get("type") == "function_call":
-                        call_id = str(item.get("call_id") or item.get("id") or "")
-                        key = _function_call_item_key(item, event)
-                        if key is not None:
-                            pending_tool_calls.pop(key, None)
-                    if call_id and call_id in completed_tool_call_ids:
-                        continue
                 delta = _stream_delta_from_event(event)
                 if isinstance(delta, CodexToolCallDelta):
                     held_tool_calls.append(delta)
@@ -810,40 +771,6 @@ class CodexResponseError:
     code: str | None = None
 
 
-def _function_call_item_key(
-    item: dict[str, Any], event: dict[str, Any]
-) -> str | None:
-    for value in (
-        item.get("id"),
-        event.get("item_id"),
-        item.get("call_id"),
-        event.get("call_id"),
-    ):
-        if isinstance(value, str) and value:
-            return value
-    output_index = event.get("output_index")
-    if isinstance(output_index, int):
-        return f"output-{output_index}"
-    return None
-
-
-def _function_call_event_key(
-    event: dict[str, Any],
-    pending_tool_calls: dict[str, tuple[dict[str, Any], str]],
-) -> str | None:
-    for value in (event.get("item_id"), event.get("call_id")):
-        if isinstance(value, str) and value in pending_tool_calls:
-            return value
-    output_index = event.get("output_index")
-    if isinstance(output_index, int):
-        key = f"output-{output_index}"
-        if key in pending_tool_calls:
-            return key
-    if len(pending_tool_calls) == 1:
-        return next(iter(pending_tool_calls))
-    return None
-
-
 def _response_error(text: str) -> CodexResponseError:
     try:
         payload = json.loads(text)
@@ -915,9 +842,10 @@ def _stream_event_exception(event: dict[str, Any]) -> RuntimeError | None:
     )
 
 
-def _tool_call_from_item(item: dict[str, Any], arguments: str) -> CodexToolCall:
+def _tool_call_from_item(item: dict[str, Any]) -> CodexToolCall:
+    arguments = item.get("arguments")
     parsed_arguments: dict[str, Any] = {}
-    if arguments:
+    if isinstance(arguments, str) and arguments:
         try:
             loaded = json.loads(arguments)
         except json.JSONDecodeError:
@@ -990,17 +918,10 @@ def _stream_delta_from_event(event: dict[str, Any]) -> CodexStreamDelta | None:
     if event_type == "response.output_text.delta":
         delta = event.get("delta")
         return CodexTextDelta(delta) if isinstance(delta, str) and delta else None
-    if event_type in {"response.function_call_arguments.done", "response.output_item.done"}:
+    if event_type == "response.output_item.done":
         item = event.get("item")
-        arguments = event.get("arguments")
         if isinstance(item, dict) and item.get("type") == "function_call":
-            return CodexToolCallDelta(_tool_call_from_item(item, str(item.get("arguments") or "")))
-        if isinstance(arguments, str):
-            current_call = event.get("item") or event
-            if isinstance(current_call, dict) and (
-                current_call.get("call_id") or current_call.get("name")
-            ):
-                return CodexToolCallDelta(_tool_call_from_item(current_call, arguments))
+            return CodexToolCallDelta(_tool_call_from_item(item))
     return None
 
 
