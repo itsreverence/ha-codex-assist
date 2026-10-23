@@ -47,7 +47,11 @@ _ALPHA = '{"word":"alpha"}'
        "arguments": '{"word":"beta"}'},
       {"type": "response.output_item.done", "item": {**_ITEM, "arguments": _ALPHA}}],
      "arguments_done_match_items"),
-], ids=["no-arguments", "call-never-completed", "repeated-call", "arguments-disagree"])
+    ([{"type": "response.output_item.added", "item": {**_ITEM, "arguments": ""}},
+      {"type": "response.function_call_arguments.done", "item_id": "fc_0", "arguments": _ALPHA}],
+     "announced_calls_completed"),
+], ids=["no-arguments", "call-never-completed", "repeated-call", "arguments-disagree",
+        "only-call-never-completed"])
 async def test_probe_reports_streams_the_client_cannot_trust(events, failed_check) -> None:
     module = _probe_module()
     events = [*events, {"type": "response.completed", "response": {"status": "completed"}}]
@@ -76,3 +80,10 @@ def test_live_probe_reports_failures_by_type_only(monkeypatch, capsys) -> None:
     output = capsys.readouterr()
     assert json.loads(output.out) == {"result": "error", "error_type": "RuntimeError"}
     assert "synthetic_private_detail" not in output.out + output.err
+
+
+def test_probe_reports_a_run_without_calls_as_inconclusive() -> None:
+    module = _probe_module()
+    body = b'data: {"type": "response.completed", "response": {"status": "completed"}}\n\n'
+
+    assert module.summarize(body, [], None)["result"] == "inconclusive"

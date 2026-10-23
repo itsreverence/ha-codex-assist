@@ -161,7 +161,7 @@ def summarize(
         "client_error": client_error,
         **checks,
         "result": (
-            "inconclusive" if not items and client_error is None
+            "inconclusive" if not items and not announced and client_error is None
             else "consistent" if all(checks.values()) else "inconsistent"
         ),
     }
