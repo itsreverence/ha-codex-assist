@@ -119,10 +119,13 @@ Read the printed counterexample one step at a time against the code.
 
 ## Proof that it can fail
 
-`scripts/check_mutations.py` holds six mutations of `codex_runtime.py`, each with the property that must catch it. The script applies each one, runs the check, and restores the file byte for byte. It then runs the check unmutated. CI runs it on every pull request.
+`scripts/check_mutations.py` holds six mutations of `codex_runtime.py`, each with the property that must catch it. The script copies the checkout to a temporary directory and never writes to the checkout itself. It runs the check unmutated first, then applies each mutation in the copy and runs the check again. CI runs it on every pull request.
 
 ```bash
 uv run python scripts/check_mutations.py --suite fast
 ```
 
-When you change the harness, rerun the script. Every mutation must print `caught`.
+When you change `codex_runtime.py` or the harness, rerun the script. Every mutation must print `caught`.
+
+- `SURVIVED` means the check no longer catches that breakage. That is a regression in the harness or its properties. Fix it. Do not delete the entry.
+- `anchor missing` or `anchor ambiguous (N matches)` means a code change removed the text the mutation replaces, or made it occur more than once. Re-anchor the mutation to the code that now implements the contract. Do not delete or weaken the entry.

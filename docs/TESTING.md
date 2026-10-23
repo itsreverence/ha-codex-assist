@@ -131,19 +131,28 @@ coverage remain separate; this is not a broad test-pruning pass.
 
 `scripts/check_mutations.py` holds the mutation table. Each `ha` entry is a
 temporary AI Task source mutation, the `tests_ha/test_ai_task_delivery.py` test
-that must fail, and the failure text it must print. The script applies one
-mutation at a time, runs that test, and restores the file byte-for-byte. It then
-runs each test unmutated, which must pass. Run it with the current HA
-environment's python:
+that must fail, and the failure text it must print. The script copies the
+checkout, including uncommitted files, to a temporary directory and never writes
+to the checkout itself. In the copy it first runs each test unmutated, and stops
+if any fails. It then applies one mutation at a time and runs that test. Run it
+with the current HA environment's python:
 
 ```bash
 .venv-ha/bin/python scripts/check_mutations.py --suite ha
 ```
 
 CI runs this suite in the Home Assistant 2026.10 job and the token-rotation suite
-(`--suite fast`) in the main test job. `anchor not found` means a code change
-removed the text a mutation replaces. Re-anchor the mutation to the code that now
-implements the contract. Do not delete it.
+(`--suite fast`) in the main test job. Each mutation prints one status:
+
+- `caught`: the test failed and printed the expected text.
+- `SURVIVED`: the tests no longer catch that breakage. This is a test
+  regression. Fix the test, not the table.
+- `anchor missing`: a code change removed the text the mutation replaces.
+- `anchor ambiguous (N matches)`: the text now occurs more than once, so the
+  script cannot tell which occurrence to mutate.
+
+For either anchor status, re-anchor the mutation to the code that now implements
+the contract. Do not delete or weaken the entry.
 
 The older lanes also run with `probatio==0.11.2` installed alongside
 `voluptuous-openapi`. This catches converter/serializer mismatches when both
