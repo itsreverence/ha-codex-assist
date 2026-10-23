@@ -37,6 +37,9 @@ jobs:
       - name: Run tests
         run: uv run pytest -q
 
+      - name: Check that tests catch recorded mutations
+        run: uv run python scripts/check_mutations.py --suite fast
+
       - name: Run Ruff
         run: uv run ruff check .
 
@@ -81,6 +84,9 @@ jobs:
 
       - name: Verify current Home Assistant
         run: .venv-ha/bin/python -m pytest tests_ha -q
+
+      - name: Check that tests catch recorded AI Task mutations
+        run: .venv-ha/bin/python scripts/check_mutations.py --suite ha
 
   ha-minimum:
     name: Home Assistant 2026.6 contract tests

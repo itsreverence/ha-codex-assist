@@ -135,6 +135,9 @@ async def test_generate_data_service_delivers_selector_validated_structure(
     assert result["conversation_id"]
     assert len(requests) == 1
     assert requests[0]["input"] == [{"role": "user", "content": "Return a status report."}]
+    assert "format" in requests[0].get(
+        "text", {}
+    ), "structured AI Task request has no JSON schema format"
     assert requests[0]["text"]["format"] == {
         "type": "json_schema",
         "name": "status_report",
