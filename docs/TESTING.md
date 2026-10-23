@@ -161,8 +161,9 @@ with the current HA environment's python:
 .venv-ha/bin/python scripts/check_mutations.py --suite ha
 ```
 
-CI runs this suite in the Home Assistant 2026.10 job and the token-rotation suite
-(`--suite fast`) in the main test job. Each mutation prints one status:
+CI runs this suite in the Home Assistant 2026.10 job, and the fast suite (token
+rotation and tool-call parsing, `--suite fast`) in the main test job. Each
+mutation prints one status:
 
 - `caught`: the test failed and printed the expected text.
 - `SURVIVED (test passed)`: the test passed with the mutation applied. If the
