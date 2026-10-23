@@ -238,7 +238,7 @@ def main() -> int:
             status, output = check(mutation, tree)
             print(f"{status}: {mutation.name}")
             if output:
-                print(output[-3000:])
+                print(output)
             ok &= status == "caught"
     return 0 if ok else 1
 

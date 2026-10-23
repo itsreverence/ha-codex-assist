@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.check_mutations import Mutation, check
+from scripts.check_mutations import Mutation, check, run_pytest
 
 SOURCE = "def value():\n    # the contract\n    return 1\n"
 
@@ -24,6 +24,9 @@ def _mutation(old, new, expect="value contract broken"):
 
 
 def test_mutation_caught_by_its_expected_failure_restores_the_file(tree):
+    assert run_pytest("test_mod.py", tree).returncode == 0
+    assert not list(tree.rglob("*.pyc")), "baseline bytecode could shadow a same-size mutation"
+
     assert check(_mutation("return 1", "return 2"), tree) == ("caught", "")
     assert (tree / "mod.py").read_text() == SOURCE
 
