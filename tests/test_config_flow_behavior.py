@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import types
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,7 +10,7 @@ from custom_components.codex_assist.codex_auth import (
     CodexDeviceCode,
     CodexTokenSet,
 )
-from tests.ha_fakes import install_homeassistant_fakes
+from tests.ha_fakes import FakeConfigEntry, install_homeassistant_fakes
 
 
 class FakeAuthClient:
@@ -132,7 +131,7 @@ async def test_reauth_updates_existing_entry_after_device_token_exchange(
     flow._setup_input = {"model": "gpt-5.4"}
     flow._device_code = auth.device_code
     flow.source = "reauth"
-    flow.reauth_entry = object()
+    flow.reauth_entry = FakeConfigEntry()
 
     result = await flow.async_step_device_wait()
 
@@ -184,7 +183,7 @@ def _reconfigure_entry(**overrides):
     options = {}
     data.update(overrides.pop("data", {}))
     options.update(overrides.pop("options", {}))
-    return types.SimpleNamespace(data=data, options=options, **overrides)
+    return FakeConfigEntry(data=data, options=options, **overrides)
 
 
 @pytest.mark.asyncio
@@ -282,10 +281,8 @@ async def test_model_step_labels_fallback_on_discovery_failure(config_flow_modul
 
 
 async def test_reauthentication_clears_previous_accounts_discovery_cache(config_flow_module):
-    from custom_components.codex_assist.codex_runtime import RuntimeTokenCoordinator
-
-    entry = _reconfigure_entry(runtime_data=RuntimeTokenCoordinator())
-    cache = entry.runtime_data.model_cache
+    entry = _reconfigure_entry()
+    cache = config_flow_module.runtime_token_coordinator(entry).model_cache
 
     async def old_models():
         return ["old-account-model"]

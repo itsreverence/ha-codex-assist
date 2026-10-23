@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from custom_components.codex_assist.codex_auth import CodexReauthRequiredError, CodexTokenSet
-from tests.ha_fakes import install_homeassistant_fakes
+from tests.ha_fakes import FakeConfigEntry, install_homeassistant_fakes
 from tests.test_codex_models import FakeHttpClient, FakeResponse
 
 
@@ -24,7 +24,7 @@ def discovery(monkeypatch):
 
 
 def environment(http, access="original-access"):
-    entry = SimpleNamespace(data={"access_token": access, "refresh_token": "owned-refresh"})
+    entry = FakeConfigEntry(data={"access_token": access, "refresh_token": "owned-refresh"})
 
     def update(target, *, data):
         assert target is entry

@@ -36,6 +36,7 @@ from custom_components.codex_assist.codex_client import (
     CodexToolCall,
     CodexToolCallDelta,
 )
+from custom_components.codex_assist.codex_runtime import runtime_token_coordinator
 from custom_components.codex_assist.config_flow import (
     CONF_PROMPT,
     SECTION_ADVANCED_SETTINGS,
@@ -93,6 +94,20 @@ async def test_unload_entry_cleans_up(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_token_coordinator_survives_reload_but_not_removal(hass: HomeAssistant) -> None:
+    entry = await _setup_entry(hass)
+    coordinator = runtime_token_coordinator(entry)
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert runtime_token_coordinator(entry) is coordinator
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert runtime_token_coordinator(await _setup_entry(hass)) is not coordinator
 
 
 async def test_conversation_turn_streams_codex_reply(

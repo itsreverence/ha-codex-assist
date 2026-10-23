@@ -26,5 +26,6 @@ Build a public-quality Home Assistant custom integration backed by OpenAI Codex 
 ## Verification
 
 - Run `uv run ruff check .` and `uv run pytest -q` before public-quality handoff.
+- Follow [.agents/skills/verify-token-rotation/SKILL.md](.agents/skills/verify-token-rotation/SKILL.md) when a change touches token refresh, reauth, reload, or `entry.runtime_data`.
 - Run both Home Assistant contract environments when integration behavior or dependency support changes.
 - Check every new screenshot for private hosts, account details, entity names, tokens, and device codes before publishing it.

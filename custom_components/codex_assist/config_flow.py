@@ -22,6 +22,7 @@ from .codex_image import (
     IMAGE_SIZE_OPTIONS,
 )
 from .codex_models import ModelCatalog, ModelDiscoveryCache, fetch_codex_model_ids
+from .codex_runtime import runtime_token_coordinator
 from .model_discovery import async_entry_model_catalog
 
 CONF_ACCESS_TOKEN = "access_token"
@@ -216,9 +217,7 @@ def _user_schema() -> vol.Schema:
 
 
 def _clear_model_cache(entry) -> None:
-    coordinator = getattr(entry, "runtime_data", None)
-    if coordinator is not None and hasattr(coordinator, "model_cache"):
-        coordinator.model_cache.clear()
+    runtime_token_coordinator(entry).model_cache.clear()
 
 
 class CodexAssistOptionsFlow(config_entries.OptionsFlow):
