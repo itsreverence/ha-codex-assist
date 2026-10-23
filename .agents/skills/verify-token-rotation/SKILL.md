@@ -34,7 +34,7 @@ The tool is a stateless model checker written in the test file. It drives the **
 - An await on a lock held by another actor, or a bare `yield` such as `asyncio.sleep(0)`, makes the actor runnable, and resuming it is a separate choice.
 - Each HA event step is a choice.
 
-Code between two suspensions runs as one step, which matches asyncio. A new `await` on a gate, an `asyncio.Lock` or a bare yield becomes a new scheduling point without any harness change. The explorer never yields to the event loop, so it cannot resume an await on anything only the loop completes: a task, `asyncio.shield`, `ensure_future`, `sleep` with a delay, `to_thread`, or an executor job. Those runs, and any actor that yields something other than a future or `None`, report `NoUnsupportedAwait`, which means the harness needs extending, not that the product deadlocks. Actors also run inside the test's own task, so `asyncio.current_task()`, context variables and `asyncio.timeout` see the test task: a timeout around a coordinator await is never explored. There are no other dependencies.
+Code between two suspensions runs as one step, which matches asyncio. A new `await` on a gate, an `asyncio.Lock` or a bare yield becomes a new scheduling point without any harness change. The explorer never yields to the event loop, so it cannot resume an await on anything only the loop completes: a task, `asyncio.shield`, `ensure_future`, `sleep` with a delay, `to_thread`, or an executor job. Those runs report `NoStuckActor`, the same violation as a real deadlock. The message names the frame the actor waits in and the future it waits on, so read that to tell them apart. An actor that yields something other than a future or `None` reports `NoUnsupportedAwait`. Actors also run inside the test's own task, so `asyncio.current_task()`, context variables and `asyncio.timeout` see the test task: a timeout around a coordinator await is never explored. There are no other dependencies.
 
 ## Does my change touch this?
 
@@ -52,15 +52,15 @@ Yes, if it changes any of these:
 | `hass.config_entries.async_update_entry` (synchronous, replaces `entry.data`) | `World.update_entry` |
 | `codex_auth.CodexAuthClient.refresh` error mapping | `ActorAuthClient.refresh`: reuse raises `CodexReauthRequiredError`, `temporary` raises `CodexAuthTemporaryError` |
 
-**Sync commit:** `01f0b8839c779cc6308fa31ce89b72f0773155fe`. At that commit, the actors and events above matched the code.
+**Sync point:** the last commit that changed this file. At that commit, the actors and events above matched the code.
 
 To see whether the covered code changed since then:
 
 ```bash
-git diff 01f0b88 -- custom_components/codex_assist/codex_runtime.py custom_components/codex_assist/conversation.py custom_components/codex_assist/ai_task.py custom_components/codex_assist/model_discovery.py custom_components/codex_assist/config_flow.py custom_components/codex_assist/__init__.py custom_components/codex_assist/codex_auth.py
+git diff "$(git log -1 --format=%H -- .agents/skills/verify-token-rotation/SKILL.md)" -- custom_components/codex_assist/codex_runtime.py custom_components/codex_assist/conversation.py custom_components/codex_assist/ai_task.py custom_components/codex_assist/model_discovery.py custom_components/codex_assist/config_flow.py custom_components/codex_assist/__init__.py custom_components/codex_assist/codex_auth.py
 ```
 
-For a change in `codex_runtime.py`, just rerun. The real code is under test, and new awaits are scheduled automatically. For a change in a caller, reload/reauth, or the auth client, first update the matching actor or event so that it still does what the code does. That includes the order of lookups and awaits and whether the coordinator is captured or looked up again. Then rerun. Move the sync commit forward only after you have confirmed that every row of the table describes the code at the new commit.
+For a change in `codex_runtime.py`, just rerun. The real code is under test, and new awaits are scheduled automatically. For a change in a caller, reload/reauth, or the auth client, first update the matching actor or event so that it still does what the code does. That includes the order of lookups and awaits and whether the coordinator is captured or looked up again. Then rerun. Any commit to this file moves the sync point, so commit an edit here only after you have confirmed that every row of the table describes the code in that commit.
 
 ## Scenarios and bounds
 
@@ -115,7 +115,7 @@ Read the printed counterexample one step at a time against the code.
 - If every step is something the code and HA can really do, it is a bug. Report it in those terms. Do not weaken the property or remove the scenario.
 - If a step is something the code cannot do, the harness is wrong. Examples: an actor looks up the coordinator where the caller captures it, an event happens that HA never triggers, or the auth fake answers differently from `CodexAuthClient.refresh`. Fix the actor or event and cite the line it mirrors.
 
-`NoUnsupportedAwait`, `NoDeadlock` and `NoCrash` violations usually mean the harness is broken, for example a new await the explorer cannot resume or an exception type the actors don't catch. They are rarely product bugs. When an actor is stuck, the run skips the final-state checks, so a stuck run reports no `StoredTokenUsable`.
+`NoUnsupportedAwait` and `NoCrash` usually mean the harness is broken, for example an awaitable the explorer cannot drive or an exception type the actors don't catch. `NoStuckActor` can be either. If the actor waits on a lock or on a future the coordinator itself creates (an `Event`, a `Semaphore`, a shared in-flight future) and nothing left can complete it, it is a product deadlock. If it waits on a task, `shield`, `sleep` with a delay or an executor job, the harness needs extending. When an actor is stuck, the run skips the final-state checks, so a stuck run reports no `StoredTokenUsable`.
 
 ## Proof that it can fail
 

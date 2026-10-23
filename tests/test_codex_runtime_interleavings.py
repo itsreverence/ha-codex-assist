@@ -211,29 +211,26 @@ class World:
     def step(self, actor: Actor) -> None:
         actor.started = True
         try:
-            actor.waiting = actor.coro.send(None)
+            waiting = actor.coro.send(None)
         except StopIteration:
             actor.done = True
             return
         except (Exception, asyncio.CancelledError) as err:
             actor.done, actor.error = True, err
             return
-        if actor.waiting is not None and not isinstance(actor.waiting, asyncio.Future):
-            self.violate(f"NoUnsupportedAwait: {actor.name} yielded {actor.waiting!r}")
+        if waiting is not None and not isinstance(waiting, asyncio.Future):
+            self.violate(f"NoUnsupportedAwait: {actor.name} yielded {waiting!r}")
             actor.done = self.interrupted = True
+            return
+        actor.waiting = waiting
 
     def check_final(self) -> None:
         stuck = [actor for actor in self.actors if not actor.done]
-        # Only gates, lock handoffs and bare yields can be resumed here. A
-        # future that needs the event loop (a task, shield, sleep(>0)) never is.
-        unsupported = [a for a in stuck if "Lock.acquire" not in a.blocked_in()]
-        for actor in unsupported:
+        for actor in stuck:
             self.violate(
-                f"NoUnsupportedAwait: {actor.name} waits in {actor.blocked_in()[-1]} on "
-                f"{actor.waiting!r}, which only the event loop can complete"
+                f"NoStuckActor: {actor.name} never finished; it waits in "
+                f"{actor.blocked_in()[-1]} on {actor.waiting!r}"
             )
-        if stuck and not unsupported and not self.interrupted:
-            self.violate(f"NoDeadlock: {[actor.name for actor in stuck]} never finished")
         for actor in self.actors:
             actor.coro.close()
             if actor.error is not None:
