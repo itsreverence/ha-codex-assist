@@ -129,26 +129,21 @@ coverage remain separate; this is not a broad test-pruning pass.
 
 #### AI Task mutation evidence
 
-The following temporary source mutations were actually run against HA
-2026.10.0, one focused test at a time. Each produced **1 failed**, exit code 1,
-for the indicated contract. Both production files were restored byte-for-byte
-and checked with `git diff --exit-code` before the unmutated validation runs.
-No mutation or test-only production seam is retained.
+`scripts/check_mutations.py` holds the mutation table. Each `ha` entry is a
+temporary AI Task source mutation, the `tests_ha/test_ai_task_delivery.py` test
+that must fail, and the failure text it must print. The script applies one
+mutation at a time, runs that test, and restores the file byte-for-byte. It then
+runs each test unmutated, which must pass. Run it with the current HA
+environment's python:
 
-The test names below are in `tests_ha/test_ai_task_delivery.py`; each probe used
-`python -m pytest -c pyproject.toml <file>::<test_name> -q --tb=short` in the
-current HA environment described above.
+```bash
+.venv-ha/bin/python scripts/check_mutations.py --suite ha
+```
 
-| Temporary mutation | Test | Observed failure |
-| --- | --- | --- |
-| Remove `GENERATE_DATA` from the entity flags | `test_generate_data_returns_native_plain_text_result` | HA rejects generating data |
-| Remove `SUPPORT_ATTACHMENTS` from the entity flags | `test_generate_data_service_sends_local_image_attachment` | HA rejects attachments |
-| Remove `GENERATE_IMAGE` from the entity flags | `test_generate_image_service_persists_native_result_as_media` | HA rejects generating images |
-| Return empty `GenDataTaskResult.data` | `test_generate_data_returns_native_plain_text_result` | Delivered text differs |
-| Set the data path's `text_format` to `None` | `test_generate_data_service_delivers_selector_validated_structure` | Backend request lacks `format` |
-| Pass `None` instead of user attachments to conversion | `test_generate_data_service_sends_local_image_attachment` | Backend receives string content instead of multimodal content |
-| Return `dict` instead of native `GenImageTaskResult` | `test_generate_image_service_persists_native_result_as_media` | HA cannot call `as_dict` |
-| Set native image result's `image_data` to empty bytes | `test_generate_image_service_persists_native_result_as_media` | Persisted bytes differ |
+CI runs this suite in the Home Assistant 2026.10 job and the token-rotation suite
+(`--suite fast`) in the main test job. `anchor not found` means a code change
+removed the text a mutation replaces. Re-anchor the mutation to the code that now
+implements the contract. Do not delete it.
 
 The older lanes also run with `probatio==0.11.2` installed alongside
 `voluptuous-openapi`. This catches converter/serializer mismatches when both

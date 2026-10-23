@@ -119,15 +119,10 @@ Read the printed counterexample one step at a time against the code.
 
 ## Proof that it can fail
 
-Each of these mutations was applied once to `codex_runtime.py` with the reload fix in place, and the check was run against the result:
+`scripts/check_mutations.py` holds six mutations of `codex_runtime.py`, each with the property that must catch it. The script applies each one, runs the check, and restores the file byte for byte. It then runs the check unmutated. CI runs it on every pull request.
 
-| Mutation | Caught by |
-|---|---|
-| `resolve` without `async with self._refresh_lock` | NoRefreshReuse |
-| `refresh_after_rejection` without the lock | NoRefreshReuse |
-| `resolve_runtime_tokens` drops `if latest != tokens: return latest` | StoredTokenUsable |
-| `refresh_after_rejection` drops `if latest != current: return latest` | StoredTokenUsable |
-| `refresh_after_rejection` drops `if current != rejected_tokens: return current` | NoRedundantRefresh |
-| `resolve_runtime_tokens` adds `await asyncio.sleep(0)` before `_persist_runtime_tokens` | StoredTokenUsable |
+```bash
+uv run python scripts/check_mutations.py --suite fast
+```
 
-When you change the harness, repeat all six mutations. Copy `codex_runtime.py` aside before mutating and copy it back afterwards. Do not restore it with `git checkout`, which also discards uncommitted work in that file.
+When you change the harness, rerun the script. Every mutation must print `caught`.
