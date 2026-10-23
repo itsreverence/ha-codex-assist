@@ -172,16 +172,16 @@ def install_homeassistant_fakes(monkeypatch):
 
     class Optional:
         def __init__(self, key, default=None):
-            self.key = key
+            self.schema = key
             self.default = default
 
         def __hash__(self):
-            return hash((self.key, self.default))
+            return hash((self.schema, self.default))
 
         def __eq__(self, other):
             return (
                 isinstance(other, Optional)
-                and self.key == other.key
+                and self.schema == other.schema
                 and self.default == other.default
             )
 
