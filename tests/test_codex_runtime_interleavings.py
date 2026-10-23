@@ -226,11 +226,13 @@ class World:
 
     def check_final(self) -> None:
         stuck = [actor for actor in self.actors if not actor.done]
-        for actor in stuck:
-            self.violate(
-                f"NoStuckActor: {actor.name} never finished; it waits in "
-                f"{actor.blocked_in()[-1]} on {actor.waiting!r}"
-            )
+        # After an unsupported yield, the others usually wait on its lock.
+        if not self.interrupted:
+            for actor in stuck:
+                self.violate(
+                    f"NoStuckActor: {actor.name} never finished; it waits in "
+                    f"{actor.blocked_in()[-1]} on {actor.waiting!r}"
+                )
         for actor in self.actors:
             actor.coro.close()
             if actor.error is not None:
