@@ -548,7 +548,7 @@ def _remove_optional_null_values(data: Any, structure: Any) -> Any:
 
     normalized = dict(data)
     for key, value_schema in schema.items():
-        key_name = getattr(key, "schema", getattr(key, "key", key))
+        key_name = getattr(key, "schema", key)
         if isinstance(key_name, vol.Any):
             for candidate_key in key_name.validators:
                 try:

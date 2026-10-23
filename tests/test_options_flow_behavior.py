@@ -9,7 +9,7 @@ from tests.ha_fakes import install_homeassistant_fakes
 
 
 def _flat_fields(schema):
-    return {key.key: validator for key, validator in schema.schema.items()}
+    return {key.schema: validator for key, validator in schema.schema.items()}
 
 
 def _section_fields(schema, section_name):
@@ -32,8 +32,8 @@ def test_options_schema_preserves_unlisted_saved_model_with_explicit_label(monke
 
     chat_section = _flat_fields(schema)[module.SECTION_CHAT_SETTINGS]
     image_section = _flat_fields(schema)[module.SECTION_IMAGE_SETTINGS]
-    chat_defaults = {key.key: key.default for key in chat_section.schema.schema}
-    image_defaults = {key.key: key.default for key in image_section.schema.schema}
+    chat_defaults = {key.schema: key.default for key in chat_section.schema.schema}
+    image_defaults = {key.schema: key.default for key in image_section.schema.schema}
     assert chat_defaults["model"] == "retired-model"
     choices = _section_fields(schema, module.SECTION_CHAT_SETTINGS)["model"].config.options
     assert [choice.value for choice in choices] == ["gpt-5.3-codex", "retired-model"]

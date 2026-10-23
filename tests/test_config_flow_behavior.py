@@ -146,14 +146,14 @@ async def test_reauth_updates_existing_entry_after_device_token_exchange(
 
 def _schema_defaults(data_schema) -> dict[str, object]:
     return {
-        field.key: field.default
+        field.schema: field.default
         for field in data_schema.schema
-        if hasattr(field, "key") and hasattr(field, "default")
+        if hasattr(field, "default")
     }
 
 
 def _section_defaults(data_schema, section_name) -> dict[str, object]:
-    sections = {field.key: validator for field, validator in data_schema.schema.items()}
+    sections = {field.schema: validator for field, validator in data_schema.schema.items()}
     return _schema_defaults(sections[section_name].schema)
 
 
