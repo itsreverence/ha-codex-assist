@@ -22,7 +22,9 @@ ROOT = Path(__file__).resolve().parent.parent
 RUNTIME = "custom_components/codex_assist/codex_runtime.py"
 AI_TASK = "custom_components/codex_assist/ai_task.py"
 CONVERSATION = "custom_components/codex_assist/conversation.py"
+CLIENT = "custom_components/codex_assist/codex_client.py"
 INTERLEAVINGS = "tests/test_codex_runtime_interleavings.py"
+STREAM_TURN = "tests/test_codex_client_stream_turn.py"
 DELIVERY = "tests_ha/test_ai_task_delivery.py"
 LOCKED = "        async with self._refresh_lock:\n"
 PLAIN_TEXT = f"{DELIVERY}::test_generate_data_returns_native_plain_text_result"
@@ -158,6 +160,40 @@ MUTATIONS = (
         new='            image_data=b"",',
         test=IMAGE,
         expect=r"assert b'' == b'\x89PNG",
+    ),
+    Mutation(
+        name="tool-calls-from-added-items",
+        path=CLIENT,
+        old='if event.get("type") != "response.output_item.done" or not isinstance(item, dict):',
+        new='if event.get("type") != "response.output_item.added" or not isinstance(item, dict):',
+        test=STREAM_TURN,
+        expect="test_stream_turn_yields_each_function_call_once_with_its_completed_arguments",
+    ),
+    Mutation(
+        name="tool-call-with-guessed-arguments",
+        path=CLIENT,
+        old='        raise RuntimeError("Codex response contained an incomplete tool call")\n',
+        new="        return CodexToolCall(id=str(call_id), name=str(name),"
+        " arguments=parsed or {})\n",
+        test=STREAM_TURN,
+        expect="DID NOT RAISE",
+    ),
+    Mutation(
+        name="repeated-tool-call-dispatched",
+        path=CLIENT,
+        old="            if len({call.id for call in tool_calls}) != len(tool_calls):",
+        new="            if False:",
+        test=STREAM_TURN,
+        expect="DID NOT RAISE",
+    ),
+    Mutation(
+        name="tool-call-checked-before-completion",
+        path=CLIENT,
+        old="                    call_items.append(item)\n",
+        new="                    _tool_call_from_item(item)\n"
+        "                    call_items.append(item)\n",
+        test=STREAM_TURN,
+        expect="test_stream_turn_reports_the_backend_error_over_a_broken_tool_call",
     ),
 )
 
