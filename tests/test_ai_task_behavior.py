@@ -9,7 +9,7 @@ from custom_components.codex_assist.codex_auth import (
     CodexReauthRequiredError,
     CodexTokenSet,
 )
-from custom_components.codex_assist.codex_client import CodexAuthenticationError
+from custom_components.codex_assist.codex_client import CodexAuthenticationError, CodexClient
 from tests.ha_fakes import install_homeassistant_fakes
 
 
@@ -247,14 +247,11 @@ async def test_ai_task_chat_log_retry_propagates_reauth_required(
             entry=type(
                 "Entry",
                 (),
-                {
-                    "entry_id": "entry-1",
-                    "data": {"access_token": "access-1", "refresh_token": "refresh-1"},
-                },
+                {"data": {"access_token": "access-1", "refresh_token": "refresh-1"}},
             )(),
             auth_client=ReauthAuthClient(),
             tokens=CodexTokenSet("access-1", "refresh-1"),
-            codex=object(),
+            codex=CodexClient(http_client=None, access_token="access-1"),
             chat_log=chat_log,
             entity_id="ai_task.codex_assist",
             model="gpt-5.4",
@@ -309,14 +306,11 @@ async def test_ai_task_chat_log_retry_reauths_when_refreshed_token_is_rejected(
             entry=type(
                 "Entry",
                 (),
-                {
-                    "entry_id": "entry-1",
-                    "data": {"access_token": "access-1", "refresh_token": "refresh-1"},
-                },
+                {"data": {"access_token": "access-1", "refresh_token": "refresh-1"}},
             )(),
             auth_client=RefreshAuthClient(),
             tokens=CodexTokenSet("access-1", "refresh-1"),
-            codex=object(),
+            codex=CodexClient(http_client=None, access_token="access-1"),
             chat_log=chat_log,
             entity_id="ai_task.codex_assist",
             model="gpt-5.4",
@@ -330,25 +324,20 @@ async def test_ai_task_chat_log_retry_reauths_when_refreshed_token_is_rejected(
 
 
 @pytest.mark.asyncio
-async def test_ai_task_image_retry_reauths_when_refreshed_token_is_rejected(
-    ai_task_module,
-    monkeypatch,
-):
+async def test_ai_task_image_retry_reauths_when_refreshed_token_is_rejected(ai_task_module):
     class RejectingImageCodex:
         async def generate_image(self, **kwargs):
             raise CodexAuthenticationError("invalid token")
+
+        def with_access_token(self, access_token):
+            return self
 
     class RefreshAuthClient:
         async def refresh(self, tokens):
             return CodexTokenSet("access-2", "refresh-2")
 
-    class FakeCodexClient(RejectingImageCodex):
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
     chat_log = type("ChatLog", (), {"content": [], "llm_api": None})()
     task = type("Task", (), {"instructions": "draw it"})()
-    monkeypatch.setattr(ai_task_module, "CodexClient", FakeCodexClient)
 
     with pytest.raises(CodexReauthRequiredError, match="rejected after refresh"):
         await ai_task_module._generate_codex_ai_task_image(
@@ -367,10 +356,7 @@ async def test_ai_task_image_retry_reauths_when_refreshed_token_is_rejected(
             entry=type(
                 "Entry",
                 (),
-                {
-                    "entry_id": "entry-1",
-                    "data": {"access_token": "access-1", "refresh_token": "refresh-1"},
-                },
+                {"data": {"access_token": "access-1", "refresh_token": "refresh-1"}},
             )(),
             auth_client=RefreshAuthClient(),
             tokens=CodexTokenSet("access-1", "refresh-1"),

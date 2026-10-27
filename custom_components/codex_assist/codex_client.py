@@ -299,12 +299,23 @@ class CodexClient:
         self._base_url = base_url.rstrip("/")
         self._session_id = session_id
 
-    def _responses_request(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def with_access_token(self, access_token: str) -> CodexClient:
+        """Return a client for the same session that uses a refreshed access token."""
+        return CodexClient(
+            http_client=self._http_client,
+            access_token=access_token,
+            base_url=self._base_url,
+            session_id=self._session_id,
+        )
+
+    def _responses_request(
+        self, payload: dict[str, Any]
+    ) -> tuple[dict[str, str], dict[str, Any]]:
         headers = codex_headers(self._access_token)
         if self._session_id:
             headers["session_id"] = self._session_id
             payload = {**payload, "prompt_cache_key": self._session_id}
-        return {"headers": headers, "json": payload}
+        return headers, payload
 
     async def stream_turn(
         self,
@@ -462,10 +473,12 @@ class CodexClient:
             text_format=text_format,
         )
 
+        headers, payload = self._responses_request(payload)
         async with self._http_client.stream(
             "POST",
             f"{self._base_url}/responses",
-            **self._responses_request(payload),
+            headers=headers,
+            json=payload,
             timeout=CODEX_STREAM_TIMEOUT,
         ) as response:
             if response.status_code != 200:
@@ -518,10 +531,12 @@ class CodexClient:
 
         image_b64: str | None = None
         text_parts: list[str] = []
+        headers, payload = self._responses_request(payload)
         async with self._http_client.stream(
             "POST",
             f"{self._base_url}/responses",
-            **self._responses_request(payload),
+            headers=headers,
+            json=payload,
             timeout=300,
         ) as response:
             if response.status_code != 200:
@@ -901,9 +916,11 @@ async def _aiter_completed_response_events(response: Any) -> AsyncIterator[dict[
     async for event in _aiter_sse_events(response):
         if stream_error := _stream_event_exception(event):
             raise stream_error
-        yield event
-        if event.get("type") == "response.completed":
+        completed = event.get("type") == "response.completed"
+        if completed:
             _log_usage(event)
+        yield event
+        if completed:
             return
     raise RuntimeError("Codex stream ended before response.completed")
 

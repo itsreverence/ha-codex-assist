@@ -334,11 +334,7 @@ async def _run_codex_ai_task_chat_log(
                 tokens = await _refresh_runtime_tokens(hass, entry, auth_client, tokens)
             except CodexReauthRequiredError:
                 raise
-            codex = CodexClient(
-                http_client=get_async_client(hass),
-                access_token=tokens.access_token,
-                session_id=codex_session_id(entry.entry_id),
-            )
+            codex = codex.with_access_token(tokens.access_token)
             try:
                 await _stream_codex_turn_into_chat_log(
                     chat_log=chat_log,
@@ -404,11 +400,7 @@ async def _generate_codex_ai_task_image(
             err,
         )
         tokens = await _refresh_runtime_tokens(hass, entry, auth_client, tokens)
-        codex = CodexClient(
-            http_client=get_async_client(hass),
-            access_token=tokens.access_token,
-            session_id=codex_session_id(entry.entry_id),
-        )
+        codex = codex.with_access_token(tokens.access_token)
         try:
             return await codex.generate_image(
                 prompt=task.instructions,

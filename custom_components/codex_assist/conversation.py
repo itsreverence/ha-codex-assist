@@ -208,11 +208,7 @@ class CodexAssistConversationEntity(
                             response,
                             user_input,
                         )
-                    codex = CodexClient(
-                        http_client=http_client,
-                        access_token=tokens.access_token,
-                        session_id=codex_session_id(self.entry.entry_id),
-                    )
+                    codex = codex.with_access_token(tokens.access_token)
                     try:
                         tool_call_requested = await _stream_codex_turn_into_chat_log(
                             chat_log=chat_log,
