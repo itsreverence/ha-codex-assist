@@ -247,7 +247,10 @@ async def test_ai_task_chat_log_retry_propagates_reauth_required(
             entry=type(
                 "Entry",
                 (),
-                {"data": {"access_token": "access-1", "refresh_token": "refresh-1"}},
+                {
+                    "entry_id": "entry-1",
+                    "data": {"access_token": "access-1", "refresh_token": "refresh-1"},
+                },
             )(),
             auth_client=ReauthAuthClient(),
             tokens=CodexTokenSet("access-1", "refresh-1"),
@@ -306,7 +309,10 @@ async def test_ai_task_chat_log_retry_reauths_when_refreshed_token_is_rejected(
             entry=type(
                 "Entry",
                 (),
-                {"data": {"access_token": "access-1", "refresh_token": "refresh-1"}},
+                {
+                    "entry_id": "entry-1",
+                    "data": {"access_token": "access-1", "refresh_token": "refresh-1"},
+                },
             )(),
             auth_client=RefreshAuthClient(),
             tokens=CodexTokenSet("access-1", "refresh-1"),
@@ -361,7 +367,10 @@ async def test_ai_task_image_retry_reauths_when_refreshed_token_is_rejected(
             entry=type(
                 "Entry",
                 (),
-                {"data": {"access_token": "access-1", "refresh_token": "refresh-1"}},
+                {
+                    "entry_id": "entry-1",
+                    "data": {"access_token": "access-1", "refresh_token": "refresh-1"},
+                },
             )(),
             auth_client=RefreshAuthClient(),
             tokens=CodexTokenSet("access-1", "refresh-1"),
