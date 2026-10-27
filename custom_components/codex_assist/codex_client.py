@@ -885,11 +885,16 @@ def _log_usage(event: dict[str, Any]) -> None:
     output_details = usage.get("output_tokens_details")
     LOGGER.debug(
         "Codex usage: input=%s cached=%s output=%s reasoning=%s",
-        usage.get("input_tokens"),
-        input_details.get("cached_tokens") if isinstance(input_details, dict) else None,
-        usage.get("output_tokens"),
-        output_details.get("reasoning_tokens") if isinstance(output_details, dict) else None,
+        _token_count(usage, "input_tokens"),
+        _token_count(input_details, "cached_tokens"),
+        _token_count(usage, "output_tokens"),
+        _token_count(output_details, "reasoning_tokens"),
     )
+
+
+def _token_count(details: Any, key: str) -> int | None:
+    value = details.get(key) if isinstance(details, dict) else None
+    return value if type(value) is int and value >= 0 else None
 
 
 async def _aiter_completed_response_events(response: Any) -> AsyncIterator[dict[str, Any]]:

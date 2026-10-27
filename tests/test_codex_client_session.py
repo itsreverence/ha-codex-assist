@@ -111,3 +111,30 @@ async def test_completed_response_usage_is_logged_at_debug(caplog):
             ]
 
     assert "Codex usage: input=6350 cached=6144 output=5 reasoning=0" in caplog.messages
+
+
+@pytest.mark.asyncio
+async def test_usage_log_omits_values_that_are_not_token_counts(caplog):
+    completed = {
+        "type": "response.completed",
+        "response": {
+            "status": "completed",
+            "usage": {
+                "input_tokens": "synthetic text",
+                "input_tokens_details": {"cached_tokens": {"nested": "synthetic"}},
+                "output_tokens": True,
+                "output_tokens_details": {"reasoning_tokens": -1},
+            },
+        },
+    }
+    http, client, _requests = _recording_client(_sse(completed), session_id="s")
+    with caplog.at_level(logging.DEBUG, logger="custom_components.codex_assist.codex_client"):
+        async with http:
+            [
+                delta
+                async for delta in client.stream_turn(
+                    model="gpt-5.4", instructions="Answer.", input_items=[]
+                )
+            ]
+
+    assert "Codex usage: input=None cached=None output=None reasoning=None" in caplog.messages
