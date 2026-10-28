@@ -31,6 +31,7 @@ from .codex_client import (
     CodexStreamDelta,
     CodexTextDelta,
     CodexToolCallDelta,
+    codex_session_id,
     codex_user_content_with_images,
 )
 from .codex_protocol import CodexNativeState, native_state_from_response_items
@@ -155,7 +156,11 @@ class CodexAssistConversationEntity(
             )
             return conversation.async_get_result_from_chat_log(user_input, chat_log)
 
-        codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
+        codex = CodexClient(
+            http_client=http_client,
+            access_token=tokens.access_token,
+            session_id=codex_session_id(self.entry.entry_id),
+        )
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS + 1):
                 allow_tools = _iteration < MAX_TOOL_ITERATIONS
@@ -203,10 +208,7 @@ class CodexAssistConversationEntity(
                             response,
                             user_input,
                         )
-                    codex = CodexClient(
-                        http_client=http_client,
-                        access_token=tokens.access_token,
-                    )
+                    codex = codex.with_access_token(tokens.access_token)
                     try:
                         tool_call_requested = await _stream_codex_turn_into_chat_log(
                             chat_log=chat_log,

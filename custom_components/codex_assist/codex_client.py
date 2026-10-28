@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import logging
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -10,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .codex_image import image_model_quality, validate_image_size
+
+LOGGER = logging.getLogger(__name__)
 
 CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex"
 CODEX_STREAM_TIMEOUT = 300
@@ -289,10 +292,30 @@ class CodexClient:
         http_client: AsyncPostClient,
         access_token: str,
         base_url: str = CODEX_BACKEND_BASE_URL,
+        session_id: str | None = None,
     ) -> None:
         self._http_client = http_client
         self._access_token = access_token
         self._base_url = base_url.rstrip("/")
+        self._session_id = session_id
+
+    def with_access_token(self, access_token: str) -> CodexClient:
+        """Return a client for the same session that uses a refreshed access token."""
+        return CodexClient(
+            http_client=self._http_client,
+            access_token=access_token,
+            base_url=self._base_url,
+            session_id=self._session_id,
+        )
+
+    def _responses_request(
+        self, payload: dict[str, Any]
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        headers = codex_headers(self._access_token)
+        if self._session_id:
+            headers["session_id"] = self._session_id
+            payload = {**payload, "prompt_cache_key": self._session_id}
+        return headers, payload
 
     async def stream_turn(
         self,
@@ -450,10 +473,11 @@ class CodexClient:
             text_format=text_format,
         )
 
+        headers, payload = self._responses_request(payload)
         async with self._http_client.stream(
             "POST",
             f"{self._base_url}/responses",
-            headers=codex_headers(self._access_token),
+            headers=headers,
             json=payload,
             timeout=CODEX_STREAM_TIMEOUT,
         ) as response:
@@ -507,10 +531,11 @@ class CodexClient:
 
         image_b64: str | None = None
         text_parts: list[str] = []
+        headers, payload = self._responses_request(payload)
         async with self._http_client.stream(
             "POST",
             f"{self._base_url}/responses",
-            headers=codex_headers(self._access_token),
+            headers=headers,
             json=payload,
             timeout=300,
         ) as response:
@@ -856,12 +881,46 @@ def _tool_call_from_item(item: dict[str, Any]) -> CodexToolCall:
     return CodexToolCall(id=call_id, name=name, arguments=parsed)
 
 
+# Codex CLI sends a session_id header and prompt_cache_key. A live probe saw prompt-prefix cache
+# hits only with the header; the key alone had no effect.
+_SESSION_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/itsreverence/ha-codex-assist")
+
+
+def codex_session_id(entry_id: str) -> str:
+    """Return a stable, opaque Codex session ID for one config entry."""
+    return str(uuid.uuid5(_SESSION_NAMESPACE, entry_id))
+
+
+def _log_usage(event: dict[str, Any]) -> None:
+    response = event.get("response")
+    usage = response.get("usage") if isinstance(response, dict) else None
+    if not isinstance(usage, dict):
+        return
+    input_details = usage.get("input_tokens_details")
+    output_details = usage.get("output_tokens_details")
+    LOGGER.debug(
+        "Codex usage: input=%s cached=%s output=%s reasoning=%s",
+        _token_count(usage, "input_tokens"),
+        _token_count(input_details, "cached_tokens"),
+        _token_count(usage, "output_tokens"),
+        _token_count(output_details, "reasoning_tokens"),
+    )
+
+
+def _token_count(details: Any, key: str) -> int | None:
+    value = details.get(key) if isinstance(details, dict) else None
+    return value if type(value) is int and value >= 0 else None
+
+
 async def _aiter_completed_response_events(response: Any) -> AsyncIterator[dict[str, Any]]:
     async for event in _aiter_sse_events(response):
         if stream_error := _stream_event_exception(event):
             raise stream_error
+        completed = event.get("type") == "response.completed"
+        if completed:
+            _log_usage(event)
         yield event
-        if event.get("type") == "response.completed":
+        if completed:
             return
     raise RuntimeError("Codex stream ended before response.completed")
 
