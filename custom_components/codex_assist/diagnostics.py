@@ -23,6 +23,14 @@ async def async_get_config_entry_diagnostics(
             "data": redact_sensitive(dict(entry.data)),
             "options": redact_sensitive(dict(entry.options)),
         },
+        "subentries": [
+            {
+                "subentry_type": subentry.subentry_type,
+                "title": subentry.title,
+                "data": redact_sensitive(dict(subentry.data)),
+            }
+            for subentry in entry.subentries.values()
+        ],
     }
 
 

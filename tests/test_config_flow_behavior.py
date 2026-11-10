@@ -79,7 +79,6 @@ async def test_config_flow_creates_entry_only_after_device_token_exchange(
     flow = config_flow_module.CodexAssistConfigFlow()
     auth = FakeAuthClient()
     flow._auth_client = lambda: auth
-    flow._setup_input = {"model": "gpt-5.4"}
     flow._device_code = auth.device_code
     flow.source = "user"
 
@@ -93,14 +92,26 @@ async def test_config_flow_creates_entry_only_after_device_token_exchange(
     assert auth.exchanges == [CodexAuthorizationCode("auth-code-1", "verifier-1")]
     assert flow.unique_id == "codex_assist"
     assert flow.duplicate_checked is True
-    assert result == {
-        "type": "create_entry",
-        "title": "Codex Assist",
-        "data": {
-            "model": "account-model",
-            "access_token": "access-1",
-            "refresh_token": "refresh-1",
-        },
+    assert result["type"] == "create_entry"
+    assert result["title"] == "Codex Assist"
+    assert result["data"] == {"access_token": "access-1", "refresh_token": "refresh-1"}
+    subentries = {s["subentry_type"]: s for s in result["subentries"]}
+    assert subentries["conversation"]["title"] == "Codex Assist"
+    assert subentries["conversation"]["data"] == {
+        "model": "account-model",
+        "prompt": config_flow_module.DEFAULT_PROMPT,
+        "reasoning_effort": "low",
+        "text_verbosity": "medium",
+        "web_search": False,
+    }
+    assert subentries["ai_task_data"]["title"] == "Codex Assist AI Task"
+    assert subentries["ai_task_data"]["data"] == {
+        "model": "account-model",
+        "reasoning_effort": "low",
+        "text_verbosity": "medium",
+        "web_search": False,
+        "image_model": "gpt-image-2-medium",
+        "image_size": "1024x1024",
     }
 
 
@@ -123,25 +134,19 @@ async def test_config_flow_pending_authorization_keeps_same_device_code(
 
 
 @pytest.mark.asyncio
-async def test_reauth_updates_existing_entry_after_device_token_exchange(
-    config_flow_module,
-):
+async def test_reauth_replaces_only_the_credentials(config_flow_module):
     flow = config_flow_module.CodexAssistConfigFlow()
     auth = FakeAuthClient()
     flow._auth_client = lambda: auth
-    flow._setup_input = {"model": "gpt-5.4"}
     flow._device_code = auth.device_code
     flow.source = "reauth"
-    flow.reauth_entry = object()
+    flow.reauth_entry = _signed_in_entry()
 
     result = await flow.async_step_device_wait()
 
     assert result["type"] == "abort"
-    assert result["data_updates"] == {
-        "model": "gpt-5.4",
-        "access_token": "access-1",
-        "refresh_token": "refresh-1",
-    }
+    assert result["reason"] == "reauth_successful"
+    assert flow.reauth_entry.data == {"access_token": "access-1", "refresh_token": "refresh-1"}
 
 
 def _schema_defaults(data_schema) -> dict[str, object]:
@@ -158,9 +163,12 @@ def _section_defaults(data_schema, section_name) -> dict[str, object]:
 
 
 def test_web_search_option_is_default_off_and_preserves_opt_in(config_flow_module):
-    default_schema = config_flow_module._settings_schema({}, model_options=["gpt-5.4"])
+    keys = config_flow_module.SUBENTRY_SETTING_KEYS["conversation"]
+    default_schema = config_flow_module._settings_schema(
+        {}, model_options=["gpt-5.4"], keys=keys
+    )
     enabled_schema = config_flow_module._settings_schema(
-        {"web_search": True}, model_options=["gpt-5.4"]
+        {"web_search": True}, model_options=["gpt-5.4"], keys=keys
     )
 
     section_name = config_flow_module.SECTION_CHAT_SETTINGS
@@ -168,30 +176,17 @@ def test_web_search_option_is_default_off_and_preserves_opt_in(config_flow_modul
     assert _section_defaults(enabled_schema, section_name)["web_search"] is True
 
 
-def _reconfigure_entry(**overrides):
-    data = {
-        "model": "gpt-5.4",
-        "prompt": "Saved prompt.",
-        "reasoning_effort": "high",
-        "reasoning_summary": "detailed",
-        "text_verbosity": "low",
-        "web_search": True,
-        "image_model": "gpt-image-2-high",
-        "image_size": "1536x1024",
-        "access_token": "old-access",
-        "refresh_token": "old-refresh",
-    }
-    options = {}
-    data.update(overrides.pop("data", {}))
-    options.update(overrides.pop("options", {}))
-    return types.SimpleNamespace(data=data, options=options, **overrides)
+def _signed_in_entry(**overrides):
+    return types.SimpleNamespace(
+        data={"access_token": "old-access", "refresh_token": "old-refresh"}, **overrides
+    )
 
 
 @pytest.mark.asyncio
 async def test_reconfigure_only_asks_user_to_sign_in_again(config_flow_module):
     flow = config_flow_module.CodexAssistConfigFlow()
     flow.source = "reconfigure"
-    flow.reconfigure_entry = _reconfigure_entry()
+    flow.reconfigure_entry = _signed_in_entry()
 
     result = await flow.async_step_reconfigure()
 
@@ -207,17 +202,15 @@ async def test_reconfigure_updates_existing_entry_after_device_token_exchange(
     flow = config_flow_module.CodexAssistConfigFlow()
     auth = FakeAuthClient()
     flow._auth_client = lambda: auth
-    flow._setup_input = {}
     flow._device_code = auth.device_code
     flow.source = "reconfigure"
-    flow.reconfigure_entry = _reconfigure_entry()
+    flow.reconfigure_entry = _signed_in_entry()
 
     result = await flow.async_step_device_wait()
 
     assert result["type"] == "abort"
     assert result["reason"] == "reconfigure_successful"
-    assert result["entry"] is flow.reconfigure_entry
-    assert result["data_updates"] == {
+    assert flow.reconfigure_entry.data == {
         "access_token": "access-1",
         "refresh_token": "refresh-1",
     }
@@ -234,7 +227,7 @@ async def test_reconfigure_device_code_request_failure_shows_error(config_flow_m
     auth.request_device_code = request_device_code
     flow._auth_client = lambda: auth
     flow.source = "reconfigure"
-    flow.reconfigure_entry = _reconfigure_entry()
+    flow.reconfigure_entry = _signed_in_entry()
 
     result = await flow.async_step_reconfigure({})
 
@@ -247,7 +240,7 @@ async def test_reconfigure_device_code_request_failure_shows_error(config_flow_m
 async def test_model_step_rejects_an_unadvertised_model(config_flow_module):
     flow = config_flow_module.CodexAssistConfigFlow()
     flow.hass = object()
-    flow._setup_data = {"access_token": "access-1", "refresh_token": "refresh-1"}
+    flow._credentials = {"access_token": "access-1", "refresh_token": "refresh-1"}
     await flow.async_step_model()
     result = await flow.async_step_model({"model": "guessed-model"})
     assert result["type"] == "form"
@@ -258,7 +251,7 @@ async def test_model_step_empty_success_does_not_create_entry(config_flow_module
     monkeypatch.setattr(config_flow_module, "fetch_codex_model_ids", AsyncMock(return_value=[]))
     flow = config_flow_module.CodexAssistConfigFlow()
     flow.hass = object()
-    flow._setup_data = {"access_token": "access-1"}
+    flow._credentials = {"access_token": "access-1"}
     result = await flow.async_step_model()
     assert result["errors"] == {"base": "no_models"}
     assert not result["data_schema"].schema
@@ -274,7 +267,7 @@ async def test_model_step_labels_fallback_on_discovery_failure(config_flow_modul
     )
     flow = config_flow_module.CodexAssistConfigFlow()
     flow.hass = object()
-    flow._setup_data = {"access_token": "access-1"}
+    flow._credentials = {"access_token": "access-1"}
     result = await flow.async_step_model()
     assert "unverified" in result["description_placeholders"]["model_status"]
     saved = await flow.async_step_model({"model": _schema_defaults(result["data_schema"])["model"]})
@@ -284,7 +277,7 @@ async def test_model_step_labels_fallback_on_discovery_failure(config_flow_modul
 async def test_reauthentication_clears_previous_accounts_discovery_cache(config_flow_module):
     from custom_components.codex_assist.codex_runtime import RuntimeTokenCoordinator
 
-    entry = _reconfigure_entry(runtime_data=RuntimeTokenCoordinator())
+    entry = _signed_in_entry(runtime_data=RuntimeTokenCoordinator())
     cache = entry.runtime_data.model_cache
 
     async def old_models():

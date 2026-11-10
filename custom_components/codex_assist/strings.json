@@ -15,11 +15,11 @@
       },
       "reconfigure": {
         "title": "Reconfigure Codex Assist",
-        "description": "Sign in again with your ChatGPT/Codex account. Your Codex Assist options will stay unchanged."
+        "description": "Sign in again with your ChatGPT/Codex account. Your conversation agents and AI Task settings will stay unchanged."
       },
       "model": {
         "title": "Choose a chat model",
-        "description": "{model_status} Select the model used for Assist conversations and AI Task requests. Availability and feature support can vary by account.",
+        "description": "{model_status} Select the model for the first conversation agent and the AI Task entity. You can add more conversation agents with their own models later. Availability and feature support can vary by account.",
         "data": {
           "model": "Chat model"
         }
@@ -38,52 +38,121 @@
       "no_models": "Your account returned no visible models. Try again later or restart setup with another account."
     }
   },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Codex Assist options",
-        "description": "{model_status}\n\nStart with the everyday settings. Advanced chat and image-generation defaults stay collapsed until you need them. Device control still follows Home Assistant’s Assist exposed-entity settings.",
-        "sections": {
-          "chat_settings": {
-            "name": "Everyday settings",
-            "data": {
-              "model": "Chat model",
-              "text_verbosity": "Response length",
-              "web_search": "Enable hosted web search"
-            },
-            "data_description": {
-              "model": "The model used for Assist conversations and AI Task requests.",
-              "text_verbosity": "How concise or detailed normal text and voice responses should be.",
-              "web_search": "Allow the model to search the web for current information. Search is off by default."
-            }
+  "config_subentries": {
+    "conversation": {
+      "entry_type": "Conversation agent",
+      "initiate_flow": {
+        "user": "Add conversation agent",
+        "reconfigure": "Reconfigure conversation agent"
+      },
+      "step": {
+        "init": {
+          "title": "Conversation agent",
+          "description": "{model_status}\n\nEach conversation agent appears as its own entity you can pick in an Assist pipeline. Advanced settings stay collapsed until you need them. Device control still follows Home Assistant’s Assist exposed-entity settings.",
+          "data": {
+            "name": "Name"
           },
-          "advanced_settings": {
-            "name": "Advanced chat settings",
-            "data": {
-              "prompt": "System prompt",
-              "reasoning_effort": "Reasoning effort"
-            },
-            "data_description": {
-              "prompt": "Standing instructions applied to Assist conversations.",
-              "reasoning_effort": "How much reasoning supported models should use before answering."
-            }
+          "data_description": {
+            "name": "Shown as the agent’s device and Assist pipeline choice."
           },
-          "image_settings": {
-            "name": "Image-generation defaults",
-            "data": {
-              "image_model": "Image quality",
-              "image_size": "Image size"
+          "sections": {
+            "chat_settings": {
+              "name": "Everyday settings",
+              "data": {
+                "model": "Chat model",
+                "text_verbosity": "Response length",
+                "web_search": "Enable hosted web search"
+              },
+              "data_description": {
+                "model": "The model this conversation agent uses.",
+                "text_verbosity": "How concise or detailed normal text and voice responses should be.",
+                "web_search": "Allow the model to search the web for current information. Search is off by default."
+              }
             },
-            "data_description": {
-              "image_model": "Default quality for images created through Home Assistant AI Task.",
-              "image_size": "Default shape and resolution for generated images."
+            "advanced_settings": {
+              "name": "Advanced chat settings",
+              "data": {
+                "prompt": "System prompt",
+                "reasoning_effort": "Reasoning effort"
+              },
+              "data_description": {
+                "prompt": "Standing instructions for this conversation agent.",
+                "reasoning_effort": "How much reasoning supported models should use before answering."
+              }
             }
           }
         }
+      },
+      "abort": {
+        "entry_not_loaded": "Codex Assist must be loaded before you can change this. Enable or reload the integration, then try again.",
+        "reconfigure_successful": "Settings saved."
+      },
+      "error": {
+        "invalid_model": "Choose a listed model or keep your saved model.",
+        "no_models": "Your account returned no visible models. Try again later."
       }
     },
-    "error": {
-      "invalid_model": "Choose a listed model or keep your saved model."
+    "ai_task_data": {
+      "entry_type": "AI Task",
+      "initiate_flow": {
+        "user": "Add AI Task entity",
+        "reconfigure": "Reconfigure AI Task entity"
+      },
+      "step": {
+        "init": {
+          "title": "AI Task",
+          "description": "{model_status}\n\nSettings for Home Assistant AI Task data and image generation. Advanced and image-generation defaults stay collapsed until you need them.",
+          "data": {
+            "name": "Name"
+          },
+          "data_description": {
+            "name": "Shown as the AI Task entity’s device name."
+          },
+          "sections": {
+            "chat_settings": {
+              "name": "Everyday settings",
+              "data": {
+                "model": "Chat model",
+                "text_verbosity": "Response length",
+                "web_search": "Enable hosted web search"
+              },
+              "data_description": {
+                "model": "The model used for AI Task requests.",
+                "text_verbosity": "How concise or detailed AI Task text results should be.",
+                "web_search": "Allow the model to search the web for unstructured AI Task results. Search is off by default and is never used for structured results."
+              }
+            },
+            "advanced_settings": {
+              "name": "Advanced settings",
+              "data": {
+                "reasoning_effort": "Reasoning effort"
+              },
+              "data_description": {
+                "reasoning_effort": "How much reasoning supported models should use before answering."
+              }
+            },
+            "image_settings": {
+              "name": "Image-generation defaults",
+              "data": {
+                "image_model": "Image quality",
+                "image_size": "Image size"
+              },
+              "data_description": {
+                "image_model": "Default quality for images created through Home Assistant AI Task.",
+                "image_size": "Default shape and resolution for generated images."
+              }
+            }
+          }
+        }
+      },
+      "abort": {
+        "entry_not_loaded": "Codex Assist must be loaded before you can change this. Enable or reload the integration, then try again.",
+        "reconfigure_successful": "Settings saved."
+      },
+      "error": {
+        "invalid_model": "Choose a listed model or keep your saved model.",
+        "no_models": "Your account returned no visible models. Try again later."
+      }
     }
   }
 }

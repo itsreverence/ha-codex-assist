@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,11 +22,17 @@ def ai_task_module(monkeypatch):
     return importlib.reload(module)
 
 
-def test_ai_task_entity_advertises_data_image_and_attachment_support(ai_task_module):
-    entity = ai_task_module.CodexAssistAITaskEntity(type("Entry", (), {"entry_id": "abc"})())
+def _subentry(**data):
+    return SimpleNamespace(subentry_id="ai-task-subentry", title="Codex Assist AI Task", data=data)
 
-    assert entity._attr_name == "Codex Assist AI Task"
-    assert entity._attr_unique_id == "abc_ai_task"
+
+def test_ai_task_entity_is_named_after_its_subentry_device(ai_task_module):
+    entity = ai_task_module.CodexAssistAITaskEntity(object(), _subentry(model="gpt-5.4"))
+
+    assert entity._attr_name is None
+    assert entity._attr_unique_id == "ai-task-subentry"
+    assert entity._attr_device_info["name"] == "Codex Assist AI Task"
+    assert entity._attr_device_info["identifiers"] == {("codex_assist", "ai-task-subentry")}
     assert entity._attr_supported_features == 7
 
 
@@ -268,7 +275,7 @@ async def test_ai_task_generate_data_reports_temporary_auth_without_reauth(
             self.reauth_started = True
 
     entry = Entry()
-    entity = ai_task_module.CodexAssistAITaskEntity(entry)
+    entity = ai_task_module.CodexAssistAITaskEntity(entry, _subentry())
     entity.hass = type(
         "Hass",
         (),

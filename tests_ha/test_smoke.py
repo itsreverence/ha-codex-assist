@@ -15,9 +15,10 @@ import pytest
 import voluptuous as vol
 from homeassistant.components import conversation
 from homeassistant.components.conversation import trace as conversation_trace
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import SOURCE_RECONFIGURE, SOURCE_USER, ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import llm, selector
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -47,33 +48,62 @@ from custom_components.codex_assist.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 
-ENTRY_DATA = {
+CREDENTIALS = {
     # Not a JWT, so the runtime treats it as non-expiring and skips refresh.
     "access_token": "test-access-token",
     "refresh_token": "test-refresh-token",
-    "model": "gpt-5.4",
-    "prompt": "You are a concise Home Assistant Assist conversation agent.",
 }
 
 
-def _make_entry() -> MockConfigEntry:
+def _make_entry(**conversation_settings: object) -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Codex Assist",
         unique_id=DOMAIN,
-        data=dict(ENTRY_DATA),
+        version=2,
+        data=dict(CREDENTIALS),
+        subentries_data=[
+            {
+                "subentry_type": "conversation",
+                "title": "Codex Assist",
+                "data": {"model": "gpt-5.4", **conversation_settings},
+                "unique_id": None,
+            },
+            {
+                "subentry_type": "ai_task_data",
+                "title": "Codex Assist AI Task",
+                "data": {"model": "gpt-5.4"},
+                "unique_id": None,
+            },
+        ],
     )
 
 
-async def _setup_entry(hass: HomeAssistant) -> MockConfigEntry:
+async def _setup_entry(
+    hass: HomeAssistant, entry: MockConfigEntry | None = None
+) -> MockConfigEntry:
     # The conversation component requires the core homeassistant component
     # (exposed-entities registry) to be set up first.
     assert await async_setup_component(hass, "homeassistant", {})
-    entry = _make_entry()
+    entry = entry or _make_entry()
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     return entry
+
+
+def _subentry(entry: MockConfigEntry, subentry_type: str):
+    (subentry,) = (s for s in entry.subentries.values() if s.subentry_type == subentry_type)
+    return subentry
+
+
+async def _reply(hass: HomeAssistant, agent_id: str, monkeypatch, text: str) -> str:
+    async def fake_stream_turn(self: CodexClient, **kwargs: object):
+        yield CodexTextDelta(text)
+
+    monkeypatch.setattr(CodexClient, "stream_turn", fake_stream_turn)
+    result = await conversation.async_converse(hass, "Hello", None, Context(), agent_id=agent_id)
+    return result.response.speech["plain"]["speech"]
 
 
 async def test_setup_creates_conversation_and_ai_task_entities(
@@ -194,8 +224,7 @@ async def test_web_search_citations_are_displayable_but_not_spoken(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    entry = await _setup_entry(hass)
-    hass.config_entries.async_update_entry(entry, options={"web_search": True})
+    await _setup_entry(hass, _make_entry(web_search=True))
 
     async def fake_stream_turn(self: CodexClient, **kwargs: object):
         tools = kwargs["tools"]
@@ -232,8 +261,7 @@ async def test_multi_turn_web_search_sources_are_not_spoken_after_ha_tool_call(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    entry = await _setup_entry(hass)
-    hass.config_entries.async_update_entry(entry, options={"web_search": True})
+    await _setup_entry(hass, _make_entry(web_search=True))
 
     fake_tool = SimpleNamespace(
         name="HassTestTool",
@@ -316,18 +344,23 @@ async def test_diagnostics_redact_tokens_on_real_entry(hass: HomeAssistant) -> N
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
-    entry_data = diagnostics["entry"]["data"]
-    assert entry_data["access_token"] == REDACTED
-    assert entry_data["refresh_token"] == REDACTED
-    assert entry_data["model"] == "gpt-5.4"
+    assert diagnostics["entry"]["data"] == {
+        "access_token": REDACTED,
+        "refresh_token": REDACTED,
+    }
+    assert {(s["subentry_type"], s["data"]["model"]) for s in diagnostics["subentries"]} == {
+        ("conversation", "gpt-5.4"),
+        ("ai_task_data", "gpt-5.4"),
+    }
     assert "test-access-token" not in str(diagnostics)
 
 
-async def test_options_flow_uses_real_home_assistant_contract(
+async def test_reconfigure_conversation_agent_uses_real_subentry_contract(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    entry = await _setup_entry(hass)
+    entry = await _setup_entry(hass, _make_entry(reasoning_summary="detailed"))
+    subentry = _subentry(entry, "conversation")
 
     from custom_components.codex_assist.codex_models import ModelCatalog
 
@@ -339,13 +372,15 @@ async def test_options_flow_uses_real_home_assistant_contract(
         fake_model_ids,
     )
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "conversation"),
+        context={"source": SOURCE_RECONFIGURE, "subentry_id": subentry.subentry_id},
+    )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "init"
     assert [key.schema for key in result["data_schema"].schema] == [
         SECTION_CHAT_SETTINGS,
         SECTION_ADVANCED_SETTINGS,
-        SECTION_IMAGE_SETTINGS,
     ]
     advanced_section = next(
         value
@@ -359,7 +394,7 @@ async def test_options_flow_uses_real_home_assistant_contract(
     assert prompt_selector.config["multiline"] is True
     prompt = "# House rules\n\n- **Never** unlock doors.\n- Reply concisely."
 
-    result = await hass.config_entries.options.async_configure(
+    result = await hass.config_entries.subentries.async_configure(
         result["flow_id"],
         user_input={
             SECTION_CHAT_SETTINGS: {
@@ -371,17 +406,22 @@ async def test_options_flow_uses_real_home_assistant_contract(
                 "prompt": prompt,
                 "reasoning_effort": "low",
             },
-            SECTION_IMAGE_SETTINGS: {
-                "image_model": "gpt-image-2-medium",
-                "image_size": "1024x1024",
-            },
         },
     )
+    await hass.async_block_till_done()
 
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"]["text_verbosity"] == "low"
-    assert result["data"]["web_search"] is True
-    assert entry.options["prompt"] == prompt
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert dict(entry.subentries[subentry.subentry_id].data) == {
+        "model": "gpt-5.4",
+        "prompt": prompt,
+        "reasoning_effort": "low",
+        "reasoning_summary": "detailed",
+        "text_verbosity": "low",
+        "web_search": True,
+    }
+    assert entry.state is ConfigEntryState.LOADED
+    assert hass.states.get("conversation.codex_assist") is not None
 
 
 def test_structured_output_uses_real_home_assistant_schema_converter() -> None:
@@ -553,14 +593,21 @@ async def test_new_setup_discovers_models_after_owned_sign_in(hass, monkeypatch)
         result["flow_id"], user_input={"model": "future-model"}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"]["model"] == "future-model"
     await hass.async_block_till_done()
+    (entry,) = hass.config_entries.async_entries(DOMAIN)
+    assert entry.version == 2
+    assert dict(entry.data) == {"access_token": "test-access", "refresh_token": "test-refresh"}
+    assert {(s.subentry_type, s.title, s.data["model"]) for s in entry.subentries.values()} == {
+        ("conversation", "Codex Assist", "future-model"),
+        ("ai_task_data", "Codex Assist AI Task", "future-model"),
+    }
 
 
-async def test_options_preserves_saved_model_when_account_list_changes(hass, monkeypatch):
+async def test_reconfigure_preserves_saved_model_when_account_list_changes(hass, monkeypatch):
     from custom_components.codex_assist.codex_models import ModelCatalog
 
     entry = await _setup_entry(hass)
+    subentry = _subentry(entry, "ai_task_data")
 
     async def catalog(*args, **kwargs):
         return ModelCatalog(("new-model",), "discovered")
@@ -568,14 +615,17 @@ async def test_options_preserves_saved_model_when_account_list_changes(hass, mon
     monkeypatch.setattr(
         "custom_components.codex_assist.config_flow.async_entry_model_catalog", catalog
     )
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "ai_task_data"),
+        context={"source": SOURCE_RECONFIGURE, "subentry_id": subentry.subentry_id},
+    )
     section = next(
         v for k, v in result["data_schema"].schema.items() if k.schema == SECTION_CHAT_SETTINGS
     )
     field, select = next((k, v) for k, v in section.schema.schema.items() if k.schema == "model")
-    assert field.default() == entry.data["model"]
+    assert field.default() == "gpt-5.4"
     assert select.config["options"][-1]["label"].endswith("(saved; not currently listed)")
-    result = await hass.config_entries.options.async_configure(
+    result = await hass.config_entries.subentries.async_configure(
         result["flow_id"],
         user_input={
             SECTION_CHAT_SETTINGS: {"text_verbosity": "low"},
@@ -583,8 +633,10 @@ async def test_options_preserves_saved_model_when_account_list_changes(hass, mon
             SECTION_IMAGE_SETTINGS: {},
         },
     )
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options["model"] == entry.data["model"]
+    await hass.async_block_till_done()
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.subentries[subentry.subentry_id].data["model"] == "gpt-5.4"
+    assert entry.subentries[subentry.subentry_id].data["text_verbosity"] == "low"
 
 
 async def test_periodic_discovery_is_cancelled_when_entry_unloads(hass, monkeypatch):
@@ -612,3 +664,189 @@ async def test_periodic_discovery_is_cancelled_when_entry_unloads(hass, monkeypa
     refresh.assert_awaited_once_with(hass, entry)
     assert await hass.config_entries.async_unload(entry.entry_id)
     cancel.assert_called_once()
+
+
+async def test_v1_entry_migrates_settings_and_keeps_entity_ids(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Codex Assist",
+        unique_id=DOMAIN,
+        version=1,
+        data={
+            **CREDENTIALS,
+            "model": "setup-model",
+            "prompt": "Reauth-copied prompt.",
+            "reasoning_summary": "detailed",
+        },
+        options={
+            "model": "options-model",
+            "prompt": "Options prompt.",
+            "text_verbosity": "low",
+            "web_search": True,
+            "image_size": "1536x1024",
+        },
+    )
+    entry.add_to_hass(hass)
+    entity_registry = er.async_get(hass)
+    conversation_entry = entity_registry.async_get_or_create(
+        "conversation", DOMAIN, entry.entry_id, config_entry=entry
+    )
+    entity_registry.async_update_entity(
+        conversation_entry.entity_id, new_entity_id="conversation.renamed_agent"
+    )
+    ai_task_entry = entity_registry.async_get_or_create(
+        "ai_task", DOMAIN, f"{entry.entry_id}_ai_task", config_entry=entry
+    )
+    entity_registry.async_update_entity(
+        ai_task_entry.entity_id, new_entity_id="ai_task.renamed_tasks"
+    )
+
+    assert await async_setup_component(hass, "homeassistant", {})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.version == 2
+    assert dict(entry.data) == CREDENTIALS
+    assert dict(entry.options) == {}
+    conversation_subentry = _subentry(entry, "conversation")
+    ai_task_subentry = _subentry(entry, "ai_task_data")
+    assert conversation_subentry.title == "Codex Assist"
+    assert dict(conversation_subentry.data) == {
+        "model": "options-model",
+        "prompt": "Options prompt.",
+        "reasoning_summary": "detailed",
+        "text_verbosity": "low",
+        "web_search": True,
+    }
+    assert ai_task_subentry.title == "Codex Assist AI Task"
+    assert dict(ai_task_subentry.data) == {
+        "model": "options-model",
+        "reasoning_summary": "detailed",
+        "text_verbosity": "low",
+        "web_search": True,
+        "image_size": "1536x1024",
+    }
+    for entity_id, subentry in (
+        ("conversation.renamed_agent", conversation_subentry),
+        ("ai_task.renamed_tasks", ai_task_subentry),
+    ):
+        registry_entry = entity_registry.async_get(entity_id)
+        assert registry_entry.config_subentry_id == subentry.subentry_id
+        assert registry_entry.unique_id == subentry.subentry_id
+        assert hass.states.get(entity_id) is not None
+    assert len(er.async_entries_for_config_entry(entity_registry, entry.entry_id)) == 2
+    assert await _reply(hass, "conversation.renamed_agent", monkeypatch, "Still here.") == (
+        "Still here."
+    )
+
+
+async def test_v1_entry_without_registry_entries_migrates_to_default_entity_ids(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=DOMAIN, version=1, data={**CREDENTIALS, "model": "gpt-5.4"}
+    )
+
+    await _setup_entry(hass, entry)
+
+    assert entry.version == 2
+    assert hass.states.get("conversation.codex_assist") is not None
+    assert hass.states.get("ai_task.codex_assist_ai_task") is not None
+
+
+async def test_future_entry_version_is_not_loaded(hass: HomeAssistant) -> None:
+    assert await async_setup_component(hass, "homeassistant", {})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, version=3, data=dict(CREDENTIALS))
+    entry.add_to_hass(hass)
+
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
+
+
+async def test_added_conversation_agent_gets_its_own_working_entity(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from custom_components.codex_assist.codex_models import ModelCatalog
+
+    entry = await _setup_entry(hass)
+
+    async def catalog(*args, **kwargs):
+        return ModelCatalog(("gpt-5.4", "second-model"), "discovered")
+
+    monkeypatch.setattr(
+        "custom_components.codex_assist.config_flow.async_entry_model_catalog", catalog
+    )
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "conversation"), context={"source": SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.FORM
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        user_input={
+            "name": "Kitchen agent",
+            SECTION_CHAT_SETTINGS: {"model": "second-model"},
+            SECTION_ADVANCED_SETTINGS: {"prompt": "Talk like a chef."},
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    new_subentry = next(s for s in entry.subentries.values() if s.title == "Kitchen agent")
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "conversation", DOMAIN, new_subentry.subentry_id
+    )
+    assert entity_id == "conversation.kitchen_agent"
+    seen: list[dict] = []
+
+    async def fake_stream_turn(self: CodexClient, **kwargs: object):
+        seen.append(kwargs)
+        yield CodexTextDelta("Bonjour.")
+
+    monkeypatch.setattr(CodexClient, "stream_turn", fake_stream_turn)
+    result = await conversation.async_converse(
+        hass, "Hello", None, Context(), agent_id=entity_id
+    )
+    assert result.response.speech["plain"]["speech"] == "Bonjour."
+    assert seen[0]["model"] == "second-model"
+    assert "Talk like a chef." in seen[0]["instructions"]
+    assert await _reply(hass, "conversation.codex_assist", monkeypatch, "Original.") == (
+        "Original."
+    )
+
+
+async def test_token_rotation_does_not_reload_but_agent_changes_do(
+    hass: HomeAssistant,
+) -> None:
+    entry = await _setup_entry(hass)
+    unloads: list[str] = []
+    entry.async_on_unload(lambda: unloads.append("unloaded"))
+
+    hass.config_entries.async_update_entry(
+        entry, data={"access_token": "rotated-access", "refresh_token": "rotated-refresh"}
+    )
+    await hass.async_block_till_done()
+    assert unloads == []
+    assert entry.state is ConfigEntryState.LOADED
+
+    hass.config_entries.async_update_subentry(
+        entry, _subentry(entry, "conversation"), title="Renamed agent"
+    )
+    await hass.async_block_till_done()
+    assert unloads == ["unloaded"]
+    assert entry.state is ConfigEntryState.LOADED
+
+
+async def test_removing_a_subentry_removes_its_entity(hass: HomeAssistant) -> None:
+    entry = await _setup_entry(hass)
+    subentry = _subentry(entry, "ai_task_data")
+
+    assert hass.config_entries.async_remove_subentry(entry, subentry.subentry_id)
+    await hass.async_block_till_done()
+
+    assert er.async_get(hass).async_get_entity_id("ai_task", DOMAIN, subentry.subentry_id) is None
+    assert hass.states.get("ai_task.codex_assist_ai_task") is None
+    assert hass.states.get("conversation.codex_assist") is not None
+    assert entry.state is ConfigEntryState.LOADED

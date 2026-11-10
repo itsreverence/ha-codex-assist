@@ -30,11 +30,15 @@ from .codex_client import (
 from .codex_image import DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE, image_size_dimensions
 from .codex_runtime import runtime_token_coordinator
 from .config_flow import (
+    CONF_IMAGE_MODEL,
+    CONF_IMAGE_SIZE,
+    CONF_MODEL,
     CONF_WEB_SEARCH,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_REASONING_SUMMARY,
     DEFAULT_TEXT_VERBOSITY,
     DEFAULT_WEB_SEARCH,
+    SUBENTRY_AI_TASK,
 )
 from .conversation import (
     MAX_TOOL_ITERATIONS,
@@ -45,6 +49,7 @@ from .conversation import (
     _run_tool_rounds,
     _stream_codex_turn_into_chat_log,
 )
+from .entity import CodexAssistSubentryEntity
 from .error_formatting import request_failure_text
 from .schema_compat import to_openapi
 
@@ -53,6 +58,8 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 LOGGER = logging.getLogger(__name__)
+
+AI_TASK_INSTRUCTIONS = "You are a concise Home Assistant AI Task agent."
 
 _RATE_LIMIT_MESSAGE = (
     "Codex Assist has hit your ChatGPT/Codex usage limit or is being rate limited. "
@@ -65,10 +72,15 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    async_add_entities([CodexAssistAITaskEntity(entry)])
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type == SUBENTRY_AI_TASK:
+            async_add_entities(
+                [CodexAssistAITaskEntity(entry, subentry)],
+                config_subentry_id=subentry.subentry_id,
+            )
 
 
-class CodexAssistAITaskEntity(ai_task.AITaskEntity):
+class CodexAssistAITaskEntity(ai_task.AITaskEntity, CodexAssistSubentryEntity):
     """AI Task entity for Codex Assist.
 
     Home Assistant AI Task explicitly supports attachment inputs through the
@@ -77,17 +89,11 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
     conversation feature flag or process-service attachment schema.
     """
 
-    _attr_has_entity_name = True
-    _attr_name = "Codex Assist AI Task"
     _attr_supported_features = (
         ai_task.AITaskEntityFeature.GENERATE_DATA
         | ai_task.AITaskEntityFeature.GENERATE_IMAGE
         | ai_task.AITaskEntityFeature.SUPPORT_ATTACHMENTS
     )
-
-    def __init__(self, entry: ConfigEntry) -> None:
-        self.entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_ai_task"
 
     async def _async_generate_data(
         self,
@@ -95,12 +101,8 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
         chat_log: conversation.ChatLog,
     ) -> ai_task.GenDataTaskResult:
         """Generate data from instructions and optional HA-native attachments."""
-        settings = {**self.entry.data, **self.entry.options}
-        model = settings.get("model", "gpt-5.4")
-        prompt = settings.get(
-            "prompt",
-            "You are a concise Home Assistant AI Task agent.",
-        )
+        settings = self.subentry.data
+        model = settings.get(CONF_MODEL, "gpt-5.4")
         reasoning_effort = settings.get("reasoning_effort", DEFAULT_REASONING_EFFORT)
         reasoning_summary = settings.get("reasoning_summary", DEFAULT_REASONING_SUMMARY)
         text_verbosity = settings.get("text_verbosity", DEFAULT_TEXT_VERBOSITY)
@@ -142,7 +144,7 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
                 chat_log=chat_log,
                 entity_id=self.entity_id or "",
                 model=model,
-                prompt=prompt,
+                prompt=AI_TASK_INSTRUCTIONS,
                 reasoning_effort=reasoning_effort,
                 reasoning_summary=reasoning_summary,
                 text_verbosity=text_verbosity,
@@ -185,10 +187,10 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity):
         chat_log: conversation.ChatLog,
     ) -> ai_task.GenImageTaskResult:
         """Generate an image from instructions and optional HA-native attachments."""
-        settings = {**self.entry.data, **self.entry.options}
-        chat_model = settings.get("model", "gpt-5.4")
-        image_model = settings.get("image_model", DEFAULT_IMAGE_MODEL)
-        image_size = settings.get("image_size", DEFAULT_IMAGE_SIZE)
+        settings = self.subentry.data
+        chat_model = settings.get(CONF_MODEL, "gpt-5.4")
+        image_model = settings.get(CONF_IMAGE_MODEL, DEFAULT_IMAGE_MODEL)
+        image_size = settings.get(CONF_IMAGE_SIZE, DEFAULT_IMAGE_SIZE)
 
         http_client = get_async_client(self.hass)
         auth_client = CodexAuthClient(http_client=http_client)

@@ -13,36 +13,43 @@ def _load_diagnostics(monkeypatch):
     )
 
 
-async def test_diagnostics_redacts_tokens_but_keeps_settings(monkeypatch):
+def _entry(**subentries):
+    return types.SimpleNamespace(
+        data={"access_token": "raw-token-value", "refresh_token": "raw-refresh-value"},
+        options={},
+        subentries=subentries,
+    )
+
+
+async def test_diagnostics_redacts_tokens_but_keeps_agent_settings(monkeypatch):
     module = _load_diagnostics(monkeypatch)
-    entry = types.SimpleNamespace(
-        data={
-            "access_token": "secret-access",
-            "refresh_token": "secret-refresh",
-            "model": "gpt-5.4",
-            "prompt": "You are helpful.",
-        },
-        options={"reasoning_effort": "low"},
+    entry = _entry(
+        abc=types.SimpleNamespace(
+            subentry_type="conversation",
+            title="Kitchen agent",
+            data={"model": "gpt-5.4", "prompt": "You are helpful."},
+        )
     )
 
     diagnostics = await module.async_get_config_entry_diagnostics(object(), entry)
 
-    entry_data = diagnostics["entry"]["data"]
-    assert entry_data["access_token"] == module.REDACTED
-    assert entry_data["refresh_token"] == module.REDACTED
-    assert entry_data["model"] == "gpt-5.4"
-    assert entry_data["prompt"] == "You are helpful."
-    assert diagnostics["entry"]["options"] == {"reasoning_effort": "low"}
+    assert diagnostics["entry"]["data"] == {
+        "access_token": module.REDACTED,
+        "refresh_token": module.REDACTED,
+    }
+    assert diagnostics["subentries"] == [
+        {
+            "subentry_type": "conversation",
+            "title": "Kitchen agent",
+            "data": {"model": "gpt-5.4", "prompt": "You are helpful."},
+        }
+    ]
 
 
 async def test_diagnostics_never_contains_raw_token_values(monkeypatch):
     module = _load_diagnostics(monkeypatch)
-    entry = types.SimpleNamespace(
-        data={"access_token": "raw-token-value", "refresh_token": "raw-refresh-value"},
-        options={},
-    )
 
-    diagnostics = await module.async_get_config_entry_diagnostics(object(), entry)
+    diagnostics = await module.async_get_config_entry_diagnostics(object(), _entry())
 
     assert "raw-token-value" not in str(diagnostics)
     assert "raw-refresh-value" not in str(diagnostics)
