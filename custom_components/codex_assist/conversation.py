@@ -91,11 +91,26 @@ class CodexAssistConversationEntity(
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        conversation.async_set_agent(self.hass, self.entry, self)
+        if self._owns_entry_agent_id():
+            conversation.async_set_agent(self.hass, self.entry, self)
 
     async def async_will_remove_from_hass(self) -> None:
-        conversation.async_unset_agent(self.hass, self.entry)
+        if self._owns_entry_agent_id():
+            conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
+
+    def _owns_entry_agent_id(self) -> bool:
+        # The entry-ID agent alias predates subentries; keep it on the first agent so
+        # adding another agent cannot redirect callers that address the entry ID.
+        first_id = next(
+            (
+                s.subentry_id
+                for s in self.entry.subentries.values()
+                if s.subentry_type == SUBENTRY_CONVERSATION
+            ),
+            None,
+        )
+        return first_id == self.subentry.subentry_id
 
     async def _async_handle_message(
         self,

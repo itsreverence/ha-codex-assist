@@ -71,7 +71,7 @@ When the hosted-search payload, model defaults, citation handling, or backend co
 4. Restart Home Assistant.
 5. Confirm the integration version and logs reflect the candidate.
 
-To roll back, reinstall the latest stable release through HACS and restart Home Assistant.
+Releases that move settings into subentries upgrade the config entry in place, and older releases cannot load it. Take a full Home Assistant backup before installing a candidate. To roll back, restore that backup, or reinstall the latest stable release through HACS and set the integration up again.
 
 ## Assist smoke test
 

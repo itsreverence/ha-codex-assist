@@ -9,13 +9,18 @@ calls are stubbed.
 from __future__ import annotations
 
 import logging
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 import voluptuous as vol
 from homeassistant.components import conversation
 from homeassistant.components.conversation import trace as conversation_trace
-from homeassistant.config_entries import SOURCE_RECONFIGURE, SOURCE_USER, ConfigEntryState
+from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
+    SOURCE_USER,
+    ConfigEntryState,
+    ConfigSubentry,
+)
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import entity_registry as er
@@ -850,3 +855,57 @@ async def test_removing_a_subentry_removes_its_entity(hass: HomeAssistant) -> No
     assert hass.states.get("ai_task.codex_assist_ai_task") is None
     assert hass.states.get("conversation.codex_assist") is not None
     assert entry.state is ConfigEntryState.LOADED
+
+
+async def test_v2_entry_adopts_v1_registry_rows_left_by_an_unsaved_registry(
+    hass: HomeAssistant,
+) -> None:
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    entity_registry = er.async_get(hass)
+    for platform, v1_unique_id, entity_id in (
+        ("conversation", entry.entry_id, "conversation.renamed_agent"),
+        ("ai_task", f"{entry.entry_id}_ai_task", "ai_task.renamed_tasks"),
+    ):
+        registry_entry = entity_registry.async_get_or_create(
+            platform, DOMAIN, v1_unique_id, config_entry=entry
+        )
+        entity_registry.async_update_entity(registry_entry.entity_id, new_entity_id=entity_id)
+
+    await _setup_entry(hass, entry)
+
+    for entity_id, subentry_type in (
+        ("conversation.renamed_agent", "conversation"),
+        ("ai_task.renamed_tasks", "ai_task_data"),
+    ):
+        subentry = _subentry(entry, subentry_type)
+        assert entity_registry.async_get(entity_id).unique_id == subentry.subentry_id
+        assert hass.states.get(entity_id) is not None
+    assert len(er.async_entries_for_config_entry(entity_registry, entry.entry_id)) == 2
+
+
+async def test_entry_agent_id_stays_on_the_first_agent_after_adding_another(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = await _setup_entry(hass)
+    hass.config_entries.async_add_subentry(
+        entry,
+        ConfigSubentry(
+            data=MappingProxyType({"model": "second-model"}),
+            subentry_type="conversation",
+            title="Second agent",
+            unique_id=None,
+        ),
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("conversation.second_agent") is not None
+
+    seen: list[dict] = []
+
+    async def fake_stream_turn(self: CodexClient, **kwargs: object):
+        seen.append(kwargs)
+        yield CodexTextDelta("First.")
+
+    monkeypatch.setattr(CodexClient, "stream_turn", fake_stream_turn)
+    await conversation.async_converse(hass, "Hello", None, Context(), agent_id=entry.entry_id)
+    assert seen[0]["model"] == "gpt-5.4"

@@ -20,6 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     from .model_discovery import async_entry_model_catalog
 
     runtime_token_coordinator(entry)
+    _adopt_v1_entities(hass, entry)
 
     await hass.config_entries.async_forward_entry_setups(
         entry,
@@ -73,42 +74,27 @@ def _migrate_settings_to_subentries(hass: HomeAssistant, entry: ConfigEntry) -> 
     from types import MappingProxyType
 
     from homeassistant.config_entries import ConfigSubentry
-    from homeassistant.helpers import entity_registry as er
 
-    from .config_flow import (
-        CREDENTIAL_KEYS,
-        SUBENTRY_AI_TASK,
-        SUBENTRY_CONVERSATION,
-        SUBENTRY_TITLES,
-        subentry_settings,
-    )
+    from .config_flow import CREDENTIAL_KEYS, SUBENTRY_TITLES, subentry_settings
 
-    v1_entities = {
-        SUBENTRY_CONVERSATION: ("conversation", entry.entry_id),
-        SUBENTRY_AI_TASK: ("ai_task", f"{entry.entry_id}_ai_task"),
-    }
     settings = {
         key: value
         for key, value in {**entry.data, **entry.options}.items()
         if key not in CREDENTIAL_KEYS
     }
-    entity_registry = er.async_get(hass)
+    existing_types = {subentry.subentry_type for subentry in entry.subentries.values()}
     for subentry_type, title in SUBENTRY_TITLES.items():
-        subentry = ConfigSubentry(
-            data=MappingProxyType(subentry_settings(subentry_type, settings)),
-            subentry_type=subentry_type,
-            title=title,
-            unique_id=None,
+        if subentry_type in existing_types:
+            continue
+        hass.config_entries.async_add_subentry(
+            entry,
+            ConfigSubentry(
+                data=MappingProxyType(subentry_settings(subentry_type, settings)),
+                subentry_type=subentry_type,
+                title=title,
+                unique_id=None,
+            ),
         )
-        hass.config_entries.async_add_subentry(entry, subentry)
-        platform, v1_unique_id = v1_entities[subentry_type]
-        entity_id = entity_registry.async_get_entity_id(platform, DOMAIN, v1_unique_id)
-        if entity_id is not None:
-            entity_registry.async_update_entity(
-                entity_id,
-                config_subentry_id=subentry.subentry_id,
-                new_unique_id=subentry.subentry_id,
-            )
 
     hass.config_entries.async_update_entry(
         entry,
@@ -116,3 +102,30 @@ def _migrate_settings_to_subentries(hass: HomeAssistant, entry: ConfigEntry) -> 
         options={},
         version=2,
     )
+
+
+def _adopt_v1_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    # Runs on every setup: the entity registry saves later than config entries, so a
+    # restart can see a v2 entry next to registry rows that still carry v1 unique IDs.
+    from homeassistant.helpers import entity_registry as er
+
+    from .config_flow import SUBENTRY_AI_TASK, SUBENTRY_CONVERSATION
+
+    entity_registry = er.async_get(hass)
+    for subentry_type, platform, v1_unique_id in (
+        (SUBENTRY_CONVERSATION, "conversation", entry.entry_id),
+        (SUBENTRY_AI_TASK, "ai_task", f"{entry.entry_id}_ai_task"),
+    ):
+        entity_id = entity_registry.async_get_entity_id(platform, DOMAIN, v1_unique_id)
+        subentry = next(
+            (s for s in entry.subentries.values() if s.subentry_type == subentry_type), None
+        )
+        if entity_id is None or subentry is None:
+            continue
+        if entity_registry.async_get_entity_id(platform, DOMAIN, subentry.subentry_id):
+            continue
+        entity_registry.async_update_entity(
+            entity_id,
+            config_subentry_id=subentry.subentry_id,
+            new_unique_id=subentry.subentry_id,
+        )
