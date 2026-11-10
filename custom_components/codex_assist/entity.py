@@ -23,7 +23,6 @@ class CodexAssistSubentryEntity(Entity):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, subentry.subentry_id)},
             name=subentry.title,
-            manufacturer="OpenAI",
             model=subentry.data.get(CONF_MODEL),
             entry_type=DeviceEntryType.SERVICE,
         )
