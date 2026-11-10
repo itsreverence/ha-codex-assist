@@ -46,7 +46,8 @@ Yes, if it changes any of these:
 | `conversation.py`: `resolve(...)` in `async_process`, `_refresh_runtime_tokens` | `request_actor`: coordinator looked up at each call, one retry after a 401 |
 | `ai_task.py`: both `resolve(...)` calls and the 401 retry | `request_actor` (same shape) |
 | `model_discovery.py` `async_entry_model_catalog` | `discovery_actor`: coordinator captured **once** at the start |
-| `config_flow.py` reauth/reconfigure `async_update_reload_and_abort` | `_reauth_writes_new_sign_in`, then `_unload` |
+| `config_flow.py` reauth/reconfigure `async_update_and_abort`, which writes the new sign-in without a reload | `_reauth_writes_new_sign_in` |
+| `__init__.py` update listener, which reloads only when a subentry changes | `_unload` in the `reload` event |
 | `__init__.py` `async_setup_entry` does not look up the coordinator; callers create it on first use | No setup step. If setup starts creating or replacing the coordinator, add a step after `_unload`. |
 | HA `ConfigEntry.async_unload` deleting `runtime_data` (HA 2026.10 `config_entries.py:1138`) | `_unload`. The coordinator no longer lives there, so this must not reset it. |
 | `hass.config_entries.async_update_entry` (synchronous, replaces `entry.data`) | `World.update_entry` |
@@ -68,12 +69,13 @@ For a change in `codex_runtime.py`, just rerun. The real code is under test, and
 
 - `two_requests_share_one_refresh`: Conversation and AI Task (548 schedules)
 - `request_and_discovery_share_one_refresh`: Conversation and discovery (548 schedules)
-- `request_across_reauth`: Conversation while a reauth writes a new sign-in and reloads (50 schedules)
-- `discovery_across_reauth`: discovery while the same reauth runs (50 schedules)
-- `requests_across_plain_reload`: Conversation and AI Task around a reload with unchanged tokens, such as a manual reload (4,872 schedules)
-- `request_and_discovery_across_reauth`: Conversation and discovery while a reauth reloads (9,600 schedules)
+- `request_across_reauth`: Conversation while a reauth writes a new sign-in (22 schedules)
+- `discovery_across_reauth`: discovery while the same reauth runs (22 schedules)
+- `requests_across_plain_reload`: Conversation and AI Task around a reload with unchanged tokens, such as a manual reload or an agent settings change (4,872 schedules)
+- `request_and_discovery_across_reauth`: Conversation and discovery while a reauth runs (2,814 schedules)
+- `request_and_discovery_across_reauth_then_reload`: the same, followed by a reload, such as an agent change right after sign-in (9,600 schedules)
 - `tool_rounds_and_discovery_share_refreshes`: Conversation with two tool rounds, each able to refresh once, and discovery (3,558 schedules)
-- `tool_rounds_across_reauth`: Conversation with two tool rounds while a reauth reloads (310 schedules)
+- `tool_rounds_across_reauth`: Conversation with two tool rounds while a reauth runs (100 schedules)
 - `two_requests_with_tool_rounds`: Conversation and AI Task, each with two tool rounds (39,106 schedules)
 
 A request actor runs `tool_rounds` rounds, one by default. Each round sends a Codex request, and a 401 refreshes and retries once, as the tool-round loops in `conversation.py` and `ai_task.py` do. A second 401 ends the actor, which models the reauth start. The retry in the last round, and discovery's retry, are left out because their answers never reach the coordinator.
@@ -86,7 +88,7 @@ Assumptions:
 - Refreshed and reauth tokens never expire.
 - The backend may return 401 for any token, which models opaque tokens and server revocation, and returns only 401 for an expired one.
 - Any 401 may trigger the refresh and retry. The code retries only when `CodexAuthenticationError.retry_allowed` is set, so the actors allow more retries than the code does.
-- Each scenario has at most two actors, at most one reload or reauth, and at most two tool rounds per request actor. The code allows up to six rounds (`MAX_TOOL_ITERATIONS + 1`).
+- Each scenario has at most two actors, at most one reauth followed by at most one reload, and at most two tool rounds per request actor. The code allows up to six rounds (`MAX_TOOL_ITERATIONS + 1`).
 
 Not covered:
 
