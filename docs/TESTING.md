@@ -77,11 +77,13 @@ To roll back, reinstall the latest stable release through HACS and restart Home 
 
 After restarting Home Assistant:
 
-1. Confirm `conversation.codex_assist` exists.
+1. Confirm `conversation.codex_assist` exists. After an upgrade, confirm the existing conversation and AI Task entity IDs are unchanged and that reconfiguring each one shows the old settings.
 2. Select Codex Assist in an Assist pipeline.
 3. Ask a read-only question and ask it to list exposed entities.
 4. Test one harmless exposed light.
 5. Confirm sensitive entities remain unexposed unless deliberately allowed.
+6. Select **Add conversation agent**, give it a different model and prompt, and confirm its new conversation entity answers without a restart.
+7. Delete that agent and confirm its entity disappears while the first agent still answers.
 
 ## Authentication and model tests
 
@@ -92,7 +94,7 @@ When auth or model handling changes:
 - confirm logs do not expose tokens, cookies, or device codes;
 - verify fallback models appear when discovery is unavailable;
 - verify authenticated model discovery when the backend supports it;
-- verify an unlisted saved model is labeled and remains selected when other options are saved;
+- verify an unlisted saved model is labeled and remains selected when other agent settings are saved;
 - verify discovery failure offers an explicitly unverified fallback only when no successful cache exists;
 - verify a successful empty account list does not become a fallback list;
 - verify setup asks for the model only after sign-in;

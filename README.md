@@ -29,6 +29,7 @@ Requirements: Home Assistant `2026.6.0` or newer, HACS, and a ChatGPT account or
 4. In ChatGPT, enable **Settings → Security → Enable device code authorization for Codex** if it is available on your account.
 5. Go to **Settings → Devices & services → Add integration**, or use the button above.
 6. Search for **Codex Assist**, complete device-code sign-in, and choose a chat model from the account’s discovered list.
+   Setup creates a conversation agent named **Codex Assist** and an AI Task entity named **Codex Assist AI Task**.
 7. Select **Codex Assist** in your Assist pipeline.
 8. Test with a harmless exposed entity first, such as a single light.
 
@@ -43,7 +44,7 @@ and settings can be kept. See [Troubleshooting](https://github.com/itsreverence/
 
 ### Assist conversations
 
-- Registers as a normal Home Assistant Assist conversation agent.
+- Registers as a normal Home Assistant Assist conversation agent. One sign-in can serve several agents, each with its own name, prompt, and model.
 - Streams replies while Codex is answering.
 - Reads and controls only the entities Home Assistant exposes to Assist.
 - Supports simple follow-up actions through Home Assistant's native Assist LLM API.
@@ -56,16 +57,33 @@ and settings can be kept. See [Troubleshooting](https://github.com/itsreverence/
 - Generates images with curated quality and size controls.
 - Disables hosted web search for schema-constrained tasks so citation text cannot corrupt structured output.
 
-### Options
+### Agents and settings
+
+Each conversation agent and the AI Task entity keep their own settings. To change
+them, open **Settings → Devices & services → Codex Assist**, then open the menu next
+to the agent and reconfigure it.
+
+To add another agent, select **Add conversation agent** on the Codex Assist
+integration page. Give it a name, a model, and its own system prompt. The new agent
+appears as its own conversation entity, such as `conversation.kitchen_agent`, and
+you can choose it in any Assist pipeline. All agents share the one Codex sign-in.
+
+Each settings form keeps **Everyday settings** open and leaves the rest collapsed
+until needed. Everyday controls are the chat model, response length, and hosted web
+search. Conversation agents also have a multiline system prompt and reasoning
+effort. The AI Task entity has reasoning effort and image-generation defaults, and
+uses its own fixed instructions instead of a conversation prompt.
+
+Upgrading from an earlier version keeps your existing settings, entity IDs, and Assist pipelines.
+The old integration options become the first conversation agent and the AI Task
+entity's settings.
 
 The chat-model picker uses authenticated account discovery without adding guessed
-model names. It refreshes when you open options and every six hours while loaded.
+model names. It refreshes when you open an agent's settings and every six hours while loaded.
 New setups preselect the first model in the account’s priority order; existing selections stay unchanged.
 Cached and unverified fallback lists are labeled. A saved model missing from the
 list is retained with a label so changing another setting does not replace it.
 See [Model discovery](docs/MODEL_DISCOVERY.md).
-
-The options flow keeps **Everyday settings** open and leaves **Advanced chat settings** and **Image-generation defaults** collapsed until needed. Everyday controls include the chat model, response length, and hosted web search. Advanced controls hold reasoning effort and a multiline system-prompt editor for longer Markdown instructions.
 
 <p align="center">
   <img src="assets/codex-assist-settings-overview.png" alt="Example options layout from v0.4.3; current model choices come from account discovery" width="430">

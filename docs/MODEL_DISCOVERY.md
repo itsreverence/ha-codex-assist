@@ -10,7 +10,7 @@ During first setup, sign in before choosing a model. The first model in the
 account’s returned priority order is preselected. Existing configured models
 are not migrated automatically.
 
-The list refreshes when you open options and every six hours while the integration
+The list refreshes when you open an agent's settings and every six hours while the integration
 is loaded. Repeated opens within 30 seconds reuse the cache. Failed requests have
 a 60-second retry backoff. Discovery does not run on every voice request or block
 integration startup.
@@ -30,7 +30,7 @@ from the old sign-in. Credentials continue to be owned and refreshed by the
 integration; discovery does not borrow tokens from other tools.
 
 A listed model can still reject a request or lack a particular feature. If a saved
-model stops working, open options and choose a replacement. Codex Assist does not
+model stops working, reconfigure that agent and choose a replacement. Codex Assist does not
 silently select another model or automatically replay a device-control request.
 The normal dropdown does not accept arbitrary model IDs. Image-generation models
 remain separate from chat-model discovery.
