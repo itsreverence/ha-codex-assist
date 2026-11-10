@@ -1,9 +1,13 @@
 __pycache__/
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/verify-token-rotation/
 skills-lock.json
 .pytest_cache/
 .ruff_cache/
 .venv/
+.venv-ha/
 *.pyc
 .env
 .DS_Store

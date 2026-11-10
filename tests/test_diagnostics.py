@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import json
 import types
+from copy import deepcopy
 
 from tests.ha_fakes import install_homeassistant_fakes
 
@@ -21,29 +23,53 @@ def _entry(**subentries):
     )
 
 
-async def test_diagnostics_redacts_tokens_but_keeps_agent_settings(monkeypatch):
+async def test_diagnostics_redacts_tokens_and_prompts_but_keeps_settings(monkeypatch):
     module = _load_diagnostics(monkeypatch)
-    entry = _entry(
-        abc=types.SimpleNamespace(
-            subentry_type="conversation",
-            title="Kitchen agent",
-            data={"model": "gpt-5.4", "prompt": "You are helpful."},
-        )
+    entry = types.SimpleNamespace(
+        data={
+            "access_token": "secret-access",
+            "refresh_token": "secret-refresh",
+            "model": "gpt-5.4",
+            "prompt": "Synthetic data prompt marker.",
+        },
+        options={
+            "access_token": "synthetic-option-access",
+            "refresh_token": "synthetic-option-refresh",
+            "prompt": "Synthetic options prompt marker.",
+            "reasoning_effort": "low",
+            "web_search": False,
+        },
+        subentries={},
     )
+    original_data = deepcopy(entry.data)
+    original_options = deepcopy(entry.options)
 
     diagnostics = await module.async_get_config_entry_diagnostics(object(), entry)
 
-    assert diagnostics["entry"]["data"] == {
-        "access_token": module.REDACTED,
-        "refresh_token": module.REDACTED,
+    assert entry.data == original_data
+    assert entry.options == original_options
+    assert diagnostics == {
+        "entry": {
+            "data": {
+                "access_token": "**REDACTED**",
+                "refresh_token": "**REDACTED**",
+                "model": "gpt-5.4",
+                "prompt": "**REDACTED**",
+            },
+            "options": {
+                "access_token": "**REDACTED**",
+                "refresh_token": "**REDACTED**",
+                "prompt": "**REDACTED**",
+                "reasoning_effort": "low",
+                "web_search": False,
+            },
+        },
+        "subentries": [],
     }
-    assert diagnostics["subentries"] == [
-        {
-            "subentry_type": "conversation",
-            "title": "Kitchen agent",
-            "data": {"model": "gpt-5.4", "prompt": "You are helpful."},
-        }
-    ]
+    serialized = json.dumps(diagnostics)
+    for original in (original_data, original_options):
+        for key in ("access_token", "refresh_token", "prompt"):
+            assert original[key] not in serialized
 
 
 async def test_diagnostics_never_contains_raw_token_values(monkeypatch):

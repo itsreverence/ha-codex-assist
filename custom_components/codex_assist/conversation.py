@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 from homeassistant.components import conversation
@@ -15,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.httpx_client import get_async_client
+from homeassistant.helpers.json import json_dumps
 
 from . import DOMAIN
 from .codex_auth import (
@@ -25,14 +25,13 @@ from .codex_auth import (
 )
 from .codex_client import (
     CodexAuthenticationError,
-    CodexCitation,
-    CodexCitationDelta,
     CodexClient,
     CodexRateLimitError,
     CodexResponseItemDelta,
     CodexStreamDelta,
     CodexTextDelta,
     CodexToolCallDelta,
+    codex_session_id,
     codex_user_content_with_images,
 )
 from .codex_protocol import CodexNativeState, native_state_from_response_items
@@ -49,7 +48,6 @@ from .config_flow import (
     SUBENTRY_CONVERSATION,
 )
 from .entity import CodexAssistSubentryEntity
-from .error_formatting import request_failure_text
 from .schema_compat import to_openapi
 
 MAX_TOOL_ITERATIONS = 5
@@ -57,10 +55,23 @@ MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_ATTACHMENTS = 4
 MAX_TOTAL_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 LOGGER = logging.getLogger(__name__)
-_WEB_SEARCH_CITATION_INSTRUCTIONS = (
+_INTEGRATION_DIRECTORY = Path(__file__).parent
+_AUTH_FAILURE_TEXT = "Codex Assist needs attention in Home Assistant."
+_ERROR_RESPONSE_INSTRUCTIONS = (
+    "Keep error responses short. Do not volunteer technical diagnostics, raw error codes, "
+    "request IDs, HTTP details, stack traces, or issue-reporting instructions. Provide "
+    "troubleshooting details only when the user explicitly asks for them."
+)
+_CLARIFICATION_INSTRUCTIONS = (
+    "When clarification is required, ask one concise, direct question as the final "
+    "sentence, ending with the appropriate question mark for the user's language and "
+    "nothing after it. Resolve ambiguous actions or targets before executing them. "
+    "Do not add unnecessary closing questions after ordinary answers, completed "
+    "actions, or cancellation."
+)
+_WEB_SEARCH_SPEECH_INSTRUCTIONS = (
     "When using web search, do not include raw URLs, markdown links, or a Source/Sources "
-    "section in the response text. Refer to sources by human-readable names only. The "
-    "integration renders structured citations separately."
+    "section in the response text. Refer to sources by human-readable names only."
 )
 
 
@@ -124,7 +135,6 @@ class CodexAssistConversationEntity(
         reasoning_summary = settings.get("reasoning_summary", DEFAULT_REASONING_SUMMARY)
         text_verbosity = settings.get("text_verbosity", DEFAULT_TEXT_VERBOSITY)
         web_search = bool(settings.get(CONF_WEB_SEARCH, DEFAULT_WEB_SEARCH))
-        citations: list[CodexCitation] = []
 
         response = intent.IntentResponse(language=user_input.language)
         try:
@@ -149,10 +159,12 @@ class CodexAssistConversationEntity(
                 ),
             )
         except CodexReauthRequiredError as err:
-            LOGGER.warning("Codex Assist authentication failed; starting reauth flow: %s", err)
+            _log_request_failure(
+                err, stage="authentication", reauth="start", level=logging.WARNING,
+            )
             return _start_reauth_result(self.hass, self.entry, response, user_input)
         except (CodexAuthTemporaryError, RuntimeError) as err:
-            LOGGER.exception("Codex Assist authentication failed")
+            _log_request_failure(err, stage="authentication")
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
                     agent_id=user_input.agent_id,
@@ -161,7 +173,11 @@ class CodexAssistConversationEntity(
             )
             return conversation.async_get_result_from_chat_log(user_input, chat_log)
 
-        codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
+        codex = CodexClient(
+            http_client=http_client,
+            access_token=tokens.access_token,
+            session_id=codex_session_id(self.entry.entry_id),
+        )
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS + 1):
                 allow_tools = _iteration < MAX_TOOL_ITERATIONS
@@ -184,12 +200,12 @@ class CodexAssistConversationEntity(
                         reasoning_summary=reasoning_summary,
                         text_verbosity=text_verbosity,
                         allow_tools=allow_tools,
-                        citation_sink=citations,
                     )
                 except CodexAuthenticationError as err:
-                    LOGGER.warning(
-                        "Codex Assist access token was rejected; refreshing and retrying once: %s",
-                        err,
+                    if not err.retry_allowed:
+                        raise
+                    _log_request_failure(
+                        err, stage="model_request", retry="once", level=logging.WARNING,
                     )
                     try:
                         tokens = await _refresh_runtime_tokens(
@@ -199,9 +215,9 @@ class CodexAssistConversationEntity(
                             tokens,
                         )
                     except CodexReauthRequiredError as refresh_err:
-                        LOGGER.warning(
-                            "Codex Assist token refresh failed; starting reauth flow: %s",
-                            refresh_err,
+                        _log_request_failure(
+                            refresh_err, stage="token_refresh", reauth="start",
+                            level=logging.WARNING,
                         )
                         return _start_reauth_result(
                             self.hass,
@@ -209,10 +225,7 @@ class CodexAssistConversationEntity(
                             response,
                             user_input,
                         )
-                    codex = CodexClient(
-                        http_client=http_client,
-                        access_token=tokens.access_token,
-                    )
+                    codex = codex.with_access_token(tokens.access_token)
                     try:
                         tool_call_requested = await _stream_codex_turn_into_chat_log(
                             chat_log=chat_log,
@@ -232,13 +245,10 @@ class CodexAssistConversationEntity(
                             reasoning_summary=reasoning_summary,
                             text_verbosity=text_verbosity,
                             allow_tools=allow_tools,
-                            citation_sink=citations,
                         )
                     except CodexAuthenticationError as retry_err:
-                        LOGGER.warning(
-                            "Codex Assist token was rejected after refresh; "
-                            "starting reauth flow: %s",
-                            retry_err,
+                        _log_request_failure(
+                            retry_err, stage="model_retry", reauth="start", level=logging.WARNING,
                         )
                         return _start_reauth_result(
                             self.hass,
@@ -249,19 +259,15 @@ class CodexAssistConversationEntity(
                 if not tool_call_requested:
                     break
         except CodexRateLimitError as err:
-            LOGGER.warning("Codex Assist hit usage or rate limit: %s", err)
+            _log_request_failure(err, stage="model_request", level=logging.WARNING)
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
                     agent_id=user_input.agent_id,
-                    content=(
-                        "Codex Assist has hit your ChatGPT/Codex usage limit or is being "
-                        "rate limited. Wait a while and try again, or check your plan's "
-                        "usage limits."
-                    ),
+                    content=_request_failure_text(err),
                 )
             )
         except (httpx.HTTPError, RuntimeError) as err:
-            LOGGER.exception("Codex Assist model request failed")
+            _log_request_failure(err, stage="model_request")
             text = _request_failure_text(err)
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
@@ -270,8 +276,8 @@ class CodexAssistConversationEntity(
                 )
             )
         except (ValueError, TypeError) as err:
-            LOGGER.exception("Codex Assist tool handling failed")
-            text = f"Codex Assist tool handling failed: {err}"
+            _log_request_failure(err, stage="request_preparation_or_tool_processing")
+            text = _request_failure_text(err)
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
                     agent_id=user_input.agent_id,
@@ -279,14 +285,37 @@ class CodexAssistConversationEntity(
                 )
             )
 
-        result = conversation.async_get_result_from_chat_log(user_input, chat_log)
-        _attach_citations_card(result, citations)
-        return result
+        return conversation.async_get_result_from_chat_log(user_input, chat_log)
+
+
+def _log_request_failure(
+    err: BaseException,
+    *,
+    stage: str,
+    retry: str = "none",
+    reauth: str = "none",
+    level: int = logging.ERROR,
+) -> None:
+    """Log the innermost integration location without formatting exception details."""
+    location = "unknown"
+    traceback = err.__traceback__
+    while traceback is not None:
+        filename = Path(traceback.tb_frame.f_code.co_filename)
+        if filename.parent == _INTEGRATION_DIRECTORY:
+            location = f"{filename.name}:{traceback.tb_lineno}"
+        traceback = traceback.tb_next
+    LOGGER.log(
+        level,
+        "Codex Assist failure: stage=%s exception=%s retry=%s reauth=%s location=%s",
+        stage, type(err).__name__, retry, reauth, location,
+    )
 
 
 def _request_failure_text(err: BaseException) -> str:
-    """Return a useful user-facing failure even for blank transport errors."""
-    return request_failure_text("Codex Assist failed", err)
+    """Choose fixed conversation speech without exposing exception details."""
+    if isinstance(err, CodexRateLimitError):
+        return "Codex Assist cannot process this request because of an account or usage limit."
+    return "Sorry, I couldn't complete that."
 
 
 async def _run_tool_rounds(
@@ -319,7 +348,6 @@ async def _stream_codex_turn_into_chat_log(
     text_verbosity: str,
     text_format: dict[str, Any] | None = None,
     allow_tools: bool = True,
-    citation_sink: list[CodexCitation] | None = None,
 ) -> bool:
     tool_call_requested = False
 
@@ -342,7 +370,6 @@ async def _stream_codex_turn_into_chat_log(
             ),
             on_tool_call=mark_tool_call_requested,
             allow_tools=allow_tools,
-            citation_sink=citation_sink,
         ),
     ):
         pass
@@ -354,93 +381,49 @@ async def _codex_stream_to_assistant_deltas(
     *,
     on_tool_call: Callable[[], None] | None = None,
     allow_tools: bool = True,
-    citation_sink: list[CodexCitation] | None = None,
 ) -> AsyncIterator[AssistantContentDeltaDict]:
     started = False
-    seen_urls: set[str] = set()
+    has_answer = False
+    has_tool_handoff = False
     response_items: list[dict[str, Any]] = []
-    async for delta in stream:
-        if isinstance(delta, CodexResponseItemDelta):
-            response_items.append(delta.item)
-            continue
-        if isinstance(delta, CodexCitationDelta):
-            citation = _safe_citation(delta.citation)
-            if citation is not None and citation.url not in seen_urls:
-                seen_urls.add(citation.url)
-                if citation_sink is not None and all(
-                    existing.url != citation.url for existing in citation_sink
-                ):
-                    citation_sink.append(citation)
-            continue
-        if not started:
-            yield {"role": "assistant"}
-            started = True
-        if isinstance(delta, CodexTextDelta):
-            yield {"content": delta.text}
-        elif isinstance(delta, CodexToolCallDelta):
-            if not allow_tools:
-                raise RuntimeError(
-                    "Codex Assist final synthesis returned a tool call while tools are disabled"
-                )
-            if on_tool_call is not None:
-                on_tool_call()
-            yield {
-                "tool_calls": [
-                    llm.ToolInput(
-                        id=delta.tool_call.id,
-                        tool_name=delta.tool_call.name,
-                        tool_args=delta.tool_call.arguments,
+    try:
+        async for delta in stream:
+            if isinstance(delta, CodexResponseItemDelta):
+                response_items.append(delta.item)
+                continue
+            if not started:
+                yield {"role": "assistant"}
+                started = True
+            if isinstance(delta, CodexTextDelta):
+                has_answer = has_answer or bool(delta.text.strip())
+                yield {"content": delta.text}
+            elif isinstance(delta, CodexToolCallDelta):
+                if not allow_tools:
+                    raise RuntimeError(
+                        "Codex Assist final synthesis returned a tool call while tools are disabled"
                     )
-                ]
-            }
+                has_tool_handoff = True
+                if on_tool_call is not None:
+                    on_tool_call()
+                yield {
+                    "tool_calls": [
+                        llm.ToolInput(
+                            id=delta.tool_call.id,
+                            tool_name=delta.tool_call.name,
+                            tool_args=delta.tool_call.arguments,
+                        )
+                    ]
+                }
+    except CodexAuthenticationError as err:
+        if started:
+            err.retry_allowed = False
+        raise
+    if not has_answer and not has_tool_handoff:
+        raise RuntimeError("Codex returned no answer text")
     if native_state := native_state_from_response_items(response_items):
         if not started:
             yield {"role": "assistant"}
         yield {"native": native_state}
-
-
-def _safe_citation(citation: CodexCitation) -> CodexCitation | None:
-    if len(citation.url) > 2048:
-        return None
-    if any(character.isspace() or ord(character) < 32 for character in citation.url):
-        return None
-    try:
-        parsed = urlsplit(citation.url)
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return None
-    if "<" in citation.url or ">" in citation.url:
-        return None
-    title = " ".join(citation.title.split())[:200]
-    if not title:
-        return None
-    title = (
-        title.replace("\\", "\\\\")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-    return CodexCitation(
-        title=title,
-        url=citation.url,
-        start_index=citation.start_index,
-        end_index=citation.end_index,
-    )
-
-
-def _citation_lines(citations: list[CodexCitation]) -> str:
-    return "\n".join(f"- {citation.title} — <{citation.url}>" for citation in citations)
-
-
-def _attach_citations_card(
-    result: conversation.ConversationResult,
-    citations: list[CodexCitation],
-) -> None:
-    if not citations:
-        return
-    result.response.async_set_card("Sources", _citation_lines(citations))
 
 
 async def _refresh_runtime_tokens(
@@ -467,10 +450,7 @@ def _start_reauth_result(
     user_input: conversation.ConversationInput,
 ) -> conversation.ConversationResult:
     entry.async_start_reauth(hass)
-    response.async_set_speech(
-        "Codex Assist needs you to sign in again. Open Home Assistant repairs "
-        "or the integration page to reauthenticate."
-    )
+    response.async_set_speech(_AUTH_FAILURE_TEXT)
     return conversation.ConversationResult(
         response=response,
         conversation_id=user_input.conversation_id,
@@ -497,9 +477,11 @@ def _instructions_for_turn(
     web_search: bool,
 ) -> str:
     instructions = _instructions_from_chat_log(chat_log, fallback_prompt)
+    instructions = f"{instructions.rstrip()}\n\n{_ERROR_RESPONSE_INSTRUCTIONS}"
+    instructions = f"{instructions}\n\n{_CLARIFICATION_INSTRUCTIONS}"
     if not web_search:
         return instructions
-    return f"{instructions.rstrip()}\n\n{_WEB_SEARCH_CITATION_INSTRUCTIONS}"
+    return f"{instructions.rstrip()}\n\n{_WEB_SEARCH_SPEECH_INSTRUCTIONS}"
 
 
 async def _codex_input_from_chat_log(
@@ -507,17 +489,21 @@ async def _codex_input_from_chat_log(
     chat_log: conversation.ChatLog,
 ) -> list[dict[str, Any]]:
     input_items: list[dict[str, Any]] = []
+    attachments_by_item: dict[int, Any] = {}
     for content in chat_log.content:
         role = getattr(content, "role", None)
         text = getattr(content, "content", None)
         if role == "system":
             continue
         if role == "tool_result":
+            # HA 2026.10 wraps tool data in ToolResult; older versions expose it directly.
+            result = getattr(content, "result", None)
+            tool_data = result.data if result is not None else content.tool_result
             input_items.append(
                 {
                     "type": "function_call_output",
                     "call_id": content.tool_call_id,
-                    "output": json.dumps(content.tool_result),
+                    "output": json_dumps(tool_data),
                 }
             )
             continue
@@ -526,14 +512,10 @@ async def _codex_input_from_chat_log(
             input_items.extend(native.items)
             continue
         if role in {"user", "assistant"} and isinstance(text, str) and text.strip():
-            item_content: str | list[dict[str, Any]] = text
+            item: dict[str, Any] = {"role": role, "content": text}
+            input_items.append(item)
             if role == "user":
-                images = await _async_image_attachments_for_codex(
-                    hass,
-                    getattr(content, "attachments", None),
-                )
-                item_content = codex_user_content_with_images(text, images)
-            input_items.append({"role": role, "content": item_content})
+                attachments_by_item[id(item)] = getattr(content, "attachments", None)
 
         tool_calls = getattr(content, "tool_calls", None)
         if role == "assistant" and tool_calls:
@@ -542,12 +524,17 @@ async def _codex_input_from_chat_log(
                     {
                         "type": "function_call",
                         "name": tool_call.tool_name,
-                        "arguments": json.dumps(tool_call.tool_args),
+                        "arguments": json_dumps(tool_call.tool_args),
                         "call_id": tool_call.id,
                     }
                 )
 
-    return _trim_codex_input_items(input_items, max_items=24)
+    retained = _trim_codex_input_items(input_items, max_items=24)
+    for item in retained:
+        if id(item) in attachments_by_item:
+            images = await _async_image_attachments_for_codex(hass, attachments_by_item[id(item)])
+            item["content"] = codex_user_content_with_images(item["content"], images)
+    return retained
 
 
 def _trim_codex_input_items(
@@ -599,19 +586,13 @@ def _image_attachments_for_codex(attachments: Any) -> list[tuple[str, bytes]]:
             continue
         path = getattr(attachment, "path", None)
         if path is None:
-            continue
+            raise ValueError("Codex Assist could not read an image attachment")
         try:
             size = path.stat().st_size
-        except OSError as err:
-            LOGGER.warning("Skipping unreadable Codex Assist image attachment %s: %s", path, err)
-            continue
+        except OSError:
+            raise ValueError("Codex Assist could not read an image attachment") from None
         if size > MAX_IMAGE_ATTACHMENT_BYTES:
-            LOGGER.warning(
-                "Skipping Codex Assist image attachment over %s bytes: %s",
-                MAX_IMAGE_ATTACHMENT_BYTES,
-                path,
-            )
-            continue
+            raise ValueError("Codex Assist image attachment exceeds the 10 MiB per-file limit")
         candidates.append((mime_type, path, size))
 
     if len(candidates) > MAX_IMAGE_ATTACHMENTS:
@@ -627,9 +608,8 @@ def _image_attachments_for_codex(attachments: Any) -> list[tuple[str, bytes]]:
         try:
             with path.open("rb") as attachment_file:
                 data = attachment_file.read(read_limit + 1)
-        except OSError as err:
-            LOGGER.warning("Skipping unreadable Codex Assist image attachment %s: %s", path, err)
-            continue
+        except OSError:
+            raise ValueError("Codex Assist could not read an image attachment") from None
         if len(data) > MAX_IMAGE_ATTACHMENT_BYTES:
             raise ValueError("Codex Assist image attachment grew beyond the per-file size limit")
         if len(data) > remaining_bytes:
@@ -653,7 +633,12 @@ def _codex_tools_from_chat_log(
             for tool in chat_log.llm_api.tools
         )
     if enable_web_search:
-        tools.append({"type": "web_search"})
+        search: dict[str, Any] = {"type": "web_search"}
+        # Search results follow the home country; codex_client runs search on alpha/search.
+        country = getattr(getattr(getattr(chat_log, "hass", None), "config", None), "country", None)
+        if isinstance(country, str) and country:
+            search["user_location"] = {"type": "approximate", "country": country}
+        tools.append(search)
     return tools
 
 

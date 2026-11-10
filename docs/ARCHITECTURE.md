@@ -15,12 +15,11 @@ flowchart LR
     Bridge --> Exposed[Entities exposed to Assist]
 
     Codex --> Reply[Streamed conversation reply]
-    Codex --> Search[Optional hosted web search]
-    Search --> Citations[Validated visual citations]
+    Codex --> Search[Optional web search on the Codex search endpoint]
+    Search --> Codex
     Codex --> TaskResult[Text, structured data, or generated image]
 
     Reply --> Assist
-    Citations --> Assist
     TaskResult --> AITask
 ```
 
@@ -33,10 +32,10 @@ flowchart LR
 - **Model discovery** uses only visible model IDs returned for the signed-in account. An entry-scoped, in-memory cache survives temporary failures; a small, explicitly unverified fallback list is used only before a successful result.
 - **Conversation agents** register one conversation entity per `conversation` subentry, such as `conversation.codex_assist`, for Home Assistant Assist pipelines. Each agent reads its subentry settings at request time.
 - **AI Task entity** registers a native provider per `ai_task_data` subentry for text, structured data, supported image attachments, and image generation. It uses fixed AI Task instructions, not a conversation agent's prompt.
-- **Runtime token coordinator** serializes refresh-token rotation per config entry. Concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another.
-- **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream.
+- **Runtime token coordinator** serializes refresh-token rotation per config entry. Concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another. The coordinator outlives entry reloads, so a request that is still refreshing keeps the lock that later requests wait on. Its in-memory model list and retry backoff also survive a reload. Reauthentication and reconfiguration still clear them.
+- **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream. Text/tool and image streams share a completion reader. Success requires `response.completed`; EOF or `[DONE]` alone is not success. The reader stops at completion without waiting for the connection to close and preserves explicit backend error classifications. Text can stream before completion, but tool calls are held until completion so a truncated response cannot dispatch native actions. Each tool call comes from its completed `function_call` item in `response.output_item.done`, as in Codex CLI. Argument deltas and `response.function_call_arguments.done` are ignored. A completed call without a call ID, a name, or arguments that parse to a JSON object, or one that repeats an earlier call ID, fails the turn instead of running. An interrupted image stream fails even if it supplied a preview. Existing preview-image acceptance after completion is unchanged.
 - **Native transcript state** retains completed provider output items for stateless replay. The state is deep-copy isolated and remains opaque to normal Home Assistant logs, listeners, and conversation traces, which receive only redacted metadata.
-- **Hosted web search** is an explicit option. When enabled, it adds the backend `web_search` tool and converts structured URL annotations into a validated source card. Unsupported or unsafe citation URLs are discarded.
+- **Hosted web search** is an explicit option. To avoid reported failures of the built-in search tool on the Codex backend, the client offers a `web_search` function and sends its calls to `alpha/search`, an undocumented endpoint also used by Codex CLI. This is a restricted query/direct-URL adapter, not an implementation of the CLI's complete search protocol. Each `stream_turn` invocation allows at most four search calls across four rounds, then removes the search tool for synthesis; a batch exceeding the remaining call budget or a search call after removal fails explicitly. A Home Assistant tool handoff ends that invocation. Search-only rounds stay inside the client: their text and annotations are withheld from visible output, while their complete ordinary function-call/output history, messages, and reasoning items are retained privately in `CodexNativeState`. That evidence is replayed after an HA tool handoff and on later user turns even when the final answer omits searched facts or URLs. In mixed search and HA rounds, HA tools take priority: search calls are not executed but receive explicit skipped outputs, preserving call/output closure and the round's reasoning. Consequently, search-enabled answer text waits for response completion while search remains available. Results use the Home Assistant country setting. Search text, including URLs, remains available to the model. Completed provider items retain their raw annotations for private replay. The integration does not extract citations or attach a separate Sources card. Native search-reference continuation and full-page extraction are not promised.
 - **Assist tool bridge** maps model-requested device actions into Home Assistant's Assist LLM API. It does not call services directly.
 
 ## Assist conversation flow
@@ -44,22 +43,142 @@ flowchart LR
 1. Home Assistant sends a voice or chat request through an Assist pipeline using one of the Codex Assist conversation entities.
 2. Codex Assist refreshes its stored Codex or ChatGPT token if needed.
 3. Codex Assist sends the conversation to the Codex-compatible backend.
-4. If Codex requests a Home Assistant tool call, Codex Assist maps that request into Home Assistant's Assist LLM API.
+4. If Codex requests a Home Assistant tool call, Codex Assist waits for that backend response to complete, then maps the request into Home Assistant's Assist LLM API.
 5. Home Assistant validates and executes the tool call using its normal exposed-entity controls.
-6. When hosted search is enabled, Codex Assist keeps validated citations in a displayed card and instructs the model to keep raw URLs and source blocks out of spoken prose.
+6. When search is enabled, the integration asks the model to keep raw URLs, markdown links, and source blocks out of speech and use human-readable source names only, without guaranteeing compliance. Conversation responses have no separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`. The previously inspected stock Assist browser did not render it.
 7. Codex Assist returns the final response to Home Assistant.
 
+`_instructions_for_turn` appends conversation-only clarification guidance after
+Home Assistant assembles the configured prompt, Assist LLM API context, template
+values, and extra system prompt. Optional search speech guidance is included
+alongside it. The model is asked to resolve ambiguous actions or targets before execution and to place one
+concise, direct clarification question last, with language-appropriate question
+punctuation and nothing after it. Ordinary answers, completed actions, and
+cancellation should not acquire unnecessary closing questions.
+
+This composition leaves agent prompts and chat-log system content unchanged.
+Each request, including auth retries and native tool handoffs, appends the internal
+guidance once. AI Task continues to use its existing instruction path. The guidance
+is a model instruction, not an execution guard.
+
+`conversation.async_get_result_from_chat_log` still supplies the result and
+continuation flag. In the tested HA versions, the final assistant message triggers
+continuation when its stripped text ends in `?`, ASCII `;` (U+003B), or fullwidth `？`.
+Other punctuation, including Arabic `؟`, does not match. The integration preserves
+the model's text and language, conversation ID, and history. It does not override
+continuation flags, microphone settings, timeouts, or cancellation behavior.
+Scripted contract tests establish this routing, not live model compliance or
+physical satellite listening.
+
 For stateless multi-turn requests, Codex Assist keeps completed provider output items in Home Assistant's in-memory chat log and replays them before later user or function-output items. This can include encrypted reasoning state and assistant message phase. The integration does not decrypt that state. Native state is removed from normal delta listeners, uses redacted debug formatting, and serializes as an item count rather than provider content in conversation traces.
+
+Conversation and AI Task retain the existing single auth-refresh retry only
+while the current stream invocation has not delivered text or tool deltas to
+its caller. Hidden search-round output and raw response items do not prevent
+that retry.
+An auth failure after delivered output keeps its authentication classification
+but cannot trigger replay. Incomplete streams have no automatic retry, and
+failed streams do not publish completed native transcript state. Text already
+streamed to a listener cannot be retracted.
+
+Each backend response has a private text ledger. Message IDs and output indices
+identify the same record, and content indices distinguish its text parts.
+Completed assistant message items can supply missing text or an exact missing
+suffix. Recovery preserves whitespace, excludes explicit commentary, and fails
+on conflicting identities, divergent text, or insertion before text already
+delivered. Anonymous text can be reconciled only in a single-message,
+single-part response. Repeated identified completions do not repeat speech.
+The ledger retains transitions between delivered text parts, coalescing only
+adjacent chunks of the same part. Once delivery leaves a message or content part,
+that message or part cannot resume, even when output indices are absent. The
+existing parts dictionary identifies prior delivery, so transition history is
+bounded by distinct delivered parts. Known numeric ordering is checked on new
+transitions and alias binding, even when completion supplies no missing suffix.
+The ledger does not recover from `response.completed` snapshots. Recovered text
+passes through the existing search-round buffer and still requires response
+completion.
+
+The shared Conversation and AI Task adapter rejects successful exhaustion with
+neither nonblank text nor an allowed tool handoff, before publishing native
+state. Neither successful nor failed conversation responses attach a Sources card.
+
+Replay keeps whole user turns within the existing 24-item input limit. Older
+turns are dropped as complete groups, including their search and HA tool pairs.
+If the current turn alone exceeds that limit, the owner fails explicitly rather
+than dropping evidence, splitting tool pairs, or stripping reasoning. Search
+retention does not implement the CLI's encrypted search-output or ref-ID protocol.
+
+### Conversation error boundary
+
+The conversation owner maps caught exceptions to fixed speech locally. Only
+`_start_reauth_result`, which starts reauthentication, selects "Codex Assist needs
+attention in Home Assistant." Rate-limit exceptions select "Codex Assist cannot
+process this request because of an account or usage limit." Other caught failures,
+including authentication failures without reauthentication, select "Sorry, I
+couldn't complete that." Attachment and history-limit validation failures also use
+this generic response. More detailed speech based on typed validation errors is a
+separate follow-up. The shared validators and AI Task error formatter are unchanged.
+
+Conversation-owned failure logs contain a fixed stage, the exception class,
+fixed retry and reauthentication decisions, and the innermost integration filename
+and line number from the caught exception's traceback. External frames and exception
+chains are not reported. The location is `unknown` if no integration frame exists.
+The validation catch uses `request_preparation_or_tool_processing` because it also
+covers input preparation. Logs omit exception messages, formatted tracebacks, source
+text, locals, absolute paths, response bodies, and URLs. Existing catch boundaries,
+cancellation propagation, refresh limits, and reauthentication actions are
+unchanged. A failed final synthesis does not replay completed native actions.
+
+Each conversation request appends short-error guidance after the configured
+prompt and HA context, alongside optional search speech guidance. It asks the model
+to omit unsolicited diagnostics, error codes, request IDs, HTTP details, stack
+traces, and reporting instructions. Explicitly requested troubleshooting remains
+allowed. This is prompt guidance, not an output filter. Model-generated text,
+already streamed text, and HA-native errors converted into tool results can
+still contain details. Framework-owned `ConverseError` results pass through
+unchanged. This boundary does not promise secrecy across all HA logs or traces.
 
 ## AI Task flow
 
 1. Home Assistant sends an AI Task request to the Codex Assist AI Task entity.
 2. For data-generation tasks, Codex Assist translates the instructions and supported image attachments into Codex-compatible input items.
-3. If Home Assistant supplies a structure, Codex Assist sends it as a native JSON Schema response format and validates the returned data against that structure. Hosted web search stays disabled for this path so citations cannot invalidate the result.
+3. If Home Assistant supplies a structure, Codex Assist sends it as a native JSON Schema response format and validates the returned data against that structure. Hosted web search stays disabled for this path to preserve structured output.
 4. For image-generation tasks, Codex Assist requests an image using the configured quality and size.
 5. Codex Assist returns text, structured data, or generated image bytes through Home Assistant's native AI Task result types.
 
 Normal Assist conversation surfaces may not expose an upload button even though Home Assistant chat-log objects can carry attachments internally. Use AI Task surfaces that advertise attachment support when testing native attachments.
+
+The shared attachment reader returns `list[tuple[str, bytes]]` through HA's executor.
+It ignores non-image MIME types and raises a fixed `ValueError` if an image has no
+path, cannot be read, or exceeds 10 MiB. OS errors have suppressed exception chains
+so owner logs do not expose filenames. The four-image count, 20 MiB aggregate limit,
+bounded reads, and file-growth checks apply before conversion returns any images.
+Both AI Task owners and the conversation owner report rejection before a model request.
+
+User turns with blank instructions are omitted by the existing converter, including
+their attachments. This change does not add support for image-only blank turns.
+
+History conversion selects whole turns within the 24-item limit before reading
+images. Discarded attachments are never opened. Retained attachments follow the
+same rejection rules, and complete native reasoning and tool groups stay together.
+
+## Authentication failures
+
+`CodexAuthClient` owns transport and response validation for all four auth POSTs.
+HTTP transport errors, malformed JSON, non-object responses, and invalid required
+credential fields become `CodexAuthTemporaryError`. Credentials must be nonempty
+strings. Messages omit response bodies and credentials, and translated transport
+and JSON exceptions suppress their raw traceback chains.
+
+Polling HTTP 403 and 404 remain pending. Refresh HTTP 400, 401, and 403 require
+reauthentication. A successful refresh can omit `refresh_token` or return null
+or a blank string to retain the previous token. A non-string replacement value
+fails before persistence.
+
+The coordinator retains a still-valid access token after a temporary proactive
+refresh failure. An expired or already rejected token cannot use that fallback.
+Temporary failures preserve stored credentials and report discovery as unavailable,
+with cached models retained. The auth boundary adds no automatic retries.
 
 ## Model discovery lifecycle
 
@@ -90,9 +209,37 @@ Image-generation model choices remain a separate curated set. See
 Assist tool parameters and structured AI Task output use the converter exposed
 by Home Assistant's LLM helper. Home Assistant 2026.9 uses Probatio's
 `to_openapi`; older supported versions use `convert` from voluptuous-openapi.
+Home Assistant 2026.10 no longer exposes a converter on the helper, so Codex
+Assist then falls back to `probatio.to_openapi`, which Home Assistant core calls
+directly. The helper lookups come first, so an older release with Probatio also
+installed still uses its own converter.
 The converter must match the helper's serializer and unsupported-value sentinel,
 even when both libraries are installed. Home Assistant supplies the matching
 library; Codex Assist does not install a separate schema converter.
+
+## Tool-result compatibility
+
+Conversation and AI Task replay share the chat-log conversion path. On HA
+2026.10 and newer, it reads `ToolResultContent.result.data`. Older supported
+versions expose the same payload as `tool_result`. Codex receives the data
+as JSON in `function_call_output`, not the Home Assistant wrapper. Both paths
+use Home Assistant's serializer for values such as states and timestamps.
+
+## Prompt caching and usage
+
+Like Codex CLI, every Responses request carries a `session_id` header and a
+matching `prompt_cache_key`. The value is a UUID derived from the config entry
+ID, so it stays the same across conversations, AI Tasks, auth retries, and
+restarts, and it does not reveal the entry ID. A live probe found that the
+backend reused the cached prompt prefix (system prompt, exposed-entity context,
+and tool definitions) only when the header was present. With it, about 97% of
+a 6,300-token Assist prompt came from the cache, including on the first turn of
+a new conversation and after a 10-minute gap. The backend's caching rules are
+not a public contract and may change.
+
+Each completed response logs its token usage at debug level for the
+`custom_components.codex_assist.codex_client` logger: input, cached input,
+output, and reasoning tokens. The log line contains counts only.
 
 ## Security boundary
 

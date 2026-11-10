@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import types
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,7 +10,7 @@ from custom_components.codex_assist.codex_auth import (
     CodexDeviceCode,
     CodexTokenSet,
 )
-from tests.ha_fakes import install_homeassistant_fakes
+from tests.ha_fakes import FakeConfigEntry, install_homeassistant_fakes
 
 
 class FakeAuthClient:
@@ -151,14 +150,14 @@ async def test_reauth_replaces_only_the_credentials(config_flow_module):
 
 def _schema_defaults(data_schema) -> dict[str, object]:
     return {
-        field.key: field.default
+        field.schema: field.default
         for field in data_schema.schema
-        if hasattr(field, "key") and hasattr(field, "default")
+        if hasattr(field, "default")
     }
 
 
 def _section_defaults(data_schema, section_name) -> dict[str, object]:
-    sections = {field.key: validator for field, validator in data_schema.schema.items()}
+    sections = {field.schema: validator for field, validator in data_schema.schema.items()}
     return _schema_defaults(sections[section_name].schema)
 
 
@@ -176,10 +175,8 @@ def test_web_search_option_is_default_off_and_preserves_opt_in(config_flow_modul
     assert _section_defaults(enabled_schema, section_name)["web_search"] is True
 
 
-def _signed_in_entry(**overrides):
-    return types.SimpleNamespace(
-        data={"access_token": "old-access", "refresh_token": "old-refresh"}, **overrides
-    )
+def _signed_in_entry():
+    return FakeConfigEntry(data={"access_token": "old-access", "refresh_token": "old-refresh"})
 
 
 @pytest.mark.asyncio
@@ -275,10 +272,8 @@ async def test_model_step_labels_fallback_on_discovery_failure(config_flow_modul
 
 
 async def test_reauthentication_clears_previous_accounts_discovery_cache(config_flow_module):
-    from custom_components.codex_assist.codex_runtime import RuntimeTokenCoordinator
-
-    entry = _signed_in_entry(runtime_data=RuntimeTokenCoordinator())
-    cache = entry.runtime_data.model_cache
+    entry = _signed_in_entry()
+    cache = config_flow_module.runtime_token_coordinator(entry).model_cache
 
     async def old_models():
         return ["old-account-model"]

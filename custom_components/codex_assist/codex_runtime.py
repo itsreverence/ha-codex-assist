@@ -5,6 +5,7 @@ import base64
 import inspect
 import json
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
@@ -70,13 +71,20 @@ class RuntimeTokenCoordinator:
             return refreshed
 
 
+_COORDINATORS: weakref.WeakKeyDictionary[Any, RuntimeTokenCoordinator] = (
+    weakref.WeakKeyDictionary()
+)
+
+
 def runtime_token_coordinator(entry: Any) -> RuntimeTokenCoordinator:
-    """Return the coordinator shared by all platforms for a config entry."""
-    coordinator = getattr(entry, "runtime_data", None)
-    if isinstance(coordinator, RuntimeTokenCoordinator):
-        return coordinator
-    coordinator = RuntimeTokenCoordinator()
-    entry.runtime_data = coordinator
+    """Return the coordinator shared by all platforms for a config entry.
+
+    It outlives reloads. Home Assistant drops ``runtime_data`` on unload while
+    requests that hold the previous lock can still be refreshing the token.
+    """
+    coordinator = _COORDINATORS.get(entry)
+    if coordinator is None:
+        coordinator = _COORDINATORS[entry] = RuntimeTokenCoordinator()
     return coordinator
 
 

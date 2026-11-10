@@ -38,7 +38,7 @@ def _flow(module, subentry_type, *, subentry=None, state="loaded"):
 
 
 def _fields(schema):
-    return {key.key: validator for key, validator in schema.schema.items()}
+    return {key.schema: validator for key, validator in schema.schema.items()}
 
 
 def _form_layout(result):
@@ -55,7 +55,7 @@ def _section_field(result, section_name, key):
 
 def _section_defaults(result, section_name):
     section_value = _fields(result["data_schema"])[section_name]
-    return {key.key: key.default for key in section_value.schema.schema}
+    return {key.schema: key.default for key in section_value.schema.schema}
 
 
 def _chat(**values):

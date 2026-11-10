@@ -1,10 +1,11 @@
 import json
 
+import httpx
 import pytest
 
 from custom_components.codex_assist.codex_client import (
     CODEX_STREAM_TIMEOUT,
-    CodexCitationDelta,
+    CodexAuthenticationError,
     CodexClient,
     CodexRateLimitError,
     CodexResponseItemDelta,
@@ -14,10 +15,9 @@ from custom_components.codex_assist.codex_client import (
 
 
 class FakeStreamResponse:
-    def __init__(self, status_code, lines, *, body=b""):
+    def __init__(self, status_code, lines):
         self.status_code = status_code
         self._lines = lines
-        self._body = body
 
     async def __aenter__(self):
         return self
@@ -28,9 +28,6 @@ class FakeStreamResponse:
     async def aiter_lines(self):
         for line in self._lines:
             yield line
-
-    async def aread(self):
-        return self._body
 
 
 class FakeHttpClient:
@@ -55,7 +52,8 @@ async def test_stream_turn_yields_text_deltas_and_posts_advanced_options():
     response = FakeStreamResponse(
         200,
         _event({"type": "response.output_text.delta", "delta": "Hel"})
-        + _event({"type": "response.output_text.delta", "delta": "lo"}),
+        + _event({"type": "response.output_text.delta", "delta": "lo"})
+        + _event({"type": "response.completed", "response": {"status": "completed"}}),
     )
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
@@ -85,7 +83,7 @@ async def test_stream_turn_yields_text_deltas_and_posts_advanced_options():
 
 @pytest.mark.asyncio
 async def test_stream_turn_posts_structured_output_format_with_verbosity():
-    response = FakeStreamResponse(200, [])
+    response = FakeStreamResponse(200, _event({"type": "response.completed"}))
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
     text_format = {
@@ -117,105 +115,32 @@ async def test_stream_turn_posts_structured_output_format_with_verbosity():
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_yields_function_call_after_arguments_complete():
-    response = FakeStreamResponse(
-        200,
-        _event(
-            {
-                "type": "response.output_item.added",
-                "item": {
-                    "type": "function_call",
-                    "call_id": "call-1",
-                    "name": "HassTurnOn",
-                },
-            }
-        )
-        + _event(
-            {
-                "type": "response.function_call_arguments.delta",
-                "delta": '{"name":"Kitchen"',
-            }
-        )
-        + _event(
-            {
-                "type": "response.function_call_arguments.done",
-                "arguments": '{"name":"Kitchen","domain":"light"}',
-            }
-        ),
-    )
-    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
-
-    deltas = [
-        delta
-        async for delta in client.stream_turn(
-            model="gpt-5.4",
-            instructions="Use tools.",
-            input_items=[{"role": "user", "content": "turn on kitchen"}],
-            tools=[{"type": "function", "name": "HassTurnOn", "parameters": {}}],
-        )
+async def test_stream_turn_yields_each_function_call_once_with_its_completed_arguments():
+    kitchen = {"id": "item-1", "type": "function_call", "call_id": "call-1", "name": "HassTurnOn"}
+    shade = {"id": "item-2", "type": "function_call", "call_id": "call-2",
+             "name": "HassSetPosition"}
+    kitchen_args = '{"name":"Kitchen","domain":"light"}'
+    shade_args = '{"name":"Shade","position":50}'
+    events = [
+        {"type": "response.output_item.added", "output_index": 0,
+         "item": {**kitchen, "arguments": ""}},
+        {"type": "response.output_item.added", "output_index": 1,
+         "item": {**shade, "arguments": ""}},
+        {"type": "response.function_call_arguments.delta", "item_id": "item-1",
+         "delta": '{"name":"Kitchen"'},
+        {"type": "response.function_call_arguments.delta", "item_id": "item-2",
+         "delta": '{"name":"Shade"'},
+        {"type": "response.function_call_arguments.done", "item_id": "item-2",
+         "arguments": shade_args},
+        {"type": "response.output_item.done", "output_index": 1,
+         "item": {**shade, "arguments": shade_args, "status": "completed"}},
+        {"type": "response.function_call_arguments.done", "item_id": "item-1",
+         "arguments": kitchen_args},
+        {"type": "response.output_item.done", "output_index": 0,
+         "item": {**kitchen, "arguments": kitchen_args, "status": "completed"}},
+        {"type": "response.completed", "response": {"status": "completed"}},
     ]
-
-    tool_delta = next(delta for delta in deltas if isinstance(delta, CodexToolCallDelta))
-    assert tool_delta.tool_call.id == "call-1"
-    assert tool_delta.tool_call.name == "HassTurnOn"
-    assert tool_delta.tool_call.arguments == {"name": "Kitchen", "domain": "light"}
-
-
-@pytest.mark.asyncio
-async def test_stream_turn_correlates_interleaved_function_call_arguments_by_item_id():
-    response = FakeStreamResponse(
-        200,
-        _event(
-            {
-                "type": "response.output_item.added",
-                "item": {
-                    "id": "item-1",
-                    "type": "function_call",
-                    "call_id": "call-1",
-                    "name": "HassTurnOn",
-                },
-            }
-        )
-        + _event(
-            {
-                "type": "response.output_item.added",
-                "item": {
-                    "id": "item-2",
-                    "type": "function_call",
-                    "call_id": "call-2",
-                    "name": "HassSetPosition",
-                },
-            }
-        )
-        + _event(
-            {
-                "type": "response.function_call_arguments.delta",
-                "item_id": "item-1",
-                "delta": '{"name":"Kitchen"',
-            }
-        )
-        + _event(
-            {
-                "type": "response.function_call_arguments.delta",
-                "item_id": "item-2",
-                "delta": '{"name":"Shade"',
-            }
-        )
-        + _event(
-            {
-                "type": "response.function_call_arguments.done",
-                "item_id": "item-2",
-                "arguments": '{"name":"Shade","position":50}',
-            }
-        )
-        + _event(
-            {
-                "type": "response.function_call_arguments.done",
-                "item_id": "item-1",
-                "arguments": '{"name":"Kitchen","domain":"light"}',
-            }
-        ),
-    )
+    response = FakeStreamResponse(200, [line for event in events for line in _event(event)])
     client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
 
     deltas = [
@@ -238,69 +163,146 @@ async def test_stream_turn_correlates_interleaved_function_call_arguments_by_ite
         ("call-2", "HassSetPosition", {"name": "Shade", "position": 50}),
         ("call-1", "HassTurnOn", {"name": "Kitchen", "domain": "light"}),
     ]
+    assert [delta.item for delta in deltas if isinstance(delta, CodexResponseItemDelta)] == [
+        events[5]["item"],
+        events[7]["item"],
+    ]
+
+
+_CALL = {"id": "item-1", "type": "function_call", "call_id": "call-1", "name": "HassTurnOff"}
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_yields_structured_web_citations_and_requests_sources():
-    citation = {
+@pytest.mark.parametrize("done_items", [
+    [dict(_CALL)],
+    [{**_CALL, "arguments": '{"name":'}],
+    [{**_CALL, "arguments": '["Kitchen"]'}],
+    [{**_CALL, "call_id": "", "arguments": "{}"}],
+    [{**_CALL, "name": "", "arguments": "{}"}],
+    [{**_CALL, "arguments": "{}"}, {**_CALL, "id": "item-2", "arguments": "{}"}],
+], ids=["no-arguments", "truncated-json", "non-object", "no-call-id", "no-name", "repeated"])
+async def test_stream_turn_rejects_a_tool_call_it_cannot_dispatch_exactly(done_items):
+    events = [
+        {"type": "response.function_call_arguments.done", "item_id": "item-1",
+         "arguments": '{"name":"Kitchen"}'},
+        *({"type": "response.output_item.done", "item": item} for item in done_items),
+        {"type": "response.completed", "response": {"status": "completed"}},
+    ]
+    response = FakeStreamResponse(200, [line for event in events for line in _event(event)])
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+    tool_calls = []
+
+    with pytest.raises(RuntimeError, match="tool call"):
+        async for delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Use tools.",
+            input_items=[{"role": "user", "content": "turn off the kitchen"}],
+            tools=[{"type": "function", "name": "HassTurnOff", "parameters": {}}],
+        ):
+            if isinstance(delta, CodexToolCallDelta):
+                tool_calls.append(delta)
+
+    assert tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_stream_turn_dispatches_an_empty_argument_string_as_no_arguments():
+    events = [
+        {"type": "response.output_item.done", "item": {**_CALL, "arguments": ""}},
+        {"type": "response.completed", "response": {"status": "completed"}},
+    ]
+    response = FakeStreamResponse(200, [line for event in events for line in _event(event)])
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    tool_calls = [
+        delta.tool_call
+        async for delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Use tools.",
+            input_items=[{"role": "user", "content": "cancel my timers"}],
+            tools=[{"type": "function", "name": "HassTurnOff", "parameters": {}}],
+        )
+        if isinstance(delta, CodexToolCallDelta)
+    ]
+
+    assert [(call.id, call.arguments) for call in tool_calls] == [("call-1", {})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("terminal", "error"), [
+    ({"type": "response.failed", "response": {"error": {"code": "rate_limit_exceeded",
+                                                          "message": "Synthetic limit"}}},
+     CodexRateLimitError),
+    ({"type": "response.incomplete",
+      "response": {"incomplete_details": {"reason": "max_output_tokens"}}},
+     RuntimeError),
+], ids=["failed", "incomplete"])
+async def test_stream_turn_reports_the_backend_error_over_a_broken_tool_call(terminal, error):
+    events = [{"type": "response.output_item.done", "item": dict(_CALL)}, terminal]
+    response = FakeStreamResponse(200, [line for event in events for line in _event(event)])
+    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+
+    with pytest.raises(error) as caught:
+        async for _delta in client.stream_turn(
+            model="gpt-5.4",
+            instructions="Use tools.",
+            input_items=[{"role": "user", "content": "turn off the kitchen"}],
+            tools=[{"type": "function", "name": "HassTurnOff", "parameters": {}}],
+        ):
+            pass
+
+    assert "tool call" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completed", [False, True])
+async def test_stream_turn_preserves_annotated_message_without_extra_visible_deltas(completed):
+    annotation = {
         "type": "url_citation",
         "title": "IANA Reserved Domains",
         "url": "https://www.iana.org/help/example-domains",
         "start_index": 10,
         "end_index": 22,
     }
-    response = FakeStreamResponse(
-        200,
-        _event(
-            {
-                "type": "response.output_text.annotation.added",
-                "annotation": citation,
-            }
-        )
-        + _event(
-            {
-                "type": "response.output_item.done",
-                "item": {
-                    "type": "message",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": "Example Domains are maintained by IANA.",
-                            "annotations": [citation],
-                        }
-                    ],
-                },
-            }
-        ),
+    text = " Example Domains are maintained by IANA.\n"
+    item = {
+        "type": "message", "role": "assistant", "phase": "final_answer",
+        "content": [{"type": "output_text", "text": text, "annotations": [annotation]}],
+    }
+    events = (
+        _event({"type": "response.output_text.delta", "delta": " Example"})
+        + _event({"type": "response.output_text.annotation.added", "annotation": annotation})
+        + _event({"type": "response.output_item.done", "item": item})
     )
-    http = FakeHttpClient(response)
-    client = CodexClient(http_client=http, access_token="token-1")
+    if completed:
+        events += _event({"type": "response.completed", "response": {"status": "completed"}})
+    client = CodexClient(http_client=FakeHttpClient(FakeStreamResponse(200, events)),
+                         access_token="token-1")
+    deltas = []
 
-    deltas = [
-        delta
+    async def collect():
         async for delta in client.stream_turn(
-            model="gpt-5.4",
-            instructions="Use search.",
+            model="gpt-5.4", instructions="Use search.",
             input_items=[{"role": "user", "content": "Who maintains Example Domains?"}],
-            tools=[{"type": "web_search"}],
             reasoning_effort="low",
-        )
-    ]
+        ):
+            deltas.append(delta)
 
-    citations = [delta.citation for delta in deltas if isinstance(delta, CodexCitationDelta)]
-    assert [(citation.title, citation.url) for citation in citations] == [
-        ("IANA Reserved Domains", "https://www.iana.org/help/example-domains"),
-        ("IANA Reserved Domains", "https://www.iana.org/help/example-domains"),
-    ]
-    assert http.calls[0][2]["json"]["include"] == [
-        "reasoning.encrypted_content",
-        "web_search_call.action.sources",
+    if completed:
+        await collect()
+    else:
+        with pytest.raises(RuntimeError, match="before response.completed"):
+            await collect()
+    assert deltas == [
+        CodexTextDelta(" Example"),
+        CodexTextDelta(" Domains are maintained by IANA.\n"),
+        CodexResponseItemDelta(item),
     ]
 
 
 @pytest.mark.asyncio
 async def test_stream_turn_omits_reasoning_summary_when_off():
-    response = FakeStreamResponse(200, [])
+    response = FakeStreamResponse(200, _event({"type": "response.completed"}))
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
 
@@ -321,7 +323,7 @@ async def test_stream_turn_omits_reasoning_summary_when_off():
 
 @pytest.mark.asyncio
 async def test_stream_turn_omits_advanced_options_for_non_reasoning_models():
-    response = FakeStreamResponse(200, [])
+    response = FakeStreamResponse(200, _event({"type": "response.completed"}))
     http = FakeHttpClient(response)
     client = CodexClient(http_client=http, access_token="token-1")
 
@@ -345,21 +347,71 @@ async def test_stream_turn_omits_advanced_options_for_non_reasoning_models():
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_raises_rate_limit_error_for_429():
-    response = FakeStreamResponse(
-        429,
-        [],
-        body=b'{"error":"quota exceeded"}',
-    )
-    client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
+async def test_stream_turn_posts_codex_responses_request():
+    requests = []
 
-    with pytest.raises(CodexRateLimitError, match="quota exceeded"):
-        async for _delta in client.stream_turn(
-            model="gpt-5.4",
-            instructions="x",
-            input_items=[{"role": "user", "content": "hello"}],
-        ):
-            pass
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, text="\n".join(_event({"type": "response.completed"})))
+
+    tools = [{"type": "function", "name": "HassTurnOn", "parameters": {}}]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = CodexClient(http_client=http, access_token="token-1")
+        deltas = [
+            delta
+            async for delta in client.stream_turn(
+                model="gpt-5.4",
+                instructions="You are a Home Assistant voice agent.",
+                input_items=[{"role": "user", "content": "turn on kitchen"}],
+                tools=tools,
+            )
+        ]
+
+    assert deltas == []
+    [request] = requests
+    assert request.method == "POST"
+    assert str(request.url) == "https://chatgpt.com/backend-api/codex/responses"
+    assert request.headers["Authorization"] == "Bearer token-1"
+    assert request.headers["Accept"] == "text/event-stream"
+    assert request.headers["originator"] == "codex_cli_rs"
+    assert request.headers["User-Agent"].startswith("codex_cli_rs/")
+    assert json.loads(request.content) == {
+        "model": "gpt-5.4",
+        "instructions": "You are a Home Assistant voice agent.",
+        "input": [{"role": "user", "content": "turn on kitchen"}],
+        "tools": tools,
+        "store": False,
+        "stream": True,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,body,error", [
+    (401, {"detail": "Synthetic rejection"}, CodexAuthenticationError),
+    (403, {"error": {"code": "token_invalidated", "message": "Synthetic rejection"}},
+     CodexAuthenticationError),
+    (401, {"detail": {"code": "rate_limit_exceeded", "message": "Synthetic rejection"}},
+     CodexAuthenticationError),
+    (429, {"error": "Synthetic rejection"}, CodexRateLimitError),
+    (403, {"detail": {"code": "usage_limit_reached", "message": "Synthetic rejection"}},
+     CodexRateLimitError),
+    (400, {"detail": "Synthetic rejection"}, RuntimeError),
+])
+async def test_stream_turn_classifies_http_error_status(status, body, error):
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda request: httpx.Response(status, json=body)
+    )) as http:
+        client = CodexClient(http_client=http, access_token="token-1")
+        with pytest.raises(RuntimeError) as caught:
+            async for _delta in client.stream_turn(
+                model="gpt-5.4",
+                instructions="x",
+                input_items=[{"role": "user", "content": "hello"}],
+            ):
+                pass
+
+    assert type(caught.value) is error
+    assert "Synthetic rejection" in str(caught.value)
 
 
 @pytest.mark.asyncio
@@ -445,7 +497,8 @@ async def test_stream_turn_preserves_output_item_done_payloads_exactly():
                 for item in output_items
             ),
             [],
-        ),
+        )
+        + _event({"type": "response.completed", "response": {"status": "completed"}}),
     )
     client = CodexClient(http_client=FakeHttpClient(response), access_token="token-1")
 

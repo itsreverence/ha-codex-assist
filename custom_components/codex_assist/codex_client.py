@@ -3,14 +3,60 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import logging
+import re
+import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .codex_image import image_model_quality, validate_image_size
 
+LOGGER = logging.getLogger(__name__)
+
 CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex"
 CODEX_STREAM_TIMEOUT = 300
+# Bridge model function calls to the standalone endpoint also used by Codex CLI.
+# This avoids the hosted web_search server_error reported on the Codex backend,
+# without claiming all models have retired hosted search or exact CLI protocol parity.
+# Internal search-round text is withheld from the caller.
+CODEX_SEARCH_PATH = "alpha/search"
+CODEX_SEARCH_TIMEOUT = 60
+WEB_SEARCH_TOOL_NAME = "web_search"
+MAX_SEARCH_ROUNDS = 4
+MAX_SEARCH_CALLS = 4
+MAX_SEARCH_OUTPUT_CHARS = 24000
+# The search text tags each result with a citation marker (U+E200 "cite" U+E202 ref U+E201) and
+# "[wordlim: N]"; a model that sees them copies them into its answer, so both are removed.
+_SEARCH_MARKUP = re.compile(
+    "\ue200cite\ue202[^\ue201]*\ue201 ?|\\[wordlim: \\d+\\] ?|[\ue200-\ue202]"
+)
+WEB_SEARCH_FUNCTION = {
+    "type": "function",
+    "name": WEB_SEARCH_TOOL_NAME,
+    "description": (
+        "Search the web for current information. Returns the result pages as text with their URLs. "
+        "Use 1-4 specific queries; pass URLs from earlier results in open_urls to read a page "
+        "for additional page text. Results may be truncated."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "1-4 search queries",
+            },
+            "open_urls": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "URLs to read for additional page text; results may be truncated",
+            },
+        },
+        "required": ["queries"],
+    },
+    "strict": False,
+}
 
 
 class AsyncPostClient(Protocol):
@@ -20,22 +66,10 @@ class AsyncPostClient(Protocol):
 
 
 @dataclass(frozen=True)
-class CodexMessage:
-    role: str
-    content: str | list[dict[str, Any]]
-
-
-@dataclass(frozen=True)
 class CodexToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class CodexTurnResult:
-    text: str
-    tool_calls: list[CodexToolCall]
 
 
 @dataclass(frozen=True)
@@ -57,16 +91,8 @@ class CodexToolCallDelta:
 
 
 @dataclass(frozen=True)
-class CodexCitation:
-    title: str
-    url: str
-    start_index: int | None = None
-    end_index: int | None = None
-
-
-@dataclass(frozen=True)
-class CodexCitationDelta:
-    citation: CodexCitation
+class CodexSearchResult:
+    text: str
 
 
 @dataclass(frozen=True)
@@ -74,9 +100,189 @@ class CodexResponseItemDelta:
     item: dict[str, Any]
 
 
-CodexStreamDelta = (
-    CodexTextDelta | CodexToolCallDelta | CodexCitationDelta | CodexResponseItemDelta
-)
+CodexStreamDelta = CodexTextDelta | CodexToolCallDelta | CodexResponseItemDelta
+
+
+_TEXT_CONFLICT = "Codex returned inconsistent answer text"
+
+
+@dataclass(eq=False)
+class _TextMessage:
+    order: int
+    item_id: str | None = None
+    output_index: int | None = None
+    role: str | None = None
+    phase: str | None = None
+    parts: dict[int | None, str] = field(default_factory=dict)
+    unindexed: bool = False
+    completed: dict[int, str] | None = None
+
+
+class _ResponseTextLedger:
+    def __init__(self) -> None:
+        self.messages: list[_TextMessage] = []
+        self.by_id: dict[str, _TextMessage] = {}
+        self.by_index: dict[int, _TextMessage] = {}
+        self.emitted: list[tuple[_TextMessage, int | None]] = []
+        self.anonymous_text = False
+
+    def _message(self, event: dict[str, Any], item: dict[str, Any]) -> _TextMessage:
+        if item.get("id") and event.get("item_id") and item["id"] != event["item_id"]:
+            raise RuntimeError(_TEXT_CONFLICT)
+        item_id = item.get("id") or event.get("item_id")
+        index = event.get("output_index")
+        by_id = self.by_id.get(item_id)
+        by_index = self.by_index.get(index)
+        if by_id is not None and by_index is not None and by_id is not by_index:
+            raise RuntimeError(_TEXT_CONFLICT)
+        message = by_id or by_index
+        if message is None:
+            anonymous = [m for m in self.messages if m.item_id is None and m.output_index is None]
+            if len(self.messages) == 1 and anonymous and anonymous[0].completed is None:
+                message = anonymous[0]
+            elif item_id is None and index is None and len(self.messages) == 1:
+                message = self.messages[0]
+            else:
+                message = _TextMessage(order=len(self.messages))
+                self.messages.append(message)
+        if item_id is not None:
+            if message.item_id is not None and message.item_id != item_id:
+                raise RuntimeError(_TEXT_CONFLICT)
+            message.item_id = item_id
+            self.by_id[item_id] = message
+        if index is not None:
+            if message.output_index is None:
+                message.output_index = index
+                self.by_index[index] = message
+                self._validate_order()
+            elif message.output_index != index:
+                raise RuntimeError(_TEXT_CONFLICT)
+        for key in ("role", "phase"):
+            if (value := item.get(key)) is not None:
+                previous = getattr(message, key)
+                if previous is not None and previous != value:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                setattr(message, key, value)
+        return message
+
+    def _validate_order(self) -> None:
+        output_index = -1
+        content_indices: dict[_TextMessage, int] = {}
+        for message, index in self.emitted:
+            if message.output_index is not None:
+                if message.output_index < output_index:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                output_index = message.output_index
+            if index is not None:
+                if index < content_indices.get(message, -1):
+                    raise RuntimeError(_TEXT_CONFLICT)
+                content_indices[message] = index
+
+    def _record(self, message: _TextMessage, index: int | None, text: str) -> None:
+        if text and (not self.emitted or self.emitted[-1] != (message, index)):
+            if message.parts and (
+                self.emitted[-1][0] is not message or index in message.parts
+            ):
+                raise RuntimeError(_TEXT_CONFLICT)
+            self.emitted.append((message, index))
+            self._validate_order()
+        message.parts[index] = message.parts.get(index, "") + text
+
+    def _bind_part(self, message: _TextMessage, index: int) -> None:
+        if None not in message.parts:
+            return
+        if index in message.parts:
+            raise RuntimeError(_TEXT_CONFLICT)
+        message.parts[index] = message.parts.pop(None)
+        self.emitted = [
+            (m, index if m is message and i is None else i) for m, i in self.emitted
+        ]
+        self._validate_order()
+
+    def observe(self, event: dict[str, Any]) -> list[str]:
+        event_type = event.get("type")
+        if event_type == "response.output_text.delta":
+            text = event.get("delta")
+            if not isinstance(text, str) or not text:
+                return []
+            if event.get("item_id") is None and event.get("output_index") is None:
+                if len(self.messages) > 1:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                self.anonymous_text = True
+            message = self._message(event, {})
+            if message.completed is not None:
+                raise RuntimeError(_TEXT_CONFLICT)
+            index = event.get("content_index")
+            if index is None:
+                message.unindexed = True
+                if len(message.parts) > 1:
+                    raise RuntimeError(_TEXT_CONFLICT)
+                index = next(iter(message.parts), None)
+            else:
+                self._bind_part(message, index)
+            self._record(message, index, text)
+            return [text]
+        if event_type not in {"response.output_item.added", "response.output_item.done"}:
+            return []
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "message":
+            return []
+        message = self._message(event, item)
+        if event_type == "response.output_item.added":
+            return []
+        if message.role != "assistant" or message.phase == "commentary":
+            return []
+        parts = {
+            index: part["text"] for index, part in enumerate(item.get("content") or [])
+            if isinstance(part, dict) and part.get("type") == "output_text"
+            and isinstance(part.get("text"), str)
+        }
+        if parts and message.item_id is None and message.output_index is None:
+            self.anonymous_text = True
+        if self.anonymous_text and (len(self.messages) != 1 or len(parts) > 1):
+            raise RuntimeError(_TEXT_CONFLICT)
+        for other in self.messages:
+            if other is message:
+                continue
+            distinct_ids = message.item_id is not None and other.item_id is not None
+            distinct_indices = message.output_index is not None and other.output_index is not None
+            if not distinct_ids and not distinct_indices:
+                raise RuntimeError(_TEXT_CONFLICT)
+        if message.completed is not None:
+            identified = (
+                item.get("id") or event.get("item_id") or event.get("output_index") is not None
+            )
+            if not identified or message.completed != parts:
+                raise RuntimeError(_TEXT_CONFLICT)
+            return []
+        if message.unindexed:
+            if len(parts) != 1:
+                raise RuntimeError(_TEXT_CONFLICT)
+            index = next(iter(parts))
+            self._bind_part(message, index)
+        if message.parts.keys() - parts.keys():
+            raise RuntimeError(_TEXT_CONFLICT)
+        recovered = []
+        for index, text in parts.items():
+            delivered = message.parts.get(index, "")
+            if not text.startswith(delivered):
+                raise RuntimeError(_TEXT_CONFLICT)
+            suffix = text[len(delivered):]
+            if not suffix:
+                continue
+            for other, other_index in self.emitted:
+                if other is message:
+                    later = other_index is None or other_index > index
+                elif message.output_index is not None and other.output_index is not None:
+                    later = other.output_index > message.output_index
+                else:
+                    later = other.order > message.order
+                if later:
+                    raise RuntimeError(_TEXT_CONFLICT)
+            self._record(message, index, suffix)
+            recovered.append(suffix)
+        message.completed = parts
+        return recovered
 
 
 class CodexClient:
@@ -86,65 +292,165 @@ class CodexClient:
         http_client: AsyncPostClient,
         access_token: str,
         base_url: str = CODEX_BACKEND_BASE_URL,
+        session_id: str | None = None,
     ) -> None:
         self._http_client = http_client
         self._access_token = access_token
         self._base_url = base_url.rstrip("/")
+        self._session_id = session_id
 
-    async def generate_text(
-        self,
-        *,
-        model: str,
-        instructions: str,
-        messages: list[CodexMessage],
-    ) -> str:
-        result = await self.generate_turn(
-            model=model,
-            instructions=instructions,
-            input_items=codex_messages_to_input_items(messages),
+    def with_access_token(self, access_token: str) -> CodexClient:
+        """Return a client for the same session that uses a refreshed access token."""
+        return CodexClient(
+            http_client=self._http_client,
+            access_token=access_token,
+            base_url=self._base_url,
+            session_id=self._session_id,
         )
-        return result.text
 
-    async def generate_turn(
+    def _responses_request(
+        self, payload: dict[str, Any]
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        headers = codex_headers(self._access_token)
+        if self._session_id:
+            headers["session_id"] = self._session_id
+            payload = {**payload, "prompt_cache_key": self._session_id}
+        return headers, payload
+
+    async def stream_turn(
         self,
         *,
         model: str,
         instructions: str,
         input_items: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-    ) -> CodexTurnResult:
-        payload = _responses_payload(
-            model=model,
-            instructions=instructions,
-            input_items=input_items,
-            tools=tools,
-        )
+        reasoning_effort: str | None = None,
+        reasoning_summary: str | None = None,
+        text_verbosity: str | None = None,
+        text_format: dict[str, Any] | None = None,
+    ) -> AsyncIterator[CodexStreamDelta]:
+        """Stream one turn; a hosted web_search tool becomes a client-side search loop."""
+        tools, search_settings = _client_side_search_tools(tools)
+        options = {
+            "model": model,
+            "instructions": instructions,
+            "reasoning_effort": reasoning_effort,
+            "reasoning_summary": reasoning_summary,
+            "text_verbosity": text_verbosity,
+            "text_format": text_format,
+        }
+        if search_settings is None:
+            async for delta in self._stream_once(input_items=input_items, tools=tools, **options):
+                yield delta
+            return
 
+        items = list(input_items)
+        search_calls = 0
+        for round_number in range(MAX_SEARCH_ROUNDS + 1):
+            search_allowed = round_number < MAX_SEARCH_ROUNDS and search_calls < MAX_SEARCH_CALLS
+            round_tools = tools if search_allowed else [
+                tool for tool in tools if tool.get("name") != WEB_SEARCH_TOOL_NAME
+            ]
+            searches: dict[str, CodexToolCall] = {}
+            other_tool_call = False
+            round_items: list[dict[str, Any]] = []
+            buffered_deltas: list[CodexStreamDelta] = []
+            async for delta in self._stream_once(input_items=items, tools=round_tools, **options):
+                if isinstance(delta, CodexResponseItemDelta):
+                    round_items.append(delta.item)
+                    continue
+                if isinstance(delta, CodexToolCallDelta):
+                    if delta.tool_call.name == WEB_SEARCH_TOOL_NAME:
+                        if not search_allowed:
+                            raise RuntimeError(
+                                "Codex returned a search call while search is disabled"
+                            )
+                        searches[delta.tool_call.id] = delta.tool_call
+                        continue
+                    other_tool_call = True
+                # Until the round ends, even early text may belong to an internal search.
+                buffered_deltas.append(delta)
+                if other_tool_call or not search_allowed:
+                    for buffered_delta in buffered_deltas:
+                        yield buffered_delta
+                    buffered_deltas.clear()
+            if not searches or other_tool_call:
+                for buffered_delta in buffered_deltas:
+                    yield buffered_delta
+                # Retain the complete ordinary-function transcript privately, not as
+                # visible text. Earlier search evidence is needed after HA handoff
+                # and on later user turns, even when the final message omits it.
+                for item in [*items[len(input_items):], *round_items]:
+                    yield CodexResponseItemDelta(item)
+                # HA has priority in a mixed round. Close skipped search calls with
+                # explicit feedback rather than deleting calls tied to reasoning.
+                for call in searches.values():
+                    yield CodexResponseItemDelta({
+                        "type": "function_call_output", "call_id": call.id,
+                        "output": "Web search skipped because Home Assistant tools take priority.",
+                    })
+                return
+            if search_calls + len(searches) > MAX_SEARCH_CALLS:
+                raise RuntimeError("Codex exceeded the web search call budget")
+            items.extend(round_items)
+            for call in searches.values():
+                search_calls += 1
+                result = await self.web_search(model, call.arguments, search_settings)
+                items.append(
+                    {"type": "function_call_output", "call_id": call.id, "output": result.text}
+                )
+
+    async def web_search(
+        self, model: str, arguments: dict[str, Any], settings: dict[str, Any]
+    ) -> CodexSearchResult:
+        """Run one web_search call on the Codex search endpoint; return text for the model."""
+        queries = _non_empty_strings(arguments.get("queries"))[:4]
+        urls = _non_empty_strings(arguments.get("open_urls"))[:3]
+        if not queries and not urls:
+            return CodexSearchResult("web_search needs at least one query.")
+        commands: dict[str, Any] = {}
+        if queries:
+            commands["search_query"] = [{"q": q} for q in queries]
+        if urls:
+            commands["open"] = [{"ref_id": u} for u in urls]
+        body = {
+            "id": f"ha-{uuid.uuid4().hex}",
+            "model": model,
+            "commands": commands,
+            "settings": {"search_context_size": "medium", "external_web_access": True, **settings},
+            "max_output_tokens": 2500,
+        }
         response = await self._http_client.post(
-            f"{self._base_url}/responses",
-            headers=codex_headers(self._access_token),
-            json=payload,
+            f"{self._base_url}/{CODEX_SEARCH_PATH}",
+            headers={**codex_headers(self._access_token), "Accept": "application/json"},
+            json=body,
+            timeout=CODEX_SEARCH_TIMEOUT,
         )
         if response.status_code != 200:
-            error = _response_error(response)
+            error = _response_error(response.text)
             if response.status_code == 401 or error.code == "token_invalidated":
                 raise CodexAuthenticationError(f"Codex authentication failed: {error.detail}")
             if _is_rate_limit_response(response.status_code, error):
                 raise CodexRateLimitError(
                     f"Codex usage limit or rate limit reached: {error.detail}"
                 )
-            raise RuntimeError(
-                f"Codex request failed with status {response.status_code}: {error.detail}"
+            return CodexSearchResult(
+                f"Web search failed (HTTP {response.status_code}): {error.detail}"
             )
-        if response.text:
-            return extract_streamed_turn_result(response.text)
-        payload = response.json()
-        return CodexTurnResult(
-            text=extract_output_text(payload),
-            tool_calls=extract_tool_calls(payload),
+        try:
+            payload = response.json()
+        except ValueError:
+            return CodexSearchResult("Web search returned no readable result.")
+        output = payload.get("output") if isinstance(payload, dict) else None
+        if not isinstance(output, str):
+            return CodexSearchResult("Web search failed: invalid response output.")
+        if not output.strip():
+            return CodexSearchResult("Web search found nothing.")
+        return CodexSearchResult(
+            _SEARCH_MARKUP.sub("", output)[:MAX_SEARCH_OUTPUT_CHARS],
         )
 
-    async def stream_turn(
+    async def _stream_once(
         self,
         *,
         model: str,
@@ -167,10 +473,11 @@ class CodexClient:
             text_format=text_format,
         )
 
+        headers, payload = self._responses_request(payload)
         async with self._http_client.stream(
             "POST",
             f"{self._base_url}/responses",
-            headers=codex_headers(self._access_token),
+            headers=headers,
             json=payload,
             timeout=CODEX_STREAM_TIMEOUT,
         ) as response:
@@ -186,55 +493,23 @@ class CodexClient:
                     f"Codex request failed with status {response.status_code}: {error.detail}"
                 )
 
-            pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
-            completed_tool_call_ids: set[str] = set()
-            anonymous_call_index = 0
-            async for event in _aiter_sse_events(response):
-                event_type = event.get("type")
-                for citation in _citations_from_event(event):
-                    yield CodexCitationDelta(citation)
-                if event_type == "response.output_item.added":
-                    item = event.get("item")
-                    if isinstance(item, dict) and item.get("type") == "function_call":
-                        key = _function_call_item_key(item, event)
-                        if key is None:
-                            anonymous_call_index += 1
-                            key = f"anonymous-{anonymous_call_index}"
-                        pending_tool_calls[key] = (item, str(item.get("arguments") or ""))
+            call_items: list[dict[str, Any]] = []
+            text_ledger = _ResponseTextLedger()
+            async for event in _aiter_completed_response_events(response):
+                for text in text_ledger.observe(event):
+                    yield CodexTextDelta(text)
+                item = event.get("item")
+                if event.get("type") != "response.output_item.done" or not isinstance(item, dict):
                     continue
-                if event_type == "response.function_call_arguments.delta":
-                    key = _function_call_event_key(event, pending_tool_calls)
-                    delta = event.get("delta")
-                    if key is not None and isinstance(delta, str):
-                        item, arguments = pending_tool_calls[key]
-                        pending_tool_calls[key] = (item, arguments + delta)
-                    continue
-                if event_type == "response.function_call_arguments.done":
-                    key = _function_call_event_key(event, pending_tool_calls)
-                    if key is not None:
-                        pending_tool_call, pending_arguments = pending_tool_calls.pop(key)
-                        arguments = event.get("arguments")
-                        if isinstance(arguments, str):
-                            pending_arguments = arguments
-                        tool_call = _tool_call_from_item(pending_tool_call, pending_arguments)
-                        completed_tool_call_ids.add(tool_call.id)
-                        yield CodexToolCallDelta(tool_call)
-                    continue
-                if event_type == "response.output_item.done":
-                    item = event.get("item")
-                    if isinstance(item, dict):
-                        yield CodexResponseItemDelta(copy.deepcopy(item))
-                    call_id = ""
-                    if isinstance(item, dict) and item.get("type") == "function_call":
-                        call_id = str(item.get("call_id") or item.get("id") or "")
-                        key = _function_call_item_key(item, event)
-                        if key is not None:
-                            pending_tool_calls.pop(key, None)
-                    if call_id and call_id in completed_tool_call_ids:
-                        continue
-                delta = _stream_delta_from_event(event)
-                if delta is not None:
-                    yield delta
+                if item.get("type") == "function_call":
+                    call_items.append(item)
+                yield CodexResponseItemDelta(copy.deepcopy(item))
+            # Built after completion, so a backend error later in the stream wins.
+            tool_calls = [_tool_call_from_item(item) for item in call_items]
+            if len({call.id for call in tool_calls}) != len(tool_calls):
+                raise RuntimeError("Codex response repeated a tool call")
+            for tool_call in tool_calls:
+                yield CodexToolCallDelta(tool_call)
 
     async def generate_image(
         self,
@@ -256,10 +531,11 @@ class CodexClient:
 
         image_b64: str | None = None
         text_parts: list[str] = []
+        headers, payload = self._responses_request(payload)
         async with self._http_client.stream(
             "POST",
             f"{self._base_url}/responses",
-            headers=codex_headers(self._access_token),
+            headers=headers,
             json=payload,
             timeout=300,
         ) as response:
@@ -275,13 +551,13 @@ class CodexClient:
                     f"Codex image request failed with status {response.status_code}: {error.detail}"
                 )
 
-            async for event in _aiter_sse_events(response):
+            async for event in _aiter_completed_response_events(response):
                 found = _extract_image_b64(event)
                 if found:
                     image_b64 = found
-                delta = _stream_delta_from_event(event)
-                if isinstance(delta, CodexTextDelta):
-                    text_parts.append(delta.text)
+                delta = event.get("delta")
+                if event.get("type") == "response.output_text.delta" and isinstance(delta, str):
+                    text_parts.append(delta)
 
         if not image_b64:
             raise RuntimeError("Codex response contained no image_generation result")
@@ -297,6 +573,29 @@ class CodexClient:
             model=image_model,
             revised_prompt="".join(text_parts).strip() or None,
         )
+
+
+def _client_side_search_tools(
+    tools: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Swap a hosted web_search tool for the client-side function; return tools and settings."""
+    out: list[dict[str, Any]] = []
+    settings: dict[str, Any] | None = None
+    for tool in tools or []:
+        if tool.get("type") == "web_search":
+            settings = {}
+            if isinstance(tool.get("user_location"), dict):
+                settings["user_location"] = tool["user_location"]
+            out.append(copy.deepcopy(WEB_SEARCH_FUNCTION))
+        else:
+            out.append(tool)
+    return out, settings
+
+
+def _non_empty_strings(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
 
 
 def _responses_payload(
@@ -412,10 +711,6 @@ def _supports_reasoning_options(model: str) -> bool:
     return model.startswith(("gpt-5", "o"))
 
 
-def codex_messages_to_input_items(messages: list[CodexMessage]) -> list[dict[str, Any]]:
-    return [{"role": message.role, "content": message.content} for message in messages]
-
-
 def codex_user_content_with_images(
     text: str,
     images: list[tuple[str, bytes]],
@@ -473,6 +768,8 @@ def _chatgpt_account_id(access_token: str) -> str | None:
 class CodexAuthenticationError(RuntimeError):
     """Raised when Codex rejects the stored access token."""
 
+    retry_allowed: bool = True
+
 
 class CodexRateLimitError(RuntimeError):
     """Raised when Codex rejects a request due to usage or rate limits."""
@@ -498,154 +795,10 @@ class CodexResponseError:
     code: str | None = None
 
 
-def _function_call_item_key(
-    item: dict[str, Any], event: dict[str, Any]
-) -> str | None:
-    for value in (
-        item.get("id"),
-        event.get("item_id"),
-        item.get("call_id"),
-        event.get("call_id"),
-    ):
-        if isinstance(value, str) and value:
-            return value
-    output_index = event.get("output_index")
-    if isinstance(output_index, int):
-        return f"output-{output_index}"
-    return None
-
-
-def _function_call_event_key(
-    event: dict[str, Any],
-    pending_tool_calls: dict[str, tuple[dict[str, Any], str]],
-) -> str | None:
-    for value in (event.get("item_id"), event.get("call_id")):
-        if isinstance(value, str) and value in pending_tool_calls:
-            return value
-    output_index = event.get("output_index")
-    if isinstance(output_index, int):
-        key = f"output-{output_index}"
-        if key in pending_tool_calls:
-            return key
-    if len(pending_tool_calls) == 1:
-        return next(iter(pending_tool_calls))
-    return None
-
-
-def extract_streamed_output_text(stream_text: str) -> str:
-    return extract_streamed_turn_result(stream_text).text
-
-
-def extract_streamed_turn_result(stream_text: str) -> CodexTurnResult:
-    delta_parts: list[str] = []
-    done_parts: list[str] = []
-    tool_calls: list[CodexToolCall] = []
-    pending_tool_calls: dict[str, tuple[dict[str, Any], str]] = {}
-    completed_tool_call_ids: set[str] = set()
-    anonymous_call_index = 0
-
-    for event in _iter_sse_events(stream_text):
-        event_type = event.get("type")
-        if stream_error := _stream_event_exception(event):
-            raise stream_error
-        if event_type == "response.output_text.delta":
-            delta = event.get("delta")
-            if isinstance(delta, str):
-                delta_parts.append(delta)
-            continue
-        if event_type == "response.output_item.added":
-            item = event.get("item")
-            if isinstance(item, dict) and item.get("type") == "function_call":
-                key = _function_call_item_key(item, event)
-                if key is None:
-                    anonymous_call_index += 1
-                    key = f"anonymous-{anonymous_call_index}"
-                pending_tool_calls[key] = (item, str(item.get("arguments") or ""))
-            continue
-        if event_type == "response.function_call_arguments.delta":
-            key = _function_call_event_key(event, pending_tool_calls)
-            delta = event.get("delta")
-            if key is not None and isinstance(delta, str):
-                item, arguments = pending_tool_calls[key]
-                pending_tool_calls[key] = (item, arguments + delta)
-            continue
-        if event_type == "response.function_call_arguments.done":
-            key = _function_call_event_key(event, pending_tool_calls)
-            if key is not None:
-                current_tool_call, current_arguments = pending_tool_calls.pop(key)
-                arguments = event.get("arguments")
-                if isinstance(arguments, str):
-                    current_arguments = arguments
-                tool_call = _tool_call_from_item(current_tool_call, current_arguments)
-                completed_tool_call_ids.add(tool_call.id)
-                tool_calls.append(tool_call)
-            continue
-        if event_type == "response.output_item.done":
-            item = event.get("item")
-            if isinstance(item, dict):
-                if item.get("type") == "function_call":
-                    call_id = str(item.get("call_id") or item.get("id") or "")
-                    key = _function_call_item_key(item, event)
-                    if key is not None:
-                        pending_tool_calls.pop(key, None)
-                    if not call_id or call_id not in completed_tool_call_ids:
-                        tool_calls.append(
-                            _tool_call_from_item(item, str(item.get("arguments") or ""))
-                        )
-                else:
-                    done_parts.append(extract_output_text({"output": [item]}))
-
-    # Codex streams both text deltas and the completed message item. The
-    # completed item repeats the same visible text, so prefer deltas when
-    # present and only fall back to output_item.done when no deltas arrived.
-    parts = delta_parts or done_parts
-    return CodexTurnResult(text="".join(parts).strip(), tool_calls=tool_calls)
-
-
-def _iter_sse_events(stream_text: str):
-    event_name: str | None = None
-    data_lines: list[str] = []
-
-    def flush_event():
-        nonlocal event_name
-        if not data_lines:
-            event_name = None
-            return None
-        event = event_name
-        event_name = None
-        data = "\n".join(data_lines)
-        data_lines.clear()
-        if data == "[DONE]":
-            return None
-        try:
-            payload = json.loads(data)
-        except json.JSONDecodeError:
-            return None
-        if isinstance(payload, dict) and event and "type" not in payload:
-            payload["type"] = event
-        return payload if isinstance(payload, dict) else None
-
-    for line in stream_text.splitlines():
-        if not line.strip():
-            payload = flush_event()
-            if payload is not None:
-                yield payload
-            continue
-        if line.startswith("data:"):
-            data_lines.append(line.removeprefix("data:").strip())
-        elif line.startswith("event:"):
-            event_name = line.removeprefix("event:").strip()
-
-    payload = flush_event()
-    if payload is not None:
-        yield payload
-
-
-def _response_error(response: Any) -> CodexResponseError:
-    text = getattr(response, "text", "") or ""
+def _response_error(text: str) -> CodexResponseError:
     try:
-        payload = json.loads(text) if text else response.json()
-    except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
+        payload = json.loads(text)
+    except json.JSONDecodeError:
         return CodexResponseError(text[:500] if text else "unknown error")
     if isinstance(payload, dict):
         detail = payload.get("detail") or payload.get("message") or payload.get("error")
@@ -675,114 +828,101 @@ def _event_error_detail(event: dict[str, Any]) -> str:
 def _stream_event_exception(event: dict[str, Any]) -> RuntimeError | None:
     event_type = event.get("type")
     if event_type == "error":
-        return RuntimeError(_event_error_detail(event))
-    if event_type == "response.incomplete":
+        error_value = event.get("error")
+        code_value = (error_value if isinstance(error_value, dict) else event).get("code")
+        error = CodexResponseError(
+            _event_error_detail(event),
+            code_value if isinstance(code_value, str) else None,
+        )
+    elif event_type == "response.incomplete":
         response = event.get("response")
         details = response.get("incomplete_details") if isinstance(response, dict) else None
         reason = details.get("reason") if isinstance(details, dict) else None
         reason_text = reason if isinstance(reason, str) and reason else "unknown reason"
         return RuntimeError(f"Codex response incomplete: {reason_text}")
-    if event_type != "response.failed":
-        return None
-
-    response = event.get("response")
-    error_value = response.get("error") if isinstance(response, dict) else None
-    if isinstance(error_value, dict):
-        code_value = error_value.get("code")
-        message_value = error_value.get("message") or error_value.get("detail") or code_value
-        error = CodexResponseError(
-            message_value if isinstance(message_value, str) else "unknown error",
-            code_value if isinstance(code_value, str) else None,
-        )
-    elif isinstance(error_value, str):
-        error = CodexResponseError(error_value)
+    elif event_type == "response.failed":
+        response = event.get("response")
+        error_value = response.get("error") if isinstance(response, dict) else None
+        if isinstance(error_value, dict):
+            code_value = error_value.get("code")
+            message_value = error_value.get("message") or error_value.get("detail") or code_value
+            error = CodexResponseError(
+                message_value if isinstance(message_value, str) else "unknown error",
+                code_value if isinstance(code_value, str) else None,
+            )
+        elif isinstance(error_value, str):
+            error = CodexResponseError(error_value)
+        else:
+            error = CodexResponseError("response.failed event received")
     else:
-        error = CodexResponseError("response.failed event received")
+        return None
 
     if error.code == "token_invalidated":
         return CodexAuthenticationError(f"Codex authentication failed: {error.detail}")
     if _is_rate_limit_response(200, error):
         return CodexRateLimitError(f"Codex usage limit or rate limit reached: {error.detail}")
-    return RuntimeError(f"Codex stream failed: {error.detail}")
-
-
-def extract_output_text(payload: dict[str, Any]) -> str:
-    parts: list[str] = []
-    for item in payload.get("output") or []:
-        if not isinstance(item, dict):
-            continue
-        for content in item.get("content") or []:
-            if not isinstance(content, dict):
-                continue
-            if content.get("type") == "output_text":
-                text = content.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-    return "".join(parts).strip()
-
-
-def extract_tool_calls(payload: dict[str, Any]) -> list[CodexToolCall]:
-    tool_calls: list[CodexToolCall] = []
-    for item in payload.get("output") or []:
-        if isinstance(item, dict) and item.get("type") == "function_call":
-            tool_calls.append(_tool_call_from_item(item, str(item.get("arguments") or "")))
-    return tool_calls
-
-
-def _tool_call_from_item(item: dict[str, Any], arguments: str) -> CodexToolCall:
-    parsed_arguments: dict[str, Any] = {}
-    if arguments:
-        try:
-            loaded = json.loads(arguments)
-        except json.JSONDecodeError:
-            loaded = {}
-        if isinstance(loaded, dict):
-            parsed_arguments = loaded
-
-    call_id = item.get("call_id") or item.get("id") or ""
-    name = item.get("name") or ""
-    return CodexToolCall(
-        id=str(call_id),
-        name=str(name),
-        arguments=parsed_arguments,
+    return RuntimeError(
+        error.detail if event_type == "error" else f"Codex stream failed: {error.detail}"
     )
 
 
-def _citation_from_annotation(annotation: Any) -> CodexCitation | None:
-    if not isinstance(annotation, dict) or annotation.get("type") != "url_citation":
-        return None
-    title = annotation.get("title")
-    url = annotation.get("url")
-    if not isinstance(title, str) or not title.strip():
-        return None
-    if not isinstance(url, str) or not url.strip():
-        return None
-    start_index = annotation.get("start_index")
-    end_index = annotation.get("end_index")
-    return CodexCitation(
-        title=title.strip(),
-        url=url.strip(),
-        start_index=start_index if isinstance(start_index, int) else None,
-        end_index=end_index if isinstance(end_index, int) else None,
+def _tool_call_from_item(item: dict[str, Any]) -> CodexToolCall:
+    call_id = item.get("call_id")
+    name = item.get("name")
+    arguments = item.get("arguments")
+    try:
+        parsed = json.loads(arguments or "{}") if isinstance(arguments, str) else None
+    except json.JSONDecodeError:
+        parsed = None
+    # A device action must never run with guessed arguments.
+    if not (isinstance(call_id, str) and call_id and isinstance(name, str) and name
+            and isinstance(parsed, dict)):
+        raise RuntimeError("Codex response contained an incomplete tool call")
+    return CodexToolCall(id=call_id, name=name, arguments=parsed)
+
+
+# Codex CLI sends a session_id header and prompt_cache_key. A live probe saw prompt-prefix cache
+# hits only with the header; the key alone had no effect.
+_SESSION_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/itsreverence/ha-codex-assist")
+
+
+def codex_session_id(entry_id: str) -> str:
+    """Return a stable, opaque Codex session ID for one config entry."""
+    return str(uuid.uuid5(_SESSION_NAMESPACE, entry_id))
+
+
+def _log_usage(event: dict[str, Any]) -> None:
+    response = event.get("response")
+    usage = response.get("usage") if isinstance(response, dict) else None
+    if not isinstance(usage, dict):
+        return
+    input_details = usage.get("input_tokens_details")
+    output_details = usage.get("output_tokens_details")
+    LOGGER.debug(
+        "Codex usage: input=%s cached=%s output=%s reasoning=%s",
+        _token_count(usage, "input_tokens"),
+        _token_count(input_details, "cached_tokens"),
+        _token_count(usage, "output_tokens"),
+        _token_count(output_details, "reasoning_tokens"),
     )
 
 
-def _citations_from_event(event: dict[str, Any]) -> list[CodexCitation]:
-    annotations: list[Any] = []
-    if event.get("type") == "response.output_text.annotation.added":
-        annotations.append(event.get("annotation"))
+def _token_count(details: Any, key: str) -> int | None:
+    value = details.get(key) if isinstance(details, dict) else None
+    return value if type(value) is int and value >= 0 else None
 
-    item = event.get("item")
-    if isinstance(item, dict):
-        for content in item.get("content") or []:
-            if isinstance(content, dict):
-                annotations.extend(content.get("annotations") or [])
 
-    return [
-        citation
-        for annotation in annotations
-        if (citation := _citation_from_annotation(annotation)) is not None
-    ]
+async def _aiter_completed_response_events(response: Any) -> AsyncIterator[dict[str, Any]]:
+    async for event in _aiter_sse_events(response):
+        if stream_error := _stream_event_exception(event):
+            raise stream_error
+        completed = event.get("type") == "response.completed"
+        if completed:
+            _log_usage(event)
+        yield event
+        if completed:
+            return
+    raise RuntimeError("Codex stream ended before response.completed")
 
 
 async def _aiter_sse_events(response: Any) -> AsyncIterator[dict[str, Any]]:
@@ -824,40 +964,11 @@ def _parse_sse_payload(
     return payload if isinstance(payload, dict) else None
 
 
-def _stream_delta_from_event(event: dict[str, Any]) -> CodexStreamDelta | None:
-    event_type = event.get("type")
-    if stream_error := _stream_event_exception(event):
-        raise stream_error
-    if event_type == "response.output_text.delta":
-        delta = event.get("delta")
-        return CodexTextDelta(delta) if isinstance(delta, str) and delta else None
-    if event_type in {"response.function_call_arguments.done", "response.output_item.done"}:
-        item = event.get("item")
-        arguments = event.get("arguments")
-        if isinstance(item, dict) and item.get("type") == "function_call":
-            return CodexToolCallDelta(_tool_call_from_item(item, str(item.get("arguments") or "")))
-        if isinstance(arguments, str):
-            current_call = event.get("item") or event
-            if isinstance(current_call, dict) and (
-                current_call.get("call_id") or current_call.get("name")
-            ):
-                return CodexToolCallDelta(_tool_call_from_item(current_call, arguments))
-    return None
-
-
 async def _stream_response_error(response: Any) -> CodexResponseError:
     try:
         text = await response.aread()
     except Exception:
         text = b""
-    text_value = text.decode(errors="replace") if isinstance(text, bytes) else str(text or "")
-
-    class ResponseBody:
-        status_code = response.status_code
-        text = text_value
-
-        @staticmethod
-        def json() -> Any:
-            return json.loads(text_value)
-
-    return _response_error(ResponseBody())
+    return _response_error(
+        text.decode(errors="replace") if isinstance(text, bytes) else str(text or "")
+    )

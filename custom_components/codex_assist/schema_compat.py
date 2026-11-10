@@ -7,6 +7,10 @@ from homeassistant.helpers import llm
 try:
     to_openapi = llm.to_openapi
 except AttributeError:
-    to_openapi = llm.convert
+    try:
+        to_openapi = llm.convert
+    except AttributeError:
+        # HA 2026.10+ removed both helpers; core calls Probatio directly.
+        from probatio import to_openapi
 
 __all__ = ["to_openapi"]

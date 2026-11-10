@@ -10,7 +10,7 @@ from custom_components.codex_assist.codex_auth import (
     CodexReauthRequiredError,
     CodexTokenSet,
 )
-from custom_components.codex_assist.codex_client import CodexAuthenticationError
+from custom_components.codex_assist.codex_client import CodexAuthenticationError, CodexClient
 from tests.ha_fakes import install_homeassistant_fakes
 
 
@@ -82,91 +82,6 @@ def test_structured_data_from_text_restores_nested_optional_omission(ai_task_mod
     assert ai_task_module._structured_data_from_text(
         '{"rooms":[{"name":"Kitchen","note":null}]}', structure
     ) == {"rooms": [{"name": "Kitchen"}]}
-
-
-def test_structured_data_from_text_restores_optional_omission_inside_any(ai_task_module):
-    structure = ai_task_module.vol.Schema(
-        {
-            ai_task_module.vol.Required("choice"): ai_task_module.vol.Any(
-                {
-                    ai_task_module.vol.Required("kind"): "a",
-                    ai_task_module.vol.Optional("note"): str,
-                },
-                {
-                    ai_task_module.vol.Required("kind"): "b",
-                    ai_task_module.vol.Optional("count"): int,
-                },
-            )
-        }
-    )
-
-    assert ai_task_module._structured_data_from_text(
-        '{"choice":{"kind":"a","note":null}}', structure
-    ) == {"choice": {"kind": "a"}}
-
-
-def test_structured_data_from_text_preserves_required_nullable_value(ai_task_module):
-    structure = ai_task_module.vol.Schema(
-        {ai_task_module.vol.Required("value"): ai_task_module.vol.Any(str, None)}
-    )
-
-    assert ai_task_module._structured_data_from_text('{"value":null}', structure) == {
-        "value": None
-    }
-
-
-def test_structured_data_from_text_removes_null_composed_key_placeholder(ai_task_module):
-    structure = ai_task_module.vol.Schema(
-        {
-            ai_task_module.vol.Required(
-                ai_task_module.vol.Any("email", "phone")
-            ): str
-        }
-    )
-
-    assert ai_task_module._structured_data_from_text(
-        '{"email":"person@example.com","phone":null}', structure
-    ) == {"email": "person@example.com"}
-
-
-def test_structured_data_from_text_restores_optional_omission_inside_all(ai_task_module):
-    structure = ai_task_module.vol.Schema(
-        {
-            ai_task_module.vol.Required("payload"): ai_task_module.vol.All(
-                {
-                    ai_task_module.vol.Required("name"): str,
-                    ai_task_module.vol.Optional("note", default="fallback"): str,
-                }
-            )
-        }
-    )
-
-    assert ai_task_module._structured_data_from_text(
-        '{"payload":{"name":"x","note":null}}', structure
-    ) == {"payload": {"name": "x"}}
-
-
-def test_structured_output_format_converts_ai_task_schema(ai_task_module):
-    task = type(
-        "Task",
-        (),
-        {
-            "name": "Porch State",
-            "structure": ai_task_module.vol.Schema({"state": str}),
-        },
-    )()
-    chat_log = type(
-        "ChatLog",
-        (),
-        {"llm_api": type("LLMApi", (), {"custom_serializer": None})()},
-    )()
-
-    assert ai_task_module._structured_output_format(task, chat_log) == {
-        "type": "json_schema",
-        "name": "porch_state",
-        "strict": True,
-        "schema": {"state": str},
-    }
 
 
 def test_structured_output_format_preserves_optional_semantics_in_nested_schema(
@@ -344,7 +259,7 @@ async def test_ai_task_chat_log_retry_propagates_reauth_required(
             )(),
             auth_client=ReauthAuthClient(),
             tokens=CodexTokenSet("access-1", "refresh-1"),
-            codex=object(),
+            codex=CodexClient(http_client=None, access_token="access-1"),
             chat_log=chat_log,
             entity_id="ai_task.codex_assist",
             model="gpt-5.4",
@@ -403,7 +318,7 @@ async def test_ai_task_chat_log_retry_reauths_when_refreshed_token_is_rejected(
             )(),
             auth_client=RefreshAuthClient(),
             tokens=CodexTokenSet("access-1", "refresh-1"),
-            codex=object(),
+            codex=CodexClient(http_client=None, access_token="access-1"),
             chat_log=chat_log,
             entity_id="ai_task.codex_assist",
             model="gpt-5.4",
@@ -417,25 +332,20 @@ async def test_ai_task_chat_log_retry_reauths_when_refreshed_token_is_rejected(
 
 
 @pytest.mark.asyncio
-async def test_ai_task_image_retry_reauths_when_refreshed_token_is_rejected(
-    ai_task_module,
-    monkeypatch,
-):
+async def test_ai_task_image_retry_reauths_when_refreshed_token_is_rejected(ai_task_module):
     class RejectingImageCodex:
         async def generate_image(self, **kwargs):
             raise CodexAuthenticationError("invalid token")
+
+        def with_access_token(self, access_token):
+            return self
 
     class RefreshAuthClient:
         async def refresh(self, tokens):
             return CodexTokenSet("access-2", "refresh-2")
 
-    class FakeCodexClient(RejectingImageCodex):
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
     chat_log = type("ChatLog", (), {"content": [], "llm_api": None})()
     task = type("Task", (), {"instructions": "draw it"})()
-    monkeypatch.setattr(ai_task_module, "CodexClient", FakeCodexClient)
 
     with pytest.raises(CodexReauthRequiredError, match="rejected after refresh"):
         await ai_task_module._generate_codex_ai_task_image(

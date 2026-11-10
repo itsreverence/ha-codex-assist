@@ -63,11 +63,11 @@ async def test_every_rendered_subentry_field_and_outcome_is_translated(
     step = strings["step"][form["step_id"]]
     for key, value in form["data_schema"].schema.items():
         if hasattr(value, "options"):
-            section_strings = step["sections"][key.key]
+            section_strings = step["sections"][key.schema]
             assert section_strings["name"]
-            assert {field.key for field in value.schema.schema} <= set(section_strings["data"])
+            assert {field.schema for field in value.schema.schema} <= set(section_strings["data"])
         else:
-            assert step["data"][key.key]
+            assert step["data"][key.schema]
     assert "{model_status}" in step["description"]
     assert set(rejected["errors"].values()) | {"no_models"} <= set(strings["error"])
     assert {aborted["reason"], "reconfigure_successful"} <= set(strings["abort"])

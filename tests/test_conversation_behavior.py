@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
-import httpx
 import pytest
 
 from custom_components.codex_assist.codex_client import (
-    CodexCitation,
-    CodexCitationDelta,
+    CodexAuthenticationError,
     CodexResponseItemDelta,
     CodexStreamDelta,
     CodexTextDelta,
@@ -83,13 +85,39 @@ def conversation_module(monkeypatch):
     return importlib.reload(module)
 
 
-def test_request_failure_text_names_blank_transport_error(conversation_module):
-    assert conversation_module._request_failure_text(httpx.ReadTimeout("")) == (
-        "Codex Assist failed: ReadTimeout"
-    )
-    assert conversation_module._request_failure_text(RuntimeError("backend failed")) == (
-        "Codex Assist failed: backend failed"
-    )
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", [None, "", " \n"])
+async def test_silent_completed_stream_rejects_native_state(
+    conversation_module, text,
+):
+    async def stream():
+        if text is not None:
+            yield CodexTextDelta(text)
+        yield CodexResponseItemDelta({"type": "reasoning", "encrypted_content": "private"})
+
+    delivered = []
+    with pytest.raises(RuntimeError, match="^Codex returned no answer text$"):
+        async for item in conversation_module._codex_stream_to_assistant_deltas(
+            stream(),
+        ):
+            delivered.append(item)
+    assert not any("native" in item for item in delivered)
+
+
+@pytest.mark.asyncio
+async def test_failed_auth_attempt_discards_native_state_before_visible_output(conversation_module):
+    async def stream():
+        yield CodexResponseItemDelta({"type": "reasoning", "encrypted_content": "private"})
+        raise CodexAuthenticationError("Synthetic rejection")
+
+    delivered = []
+    with pytest.raises(CodexAuthenticationError) as raised:
+        async for item in conversation_module._codex_stream_to_assistant_deltas(
+            stream(),
+        ):
+            delivered.append(item)
+    assert raised.value.retry_allowed
+    assert delivered == []
 
 
 @pytest.mark.asyncio
@@ -211,96 +239,35 @@ def test_codex_tools_adds_opt_in_web_search_without_ha_tools(conversation_module
     ) == [{"type": "web_search"}]
 
 
-@pytest.mark.asyncio
-async def test_codex_stream_captures_citations_without_streaming_urls(conversation_module):
-    async def stream():
-        yield CodexTextDelta("IANA maintains the reserved domains.")
-        citation = CodexCitation(
-            title="IANA [Reserved] Domains",
-            url="https://www.iana.org/help/example-domains",
-            start_index=0,
-            end_index=4,
-        )
-        yield CodexCitationDelta(citation)
-        yield CodexCitationDelta(citation)
-        yield CodexCitationDelta(
-            CodexCitation(
-                title="Unsafe",
-                url="javascript:alert(1)",
-                start_index=0,
-                end_index=4,
-            )
-        )
+def test_codex_tools_pass_home_country_to_web_search(conversation_module):
+    chat_log = FakeChatLog()
+    chat_log.hass = type("Hass", (), {"config": type("Config", (), {"country": "US"})()})()
 
-    captured = []
-    deltas = [
-        delta
-        async for delta in conversation_module._codex_stream_to_assistant_deltas(
-            stream(),
-            citation_sink=captured,
-        )
+    assert conversation_module._codex_tools_from_chat_log(chat_log, enable_web_search=True) == [
+        {"type": "web_search", "user_location": {"type": "approximate", "country": "US"}}
     ]
-
-    assert deltas == [
-        {"role": "assistant"},
-        {"content": "IANA maintains the reserved domains."},
-    ]
-    assert captured == [
-        CodexCitation(
-            title="IANA \\[Reserved\\] Domains",
-            url="https://www.iana.org/help/example-domains",
-            start_index=0,
-            end_index=4,
-        )
-    ]
-
-
-def test_citation_result_keeps_sources_in_card_without_changing_speech(conversation_module):
-    class Response:
-        def __init__(self):
-            self.speech = {"plain": {"speech": "IANA maintains the reserved domains."}}
-            self.card = {}
-
-        def async_set_card(self, title, content):
-            self.card["simple"] = {"title": title, "content": content}
-
-    result = type("Result", (), {"response": Response()})()
-    citations = [
-        CodexCitation(
-            title="IANA",
-            url="https://www.iana.org/help/example-domains",
-            start_index=0,
-            end_index=4,
-        )
-    ]
-
-    conversation_module._attach_citations_card(result, citations)
-
-    assert result.response.speech["plain"]["speech"] == (
-        "IANA maintains the reserved domains."
-    )
-    assert result.response.card["simple"] == {
-        "title": "Sources",
-        "content": "- IANA — <https://www.iana.org/help/example-domains>",
-    }
 
 
 def test_web_search_instructions_suppress_spoken_source_urls(conversation_module):
     chat_log = FakeChatLog([FakeContent(role="system", content="Be concise.")])
 
-    assert (
-        conversation_module._instructions_for_turn(
-            chat_log, "fallback", web_search=False
-        )
-        == "Be concise."
+    without_search = conversation_module._instructions_for_turn(
+        chat_log, "fallback", web_search=False
     )
+    assert without_search.startswith("Be concise.\n\n")
+    assert "Keep error responses short" in without_search
+    assert "When clarification is required" in without_search
+    assert "do not include raw URLs" not in without_search
     instructions = conversation_module._instructions_for_turn(
         chat_log, "fallback", web_search=True
     )
 
     assert instructions.startswith("Be concise.\n\n")
     assert "do not include raw URLs" in instructions
-    assert "renders structured citations separately" in instructions
+    assert "markdown links" in instructions
+    assert "Source/Sources section" in instructions
+    assert "human-readable names only" in instructions
+    assert "renders structured citations separately" not in instructions
 
 
 @pytest.mark.asyncio
@@ -364,22 +331,88 @@ async def test_codex_input_from_chat_log_translates_image_attachments(
     assert content[0] == {"type": "input_text", "text": "describe this"}
     assert content[1]["type"] == "input_image"
     assert content[1]["image_url"].startswith("data:image/png;base64,")
-    assert hass.executor_jobs[0][0] is conversation_module._image_attachments_for_codex
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_path", "missing_file", "stat", "open", "read", "size"]
+)
+@pytest.mark.parametrize("with_valid_image", [False, True])
+def test_image_attachments_reject_unusable_image_without_private_paths(
+    conversation_module, monkeypatch, tmp_path, caplog, failure, with_valid_image
+):
+    marker = "synthetic-private-attachment"
+    path = tmp_path / f"{marker}.png"
+    path.write_bytes(b"123456")
+    monkeypatch.setattr(conversation_module, "MAX_IMAGE_ATTACHMENT_BYTES", 5)
+    attachment = SimpleNamespace(mime_type="image/png", path=path)
+    expected = "Codex Assist could not read an image attachment"
+    if failure == "missing_path":
+        attachment = SimpleNamespace(mime_type="image/png")
+    elif failure == "missing_file":
+        path.unlink()
+    elif failure in {"stat", "open", "read"}:
+        error = PermissionError(13, marker, str(path))
+        fake_path = MagicMock()
+        fake_path.stat.return_value.st_size = 3
+        if failure == "read":
+            fake_path.open.return_value.__enter__.return_value.read.side_effect = error
+        else:
+            getattr(fake_path, failure).side_effect = error
+        attachment.path = fake_path
+    else:
+        expected = "Codex Assist image attachment exceeds the 10 MiB per-file limit"
+
+    attachments = [attachment]
+    if with_valid_image:
+        valid_path = tmp_path / "valid.png"
+        valid_path.write_bytes(b"valid")
+        attachments.insert(0, SimpleNamespace(mime_type="image/png", path=valid_path))
+
+    with pytest.raises(ValueError) as caught:
+        try:
+            conversation_module._image_attachments_for_codex(attachments)
+        except ValueError:
+            logging.getLogger(__name__).exception("Attachment conversion failed")
+            raise
+
+    assert str(caught.value) == expected
+    assert marker not in "".join(traceback.format_exception(caught.value))
+    assert marker not in caplog.text
+    assert "Attachment conversion failed" in caplog.text
+
+
+def test_image_attachments_accept_exact_file_count_and_total_limits(
+    conversation_module, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(conversation_module, "MAX_IMAGE_ATTACHMENT_BYTES", 5)
+    monkeypatch.setattr(conversation_module, "MAX_TOTAL_IMAGE_ATTACHMENT_BYTES", 20)
+    path = tmp_path / "image.png"
+    path.write_bytes(b"12345")
+    attachment = SimpleNamespace(mime_type="image/png", path=path)
+
+    assert conversation_module._image_attachments_for_codex([attachment] * 4) == [
+        ("image/png", b"12345")
+    ] * 4
+
+
+@pytest.mark.parametrize("mime_type", ["text/plain", None, "", 123])
+def test_image_attachments_still_ignore_non_images(conversation_module, mime_type):
+    attachment = SimpleNamespace(mime_type=mime_type)
+
+    assert conversation_module._image_attachments_for_codex([attachment]) == []
 
 
 def test_image_attachments_rejects_too_many_images(
     conversation_module,
-    monkeypatch,
     tmp_path: Path,
 ):
-    monkeypatch.setattr(conversation_module, "MAX_IMAGE_ATTACHMENTS", 2)
     attachments = []
-    for index in range(3):
+    for index in range(5):
         path = tmp_path / f"image-{index}.png"
         path.write_bytes(b"image")
         attachments.append(type("Attachment", (), {"mime_type": "image/png", "path": path})())
 
-    with pytest.raises(ValueError, match="at most 2 image attachments"):
+    with pytest.raises(ValueError, match="at most 4 image attachments"):
         conversation_module._image_attachments_for_codex(attachments)
 
 
@@ -485,7 +518,9 @@ def test_trim_codex_input_items_drops_orphaned_tool_outputs(conversation_module)
 def test_trim_codex_input_items_leaves_short_history_unchanged(conversation_module):
     input_items = [{"role": "user", "content": "hello"}]
 
-    assert conversation_module._trim_codex_input_items(input_items, max_items=24) is input_items
+    assert conversation_module._trim_codex_input_items(input_items, max_items=24) == [
+        {"role": "user", "content": "hello"}
+    ]
 
 
 def test_trim_codex_input_items_keeps_complete_turn_at_retained_boundary(
@@ -589,6 +624,50 @@ async def test_codex_input_replays_owned_native_items_without_reconstruction(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("search_count", [4, 8])
+async def test_search_native_history_keeps_complete_pairs_at_24_item_trim(
+    conversation_module, search_count,
+):
+    """Trim whole user turns, never amputate reasoning or search call/output pairs."""
+    def search_history(prefix, count):
+        items = []
+        for index in range(count):
+            call_id = f"{prefix}-{index}"
+            items.extend([
+                {"type": "reasoning", "encrypted_content": f"reasoning-{call_id}"},
+                {
+                    "type": "function_call", "name": "web_search", "call_id": call_id,
+                    "arguments": '{"queries":["synthetic"]}',
+                },
+                {
+                    "type": "function_call_output", "call_id": call_id,
+                    "output": f"Fact {call_id} https://example.com/{call_id}",
+                },
+            ])
+        items.append({"type": "message", "role": "assistant", "content": []})
+        return items
+
+    old_native = search_history("old", 4)
+    newest_native = search_history("new", search_count)
+    chat_log = FakeChatLog([
+        FakeContent(role="user", content="old request"),
+        FakeContent(role="assistant", native=CodexNativeState(old_native)),
+        FakeContent(role="user", content="new request"),
+        FakeContent(role="assistant", native=CodexNativeState(newest_native)),
+    ])
+    if search_count == 8:
+        with pytest.raises(ValueError, match="contains 26 items; maximum is 24"):
+            await conversation_module._codex_input_from_chat_log(object(), chat_log)
+        return
+    replay = await conversation_module._codex_input_from_chat_log(object(), chat_log)
+    assert replay == [{"role": "user", "content": "new request"}, *newest_native]
+    assert len(replay) <= 24
+    assert [item["call_id"] for item in replay if item.get("type") == "function_call"] == [
+        item["call_id"] for item in replay if item.get("type") == "function_call_output"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_codex_input_ignores_unowned_native_state(conversation_module):
     content = FakeContent(
         role="assistant",
@@ -679,33 +758,6 @@ async def test_five_tool_rounds_force_one_tools_disabled_final_synthesis(convers
         (5, True),
         (6, False),
     ]
-
-
-@pytest.mark.asyncio
-async def test_tools_disabled_synthesis_fails_on_an_unexpected_tool_call(conversation_module):
-    chat_log = FakeChatLog()
-    codex = FakeCodex(
-        [
-            CodexToolCallDelta(
-                CodexToolCall(id="call-1", name="HassTurnOn", arguments={})
-            )
-        ]
-    )
-
-    with pytest.raises(RuntimeError, match="tools are disabled"):
-        await conversation_module._stream_codex_turn_into_chat_log(
-            chat_log=chat_log,
-            codex=codex,
-            entity_id="conversation.codex_assist",
-            model="gpt-5.4",
-            instructions="Give the final answer.",
-            input_items=[],
-            tools=[],
-            reasoning_effort="low",
-            reasoning_summary="auto",
-            text_verbosity="medium",
-            allow_tools=False,
-        )
 
 
 @pytest.mark.asyncio
@@ -814,3 +866,69 @@ async def test_native_transcript_survives_tool_round_and_final_synthesis(
         *final_items,
         {"role": "user", "content": "What happened?"},
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delta,visible", [
+    (None, False),
+    (CodexTextDelta("Partial answer"), True),
+    (CodexToolCallDelta(CodexToolCall("call-1", "HassTestReading", {})), True),
+    (CodexResponseItemDelta({"type": "reasoning"}), False),
+])
+async def test_auth_replay_is_disabled_after_visible_deltas(conversation_module, delta, visible):
+    async def stream():
+        if delta is not None:
+            yield delta
+        raise CodexAuthenticationError("Synthetic auth rejection")
+
+    with pytest.raises(CodexAuthenticationError) as caught:
+        async for _ in conversation_module._codex_stream_to_assistant_deltas(stream()):
+            pass
+    assert getattr(caught.value, "retry_allowed", True) is (not visible)
+
+
+@pytest.mark.parametrize("retained", [False, True])
+async def test_history_reads_invalid_images_only_in_retained_turns(
+    conversation_module, tmp_path, retained
+):
+    image = SimpleNamespace(mime_type="image/png", path=tmp_path / "missing.png")
+    old = FakeContent(role="user", content="Old turn", attachments=[image])
+    recent = [FakeContent(role="user", content=f"Recent {i}") for i in range(24)]
+    log = FakeChatLog([old] if retained else [old, *recent])
+    hass = FakeHass()
+
+    if retained:
+        with pytest.raises(ValueError, match="could not read an image attachment"):
+            await conversation_module._codex_input_from_chat_log(hass, log)
+        assert len(hass.executor_jobs) == 1
+    else:
+        assert await conversation_module._codex_input_from_chat_log(hass, log) == [
+            {"role": "user", "content": f"Recent {i}"} for i in range(24)
+        ]
+        assert hass.executor_jobs == []
+
+
+async def test_history_materializes_only_retained_images(conversation_module, tmp_path):
+    path = tmp_path / "image.png"
+    path.write_bytes(b"image")
+    image = SimpleNamespace(mime_type="image/png", path=path)
+    log = FakeChatLog([
+        FakeContent(role="user", content=f"Turn {i}", attachments=[image])
+        for i in range(30)
+    ])
+    hass = FakeHass()
+
+    result = await conversation_module._codex_input_from_chat_log(hass, log)
+
+    assert result == [
+        {"role": "user", "content": [
+            {"type": "input_text", "text": f"Turn {i}"},
+            {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,aW1hZ2U=",
+                "detail": "auto",
+            },
+        ]}
+        for i in range(6, 30)
+    ]
+    assert len(hass.executor_jobs) == 24

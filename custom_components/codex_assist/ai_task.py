@@ -26,6 +26,7 @@ from .codex_client import (
     CodexClient,
     CodexImageResult,
     CodexRateLimitError,
+    codex_session_id,
 )
 from .codex_image import DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE, image_size_dimensions
 from .codex_runtime import runtime_token_coordinator
@@ -132,7 +133,11 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity, CodexAssistSubentryEntity):
                 request_failure_text("Codex Assist AI Task failed", err)
             ) from err
 
-        codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
+        codex = CodexClient(
+            http_client=http_client,
+            access_token=tokens.access_token,
+            session_id=codex_session_id(self.entry.entry_id),
+        )
         try:
             text_format = _structured_output_format(task, chat_log)
             await _run_codex_ai_task_chat_log(
@@ -216,7 +221,11 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity, CodexAssistSubentryEntity):
                 request_failure_text("Codex Assist image generation failed", err)
             ) from err
 
-        codex = CodexClient(http_client=http_client, access_token=tokens.access_token)
+        codex = CodexClient(
+            http_client=http_client,
+            access_token=tokens.access_token,
+            session_id=codex_session_id(self.entry.entry_id),
+        )
         try:
             result = await _generate_codex_ai_task_image(
                 hass=self.hass,
@@ -317,6 +326,8 @@ async def _run_codex_ai_task_chat_log(
                 allow_tools=allow_tools,
             )
         except CodexAuthenticationError as err:
+            if not err.retry_allowed:
+                raise
             LOGGER.warning(
                 "Codex Assist AI Task access token was rejected; refreshing and retrying once: %s",
                 err,
@@ -325,10 +336,7 @@ async def _run_codex_ai_task_chat_log(
                 tokens = await _refresh_runtime_tokens(hass, entry, auth_client, tokens)
             except CodexReauthRequiredError:
                 raise
-            codex = CodexClient(
-                http_client=get_async_client(hass),
-                access_token=tokens.access_token,
-            )
+            codex = codex.with_access_token(tokens.access_token)
             try:
                 await _stream_codex_turn_into_chat_log(
                     chat_log=chat_log,
@@ -394,10 +402,7 @@ async def _generate_codex_ai_task_image(
             err,
         )
         tokens = await _refresh_runtime_tokens(hass, entry, auth_client, tokens)
-        codex = CodexClient(
-            http_client=get_async_client(hass),
-            access_token=tokens.access_token,
-        )
+        codex = codex.with_access_token(tokens.access_token)
         try:
             return await codex.generate_image(
                 prompt=task.instructions,
@@ -548,7 +553,7 @@ def _remove_optional_null_values(data: Any, structure: Any) -> Any:
 
     normalized = dict(data)
     for key, value_schema in schema.items():
-        key_name = getattr(key, "schema", getattr(key, "key", key))
+        key_name = getattr(key, "schema", key)
         if isinstance(key_name, vol.Any):
             for candidate_key in key_name.validators:
                 try:

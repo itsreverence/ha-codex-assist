@@ -4,6 +4,9 @@ import importlib.util
 import json
 from pathlib import Path
 
+import httpx
+import pytest
+
 
 def _probe_module():
     path = Path(__file__).parents[1] / "scripts" / "probe_web_search_contract.py"
@@ -34,47 +37,7 @@ def test_probe_payload_is_fixed_and_data_minimized() -> None:
     assert all("entity_id" not in item for item in payload["input"])
 
 
-def test_event_summary_preserves_shape_without_text_queries_urls_or_ids() -> None:
-    module = _probe_module()
-    event = {
-        "type": "response.output_item.done",
-        "item_id": "private-item-id",
-        "item": {
-            "type": "web_search_call",
-            "status": "completed",
-            "id": "private-call-id",
-            "action": {
-                "type": "search",
-                "query": "private search query",
-                "sources": [{"type": "url", "url": "https://example.invalid/private"}],
-            },
-        },
-        "delta": "private response text",
-        "annotation": {
-            "type": "url_citation",
-            "url": "https://example.invalid/private",
-            "title": "Private title",
-            "start_index": 0,
-            "end_index": 4,
-        },
-    }
-
-    summary = module.summarize_event(event)
-    rendered = json.dumps(summary)
-
-    assert summary["type"] == "response.output_item.done"
-    assert summary["item"]["type"] == "web_search_call"
-    assert summary["item"]["action"]["type"] == "search"
-    assert summary["annotation"]["type"] == "url_citation"
-    assert summary["delta_length"] == len("private response text")
-    assert "private" not in rendered
-    assert "example.invalid" not in rendered
-    assert "private-item-id" not in rendered
-
-
 def test_probe_requires_explicit_model(monkeypatch, capsys) -> None:
-    import pytest
-
     module = _probe_module()
     monkeypatch.setattr("sys.argv", ["probe", "--dry-run"])
     with pytest.raises(SystemExit) as exc:
@@ -88,3 +51,76 @@ def test_probe_dry_run_uses_selected_model(monkeypatch, capsys) -> None:
     monkeypatch.setattr("sys.argv", ["probe", "--dry-run", "--model", "account-model"])
     assert module.main() == 0
     assert json.loads(capsys.readouterr().out)["model"] == "account-model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("events", [
+    [{"type": "response.failed", "response": {
+        "error": {"code": "server_error", "message": "private-backend-detail"},
+    }}],
+    [{"type": "response.output_text.delta", "delta": "private-answer"}],
+    [{"type": "response.completed", "response": {"status": "completed"}}],
+    [{"type": "response.incomplete", "response": {
+        "incomplete_details": {"reason": "private-detail"},
+    }}],
+    [{"type": "error", "message": "private-detail"}],
+    [
+        {"type": "response.output_item.done", "item": {
+            "type": "web_search_call", "status": "completed",
+        }},
+        {"type": "response.output_text.delta", "delta": "private-answer"},
+        {"type": "response.failed"},
+    ],
+    [{"type": "response.completed", "response": {"output": [
+        {"type": "web_search_call", "status": "in_progress"},
+        {"type": "message", "content": [
+            {"type": "output_text", "text": "private-answer"},
+        ]},
+    ]}}],
+    [{"type": "response.completed", "response": {"output": [
+        {"type": "web_search_call", "status": "completed"},
+    ]}}],
+    [{"type": "response.completed", "response": {"output": [
+        {"type": "web_search_call", "status": "completed"},
+        {"type": "web_search_call", "status": "failed"},
+        {"type": "message", "content": [
+            {"type": "output_text", "text": "private-answer"},
+        ]},
+    ]}}],
+])
+async def test_probe_rejects_failed_truncated_or_searchless_responses(
+    events, monkeypatch, capsys,
+) -> None:
+    module = _probe_module()
+    stream = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=stream))
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kw: client_type(
+        transport=transport, **kw,
+    ))
+
+    assert await module.run_probe(model="gpt-test", access_token="private-token") == 1
+    assert "private" not in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_probe_accepts_completed_search_and_answer(monkeypatch, capsys) -> None:
+    module = _probe_module()
+    event = {"type": "response.completed", "response": {"status": "completed", "output": [
+        {"type": "web_search_call", "status": "completed", "id": "private-id"},
+        {"type": "message", "content": [
+            {"type": "output_text", "text": "private-answer"},
+        ]},
+    ]}}
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, text=f"data: {json.dumps(event)}\n\n",
+    ))
+    client_type = httpx.AsyncClient
+    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kw: client_type(
+        transport=transport, **kw,
+    ))
+
+    assert await module.run_probe(model="gpt-test", access_token="private-token") == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "result": "completed", "searched": True, "answered": True,
+    }

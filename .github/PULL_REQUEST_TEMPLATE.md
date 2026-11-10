@@ -8,6 +8,7 @@
 
 - [ ] `uv run ruff check .`
 - [ ] `uv run pytest -q`
+- [ ] Home Assistant contract environments in `docs/TESTING.md` when behavior or dependency support changed
 - [ ] Documentation updated when behavior, setup, compatibility, or safety changed
 - [ ] No tokens, device codes, cookies, secrets, private URLs, or unredacted logs/screenshots included
 

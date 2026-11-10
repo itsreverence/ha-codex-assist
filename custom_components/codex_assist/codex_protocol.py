@@ -33,7 +33,7 @@ class _TraceRedactedItems:
 
 @dataclass(frozen=True, repr=False, init=False)
 class CodexNativeState:
-    """Provider output items captured from one Codex Responses round."""
+    """Completed provider items and client function outputs from one invocation."""
 
     _items: _TraceRedactedItems
 

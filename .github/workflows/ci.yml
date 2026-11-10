@@ -22,12 +22,12 @@ jobs:
 
       - name: Install uv
         # setup-uv v8+ no longer publishes major tags (@v8); pin a full immutable tag.
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
 
@@ -36,6 +36,9 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -q
+
+      - name: Check that tests catch recorded mutations
+        run: uv run python scripts/check_mutations.py --suite fast
 
       - name: Run Ruff
         run: uv run ruff check .
@@ -48,15 +51,42 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
 
       - name: Install Home Assistant test environment
-        run: pip install -r requirements_test_ha.txt
+        run: pip install -r requirements_test_ha_202609.txt
 
       - name: Run smoke tests against real Home Assistant
         run: python -m pytest tests_ha -q
+
+  ha-current:
+    name: Home Assistant 2026.10 stable contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Install current Home Assistant test environment
+        run: |
+          uv venv --python 3.14 .venv-ha
+          uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt \
+            --override requirements_test_ha_overrides.txt
+
+      - name: Verify current Home Assistant
+        run: .venv-ha/bin/python -m pytest tests_ha -q
+
+      - name: Check that tests catch recorded AI Task mutations
+        run: .venv-ha/bin/python scripts/check_mutations.py --suite ha
 
   ha-minimum:
     name: Home Assistant 2026.6 contract tests
@@ -66,7 +96,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
 
@@ -90,7 +120,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
 
@@ -114,7 +144,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Run hassfest
-        uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # master
+        uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361 # master
 
   hacs:
     name: HACS validation

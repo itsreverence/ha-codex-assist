@@ -5,6 +5,13 @@ import types
 from dataclasses import dataclass
 
 
+class FakeConfigEntry(types.SimpleNamespace):
+    """Identity-hashed like ``ConfigEntry``, so it can key per-entry state."""
+
+    __eq__ = object.__eq__
+    __hash__ = object.__hash__
+
+
 def install_homeassistant_fakes(monkeypatch):
     """Install minimal Home Assistant modules needed for behavior-unit tests."""
 
@@ -22,6 +29,7 @@ def install_homeassistant_fakes(monkeypatch):
     entity = types.ModuleType("homeassistant.helpers.entity")
     entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
     httpx_client = types.ModuleType("homeassistant.helpers.httpx_client")
+    helpers_json = types.ModuleType("homeassistant.helpers.json")
     intent = types.ModuleType("homeassistant.helpers.intent")
     llm = types.ModuleType("homeassistant.helpers.llm")
     selector = types.ModuleType("homeassistant.helpers.selector")
@@ -167,6 +175,8 @@ def install_homeassistant_fakes(monkeypatch):
             return self.schema(value)
 
     class Schema:
+        """Does not validate or apply defaults. Real-library semantics belong in tests_ha."""
+
         def __init__(self, schema):
             self.schema = schema
 
@@ -178,16 +188,16 @@ def install_homeassistant_fakes(monkeypatch):
 
     class Optional:
         def __init__(self, key, default=None):
-            self.key = key
+            self.schema = key
             self.default = default
 
         def __hash__(self):
-            return hash((self.key, self.default))
+            return hash((self.schema, self.default))
 
         def __eq__(self, other):
             return (
                 isinstance(other, Optional)
-                and self.key == other.key
+                and self.schema == other.schema
                 and self.default == other.default
             )
 
@@ -195,14 +205,10 @@ def install_homeassistant_fakes(monkeypatch):
         pass
 
     class Any:
-        def __init__(self, *validators):
-            self.validators = validators
+        """isinstance target only. Composed validators are tested in tests_ha."""
 
-        def __call__(self, value):
-            return value
-
-    class All(Any):
-        pass
+    class All:
+        """isinstance target only. Composed validators are tested in tests_ha."""
 
     config_entries.ConfigFlow = ConfigFlow
     config_entries.ConfigEntry = ConfigEntry
@@ -255,6 +261,8 @@ def install_homeassistant_fakes(monkeypatch):
     selector.TextSelector = TextSelector
     selector.TextSelectorConfig = TextSelectorConfig
     util_json.json_loads = __import__("json").loads
+    # HA-specific values are covered with the real serializer in tests_ha/.
+    helpers_json.json_dumps = __import__("json").dumps
     util.slugify = lambda value: value.lower().replace(" ", "_")
     voluptuous_openapi.convert = lambda schema, custom_serializer=None: getattr(
         schema, "schema", schema
@@ -276,6 +284,7 @@ def install_homeassistant_fakes(monkeypatch):
     helpers.entity = entity
     helpers.entity_platform = entity_platform
     helpers.httpx_client = httpx_client
+    helpers.json = helpers_json
     helpers.intent = intent
     helpers.llm = llm
     helpers.selector = selector
@@ -296,6 +305,7 @@ def install_homeassistant_fakes(monkeypatch):
         "homeassistant.helpers.entity": entity,
         "homeassistant.helpers.entity_platform": entity_platform,
         "homeassistant.helpers.httpx_client": httpx_client,
+        "homeassistant.helpers.json": helpers_json,
         "homeassistant.helpers.intent": intent,
         "homeassistant.helpers.llm": llm,
         "homeassistant.helpers.selector": selector,

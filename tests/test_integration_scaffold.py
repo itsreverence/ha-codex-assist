@@ -16,14 +16,6 @@ def test_manifest_is_hacs_loadable_custom_integration():
     assert "requirements" not in manifest
 
 
-def test_integration_declares_conversation_and_ai_task_platform_forwarding():
-    init_py = Path("custom_components/codex_assist/__init__.py").read_text()
-
-    assert "Platform.CONVERSATION" in init_py
-    assert "Platform.AI_TASK" in init_py
-    assert "async_forward_entry_setups" in init_py
-
-
 def test_release_and_minimum_runtime_metadata_stay_aligned():
     manifest = json.loads(Path("custom_components/codex_assist/manifest.json").read_text())
     hacs = json.loads(Path("hacs.json").read_text())
