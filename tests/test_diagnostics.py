@@ -39,15 +39,23 @@ async def test_diagnostics_redacts_tokens_and_prompts_but_keeps_settings(monkeyp
             "reasoning_effort": "low",
             "web_search": False,
         },
-        subentries={},
+        subentries={
+            "agent": types.SimpleNamespace(
+                subentry_type="conversation",
+                title="Kitchen agent",
+                data={"model": "gpt-5.4", "prompt": "Synthetic agent prompt marker."},
+            ),
+        },
     )
     original_data = deepcopy(entry.data)
+    original_agent = deepcopy(entry.subentries["agent"].data)
     original_options = deepcopy(entry.options)
 
     diagnostics = await module.async_get_config_entry_diagnostics(object(), entry)
 
     assert entry.data == original_data
     assert entry.options == original_options
+    assert entry.subentries["agent"].data == original_agent
     assert diagnostics == {
         "entry": {
             "data": {
@@ -64,12 +72,19 @@ async def test_diagnostics_redacts_tokens_and_prompts_but_keeps_settings(monkeyp
                 "web_search": False,
             },
         },
-        "subentries": [],
+        "subentries": [
+            {
+                "subentry_type": "conversation",
+                "title": "Kitchen agent",
+                "data": {"model": "gpt-5.4", "prompt": "**REDACTED**"},
+            }
+        ],
     }
     serialized = json.dumps(diagnostics)
     for original in (original_data, original_options):
         for key in ("access_token", "refresh_token", "prompt"):
             assert original[key] not in serialized
+    assert original_agent["prompt"] not in serialized
 
 
 async def test_diagnostics_never_contains_raw_token_values(monkeypatch):

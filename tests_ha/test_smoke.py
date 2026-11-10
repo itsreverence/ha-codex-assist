@@ -468,7 +468,9 @@ async def test_web_search_enabled_handoff_delivers_final_speech_without_source_c
 
 
 async def test_diagnostics_redact_tokens_on_real_entry(hass: HomeAssistant) -> None:
-    entry = await _setup_entry(hass)
+    entry = await _setup_entry(
+        hass, codex_entry(CREDENTIALS, conversation={"prompt": "Synthetic agent prompt marker"})
+    )
     data = {**entry.data, "prompt": "Synthetic stored prompt marker"}
     options = {"prompt": "Synthetic options prompt marker", "web_search": False}
     hass.config_entries.async_update_entry(entry, data=data, options=options)
@@ -483,13 +485,18 @@ async def test_diagnostics_redact_tokens_on_real_entry(hass: HomeAssistant) -> N
     assert diagnostics["entry"]["options"] == {"prompt": REDACTED, "web_search": False}
     assert entry.data == data
     assert entry.options == options
-    assert {(s["subentry_type"], s["data"]["model"]) for s in diagnostics["subentries"]} == {
-        ("conversation", "gpt-5.4"),
-        ("ai_task_data", "gpt-5.4"),
+    assert {
+        (s["subentry_type"], s["data"]["model"], s["data"].get("prompt"))
+        for s in diagnostics["subentries"]
+    } == {
+        ("conversation", "gpt-5.4", REDACTED),
+        ("ai_task_data", "gpt-5.4", None),
     }
+    assert subentry_of(entry, "conversation").data["prompt"] == "Synthetic agent prompt marker"
     assert "test-access-token" not in str(diagnostics)
     assert "Synthetic stored prompt marker" not in str(diagnostics)
     assert "Synthetic options prompt marker" not in str(diagnostics)
+    assert "Synthetic agent prompt marker" not in str(diagnostics)
 
 
 async def test_reconfigure_conversation_agent_uses_real_subentry_contract(
