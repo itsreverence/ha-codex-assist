@@ -886,9 +886,9 @@ def _tool_call_from_item(item: dict[str, Any]) -> CodexToolCall:
 _SESSION_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/itsreverence/ha-codex-assist")
 
 
-def codex_session_id(entry_id: str) -> str:
-    """Return a stable, opaque Codex session ID for one config entry."""
-    return str(uuid.uuid5(_SESSION_NAMESPACE, entry_id))
+def codex_session_id(subentry_id: str) -> str:
+    """Return a stable, opaque Codex session ID for one agent's config subentry."""
+    return str(uuid.uuid5(_SESSION_NAMESPACE, subentry_id))
 
 
 def _log_usage(event: dict[str, Any]) -> None:

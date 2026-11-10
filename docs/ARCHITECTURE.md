@@ -228,11 +228,15 @@ use Home Assistant's serializer for values such as states and timestamps.
 ## Prompt caching and usage
 
 Like Codex CLI, every Responses request carries a `session_id` header and a
-matching `prompt_cache_key`. The value is a UUID derived from the config entry
-ID, so it stays the same across conversations, AI Tasks, auth retries, and
-restarts, and it does not reveal the entry ID. A live probe found that the
-backend reused the cached prompt prefix (system prompt, exposed-entity context,
-and tool definitions) only when the header was present. With it, about 97% of
+matching `prompt_cache_key`. The value is a UUID derived from the agent's config
+subentry ID, so each conversation agent and the AI Task entity has its own
+session. It stays the same across that agent's conversations, auth retries,
+reloads, and restarts, and it does not reveal the subentry ID. Agents differ in
+prompt, model, or tools, so a shared session would mix prefixes that cannot reuse
+each other's cache. Releases before subentries derived the value from the entry
+ID, so the first request after upgrading starts with a cold cache. A live probe
+found that the backend reused the cached prompt prefix (system prompt,
+exposed-entity context, and tool definitions) only when the header was present. With it, about 97% of
 a 6,300-token Assist prompt came from the cache, including on the first turn of
 a new conversation and after a 10-minute gap. The backend's caching rules are
 not a public contract and may change.

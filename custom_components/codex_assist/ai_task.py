@@ -136,7 +136,7 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity, CodexAssistSubentryEntity):
         codex = CodexClient(
             http_client=http_client,
             access_token=tokens.access_token,
-            session_id=codex_session_id(self.entry.entry_id),
+            session_id=codex_session_id(self.subentry.subentry_id),
         )
         try:
             text_format = _structured_output_format(task, chat_log)
@@ -224,7 +224,7 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity, CodexAssistSubentryEntity):
         codex = CodexClient(
             http_client=http_client,
             access_token=tokens.access_token,
-            session_id=codex_session_id(self.entry.entry_id),
+            session_id=codex_session_id(self.subentry.subentry_id),
         )
         try:
             result = await _generate_codex_ai_task_image(

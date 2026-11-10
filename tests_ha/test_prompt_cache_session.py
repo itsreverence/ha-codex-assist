@@ -1,9 +1,12 @@
 import base64
 import json
+from types import MappingProxyType
 
 import httpx
 import pytest
+from codex_entries import subentry_of
 from homeassistant.components import ai_task, conversation
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import Context
 from test_ai_task_delivery import PNG_BYTES
 from test_ai_task_delivery import task_entry as task_entry
@@ -68,22 +71,51 @@ async def _run(hass, surface):
         assert result["mime_type"] == "image/png"
 
 
-async def test_every_surface_and_conversation_shares_the_entry_session(
-    hass, task_entry, session_backend,
-):
+def _session(entry, subentry_type):
+    return codex_session_id(subentry_of(entry, subentry_type).subentry_id)
+
+
+async def test_each_agent_keeps_its_own_session(hass, task_entry, session_backend):
     _fail_first, sessions = session_backend
     for surface in ("conversation", "conversation", "data", "image"):
         await _run(hass, surface)
 
-    expected = codex_session_id(task_entry.entry_id)
-    assert sessions == [(expected, expected)] * 4
+    conversation_session = _session(task_entry, "conversation")
+    task_session = _session(task_entry, "ai_task_data")
+    assert conversation_session != task_session
+    assert sessions == (
+        [(conversation_session, conversation_session)] * 2 + [(task_session, task_session)] * 2
+    )
+
+
+async def test_added_agent_gets_a_separate_session_and_the_first_keeps_its_own(
+    hass, task_entry, session_backend,
+):
+    _fail_first, sessions = session_backend
+    first_session = _session(task_entry, "conversation")
+    hass.config_entries.async_add_subentry(task_entry, ConfigSubentry(
+        data=MappingProxyType({"model": "gpt-5.4", "prompt": "Answer as a second agent."}),
+        subentry_type="conversation", title="Second agent", unique_id=None,
+    ))
+    await hass.async_block_till_done()
+    second = next(s for s in task_entry.subentries.values() if s.title == "Second agent")
+
+    await _run(hass, "conversation")
+    result = await conversation.async_converse(
+        hass, "Say done.", None, Context(), agent_id="conversation.second_agent",
+    )
+    assert result.response.speech["plain"]["speech"] == "Done."
+
+    second_session = codex_session_id(second.subentry_id)
+    assert second_session != first_session
+    assert sessions == [(first_session, first_session), (second_session, second_session)]
 
 
 @pytest.mark.parametrize("surface", ["conversation", "data", "image"])
-async def test_auth_retry_keeps_the_entry_session(hass, task_entry, session_backend, surface):
+async def test_auth_retry_keeps_the_agent_session(hass, task_entry, session_backend, surface):
     fail_first, sessions = session_backend
     fail_first.append(True)
     await _run(hass, surface)
 
-    expected = codex_session_id(task_entry.entry_id)
+    expected = _session(task_entry, "conversation" if surface == "conversation" else "ai_task_data")
     assert sessions == [(expected, expected)] * 2
