@@ -22,7 +22,13 @@ uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt
 
 `tests_ha/test_single_entry.py` verifies duplicate setup stops before authentication
 and existing entries can complete reauthentication and reconfiguration. It checks
-the reload request; the reload implementation is stubbed in these flow tests.
+that new credentials replace the old ones, agent settings stay unchanged, and the
+loaded entry is neither reloaded nor unloaded.
+
+The real-HA suite builds version 2 entries through `tests_ha/codex_entries.py`.
+Tests that change an agent's settings use `update_settings`, which edits the
+subentry and waits for the reload that applies it. Only the migration tests in
+`tests_ha/test_smoke.py` build version 1 entries.
 
 ### Home Assistant version selection
 
@@ -296,7 +302,7 @@ After restarting Home Assistant:
 
 `tests_ha/test_clarification_followups.py` calls public HA Conversation and AI Task
 APIs with scripted HTTPX responses. Outbound-request assertions check that
-clarification guidance accompanies default, custom, options, template, and extra
+clarification guidance accompanies default, custom, template, and extra
 prompts without mutating stored prompts or accumulating across turns. They also
 check search guidance, auth retries, native tool handoffs, and AI Task exclusion.
 
@@ -356,9 +362,9 @@ finish after an exchange failure.
 
 `tests_ha/test_auth_recovery.py` drives HA's flow manager through setup, reauth,
 and reconfigure failures, then resumes each flow. It also calls public Conversation
-and AI Task APIs through temporary refresh failure and recovery, and opens options
-with cached models after a failed refresh. External HTTP is stubbed; the options
-cache uses an injected clock to advance its cooldown. Run this file in both HA
+and AI Task APIs through temporary refresh failure and recovery, and opens a
+conversation agent's settings with cached models after a failed refresh. External
+HTTP is stubbed; the model cache uses an injected clock to advance its cooldown. Run this file in both HA
 contract environments. These tests do not establish live sign-in or backend
 availability.
 

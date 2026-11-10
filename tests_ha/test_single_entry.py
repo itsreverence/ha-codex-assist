@@ -2,8 +2,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from codex_entries import codex_entry
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.setup import async_setup_component
 
 from custom_components.codex_assist import DOMAIN
 from custom_components.codex_assist.codex_auth import (
@@ -33,13 +35,15 @@ def auth(monkeypatch):
 
 
 @pytest.fixture
-def entry(hass):
-    entry = MockConfigEntry(
-        domain=DOMAIN, unique_id=DOMAIN, title="Codex Assist",
-        data={"access_token": "old-access", "refresh_token": "old-refresh", "model": "saved-model"},
-        options={"web_search": True},
+async def entry(hass):
+    assert await async_setup_component(hass, "homeassistant", {})
+    entry = codex_entry(
+        {"access_token": "old-access", "refresh_token": "old-refresh"},
+        conversation={"model": "saved-model", "web_search": True},
     )
     entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
     return entry
 
 
@@ -57,6 +61,9 @@ async def test_duplicate_setup_aborts_before_sign_in(hass, entry, auth):
 async def test_existing_entry_can_reconnect(hass, entry, auth, monkeypatch, source):
     reload_entry = AsyncMock(return_value=True)
     monkeypatch.setattr(hass.config_entries, "async_reload", reload_entry)
+    unloads = []
+    entry.async_on_unload(lambda: unloads.append(entry.entry_id))
+    agents = {key: dict(value.data) for key, value in entry.subentries.items()}
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": source, "entry_id": entry.entry_id},
         data=entry.data if source == "reauth" else None,
@@ -69,8 +76,9 @@ async def test_existing_entry_can_reconnect(hass, entry, auth, monkeypatch, sour
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == f"{source}_successful"
     assert hass.config_entries.async_entries(DOMAIN) == [entry]
-    assert dict(entry.data) == {
-        "access_token": "new-access", "refresh_token": "new-refresh", "model": "saved-model"
-    }
-    assert dict(entry.options) == {"web_search": True}
-    reload_entry.assert_awaited_once_with(entry.entry_id)
+    assert dict(entry.data) == {"access_token": "new-access", "refresh_token": "new-refresh"}
+    assert {key: dict(value.data) for key, value in entry.subentries.items()} == agents
+    # Entities read credentials per request, so new tokens apply without a reload.
+    reload_entry.assert_not_awaited()
+    assert unloads == []
+    assert entry.state is ConfigEntryState.LOADED

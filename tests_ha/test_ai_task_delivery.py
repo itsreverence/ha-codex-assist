@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+from codex_entries import codex_entry, update_settings
 from homeassistant.components import ai_task, media_source
 from homeassistant.components.conversation.chat_log import Attachment, ChatLog, UserContent
 from homeassistant.core import HomeAssistant
@@ -16,7 +17,6 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.codex_assist import DOMAIN
 from custom_components.codex_assist.conversation import _codex_input_from_chat_log
 
 ENTITY_ID = "ai_task.codex_assist_ai_task"
@@ -33,17 +33,10 @@ async def task_entry(hass: HomeAssistant, tmp_path: Path) -> MockConfigEntry:
     hass.config.media_dirs = {"local": str(tmp_path)}
     assert await async_setup_component(hass, "homeassistant", {})
     assert await async_setup_component(hass, "media_source", {})
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title="Codex Assist",
-        unique_id=DOMAIN,
-        data={
-            # Non-expiring synthetic credential: real coordination, no auth HTTP.
-            "access_token": "test-access-token",
-            "refresh_token": "test-refresh-token",
-            "model": "gpt-5.4",
-        },
-        options={"image_model": "gpt-image-2-high", "image_size": "1536x1024"},
+    entry = codex_entry(
+        # Non-expiring synthetic credential: real coordination, no auth HTTP.
+        {"access_token": "test-access-token", "refresh_token": "test-refresh-token"},
+        ai_task={"image_model": "gpt-image-2-high", "image_size": "1536x1024"},
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -109,7 +102,7 @@ async def test_generate_data_service_delivers_selector_validated_structure(
     hass: HomeAssistant, task_entry: MockConfigEntry, backend
 ) -> None:
     """Service selectors must reach Codex as schema and return data, not JSON text."""
-    hass.config_entries.async_update_entry(task_entry, options={"web_search": True})
+    await update_settings(hass, task_entry, "ai_task_data", web_search=True)
     requests, events = backend
     _reply(events, '{"summary":"All clear.","note":null}')
     events.append({"type": "response.completed", "response": {"status": "completed"}})
@@ -152,7 +145,10 @@ async def test_generate_data_service_delivers_selector_validated_structure(
             "additionalProperties": False,
         },
     }
-    assert not any(tool["type"] == "web_search" for tool in requests[0].get("tools", []))
+    assert not any(
+        "web_search" in (tool.get("type"), tool.get("name"))
+        for tool in requests[0].get("tools", [])
+    )
 
 
 async def test_generate_data_service_sends_local_image_attachment(

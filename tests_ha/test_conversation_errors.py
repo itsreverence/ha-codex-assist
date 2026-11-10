@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 import voluptuous as vol
+from codex_entries import update_settings
 from homeassistant.components import conversation
 from homeassistant.core import Context
 from homeassistant.helpers import llm
@@ -290,9 +291,9 @@ async def test_conversation_cancellation_propagates(hass, task_entry, error_back
 async def test_conversation_sends_error_guidance_with_custom_prompt(
     hass, task_entry, error_backend, web_search,
 ):
-    hass.config_entries.async_update_entry(task_entry, options={
-        **task_entry.options, "prompt": "Use a friendly tone.", "web_search": web_search,
-    })
+    await update_settings(
+        hass, task_entry, "conversation", prompt="Use a friendly tone.", web_search=web_search,
+    )
     planned, requests = error_backend
     planned.append((MODEL_PATH, sse(
         {"type": "response.output_text.delta", "delta": "A test answer."}, COMPLETED,
