@@ -272,3 +272,28 @@ async def test_adding_an_agent_suggests_a_name_no_agent_uses_yet(module):
     result = await flow.async_step_user()
 
     assert next(iter(result["data_schema"].schema)).default == "Codex Assist 3"
+
+
+async def test_ai_task_form_collapses_advanced_sections_and_replaces_unknown_image_settings(
+    module,
+):
+    subentry = SimpleNamespace(
+        data={"model": "account-model", "image_model": "retired-image", "image_size": "2048x2048"}
+    )
+    flow = _flow(module, "ai_task_data", subentry=subentry)
+
+    result = await flow.async_step_reconfigure()
+
+    sections = _fields(result["data_schema"])
+    assert sections["chat_settings"].options == {"collapsed": False}
+    assert sections["advanced_settings"].options == {"collapsed": True}
+    assert sections["image_settings"].options == {"collapsed": True}
+    for section_name, key in (
+        ("chat_settings", "text_verbosity"),
+        ("advanced_settings", "reasoning_effort"),
+    ):
+        assert _section_field(result, section_name, key).config.options == ["low", "medium", "high"]
+    assert _section_defaults(result, "image_settings") == {
+        "image_model": "gpt-image-2-medium",
+        "image_size": "1024x1024",
+    }
