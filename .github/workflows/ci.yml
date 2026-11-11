@@ -61,8 +61,26 @@ jobs:
       - name: Run smoke tests against real Home Assistant
         run: python -m pytest tests_ha -q
 
+  ha-2026-10:
+    name: Home Assistant 2026.10 contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Install Home Assistant 2026.10 test environment
+        run: pip install -r requirements_test_ha_202610.txt
+
+      - name: Run contract tests against Home Assistant 2026.10
+        run: python -m pytest tests_ha -q
+
   ha-current:
-    name: Home Assistant 2026.10 stable contract tests
+    name: Home Assistant 2026.11 stable contract tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -79,8 +97,7 @@ jobs:
       - name: Install current Home Assistant test environment
         run: |
           uv venv --python 3.14 .venv-ha
-          uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt \
-            --override requirements_test_ha_overrides.txt
+          uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt
 
       - name: Verify current Home Assistant
         run: .venv-ha/bin/python -m pytest tests_ha -q

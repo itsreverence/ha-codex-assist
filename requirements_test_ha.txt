@@ -1,10 +1,10 @@
 # Current stable Home Assistant contract (Python 3.14+).
-# Install with uv pip and --override requirements_test_ha_overrides.txt.
-homeassistant==2026.10.0
-pytest-homeassistant-custom-component==0.13.370
+# pytest-homeassistant is Home Assistant's own test package and pins the matching
+# homeassistant release, so upgrade the two together.
+pytest-homeassistant==2026.11.1
 
 # Runtime requirements for the conversation and camera components used by tests.
 gazetteer-matcher==1.1.0
 hassil==3.12.1
-home-assistant-intents==2026.10.6
+home-assistant-intents==2026.10.27
 PyTurboJPEG==1.8.3
