@@ -7,12 +7,13 @@ import traceback
 
 import httpx
 import pytest
+from codex_entries import codex_entry, subentry_of
 from homeassistant.components import ai_task, conversation
+from homeassistant.config_entries import SOURCE_RECONFIGURE
 from homeassistant.core import Context
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.codex_assist import DOMAIN
 from custom_components.codex_assist.codex_models import ModelDiscoveryCache
@@ -51,12 +52,7 @@ async def auth_http(monkeypatch):
 
 
 def _entry(access_token="test-access"):
-    return MockConfigEntry(
-        domain=DOMAIN,
-        unique_id=DOMAIN,
-        title="Codex Assist",
-        data={"access_token": access_token, "refresh_token": "test-refresh", "model": "gpt-5.4"},
-    )
+    return codex_entry({"access_token": access_token, "refresh_token": "test-refresh"})
 
 
 def _jwt(exp):
@@ -232,10 +228,15 @@ async def test_public_request_recovers_after_temporary_refresh_failure(
     )
 
 
-async def test_options_retains_cached_models_when_refresh_transport_fails(hass, auth_http, caplog):
+async def test_agent_settings_retain_cached_models_when_refresh_transport_fails(
+    hass, auth_http, caplog
+):
     queued, requests = auth_http
+    assert await async_setup_component(hass, "homeassistant", {})
     entry = _entry()
     entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
     clock = [0]
     runtime_token_coordinator(entry).model_cache = ModelDiscoveryCache(clock=lambda: clock[0])
     queued.append((MODEL_PATH, httpx.Response(200, json={"models": [{"slug": "cached-model"}]})))
@@ -245,7 +246,13 @@ async def test_options_retains_cached_models_when_refresh_transport_fails(hass, 
     clock[0] = 61
     queued.append((TOKEN_PATH, httpx.ReadTimeout("private-auth-marker")))
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "conversation"),
+        context={
+            "source": SOURCE_RECONFIGURE,
+            "subentry_id": subentry_of(entry, "conversation").subentry_id,
+        },
+    )
 
     assert result["type"] is FlowResultType.FORM
     status = result["description_placeholders"]["model_status"]

@@ -65,4 +65,4 @@ If a Codex / ChatGPT token, Home Assistant token, cookie, device code, or privat
 
 Codex Assist stores authentication material in Home Assistant's config entry storage. Treat Home Assistant backups, diagnostics, and logs as sensitive unless you have reviewed and redacted them.
 
-Integration diagnostics replace `access_token`, `refresh_token`, and `prompt` values with `**REDACTED**` in both config entry data and options. Other settings remain visible, and the stored configuration is unchanged. This redaction applies to integration diagnostics, not backups or logs. Review diagnostic files before sharing them.
+Integration diagnostics replace `access_token`, `refresh_token`, and `prompt` values with `**REDACTED**` in config entry data, options, and each conversation agent's and the AI Task's settings. Other settings remain visible, and the stored configuration is unchanged. This redaction applies to integration diagnostics, not backups or logs. Review diagnostic files before sharing them.

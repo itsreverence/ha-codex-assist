@@ -22,7 +22,13 @@ uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt
 
 `tests_ha/test_single_entry.py` verifies duplicate setup stops before authentication
 and existing entries can complete reauthentication and reconfiguration. It checks
-the reload request; the reload implementation is stubbed in these flow tests.
+that new credentials replace the old ones, agent settings stay unchanged, and the
+loaded entry is neither reloaded nor unloaded.
+
+The real-HA suite builds version 2 entries through `tests_ha/codex_entries.py`.
+Tests that change an agent's settings use `update_settings`, which edits the
+subentry and waits for the reload that applies it. Only the migration tests in
+`tests_ha/test_smoke.py` build version 1 entries.
 
 ### Home Assistant version selection
 
@@ -278,23 +284,25 @@ When the hosted-search payload, model defaults, search delivery, or backend cont
 4. Restart Home Assistant.
 5. Confirm the integration version and logs reflect the candidate.
 
-To roll back, reinstall the latest stable release through HACS and restart Home Assistant.
+Releases that move settings into subentries upgrade the config entry in place, and older releases cannot load it. Take a full Home Assistant backup before installing a candidate. To roll back, restore that backup, or reinstall the latest stable release through HACS and set the integration up again. If Codex rotated the sign-in after the backup, the restored entry asks you to sign in again.
 
 ## Assist smoke test
 
 After restarting Home Assistant:
 
-1. Confirm `conversation.codex_assist` exists.
+1. Confirm `conversation.codex_assist` exists. After an upgrade, confirm the existing conversation and AI Task entity IDs are unchanged and that reconfiguring each one shows the old settings.
 2. Select Codex Assist in an Assist pipeline.
 3. Ask a read-only question and ask it to list exposed entities.
 4. Test one harmless exposed light.
 5. Confirm sensitive entities remain unexposed unless deliberately allowed.
+6. Select **Add conversation agent**, give it a different model and prompt, and confirm its new conversation entity answers without a restart.
+7. Delete that agent and confirm its entity disappears while the first agent still answers.
 
 ## Clarification follow-ups
 
 `tests_ha/test_clarification_followups.py` calls public HA Conversation and AI Task
 APIs with scripted HTTPX responses. Outbound-request assertions check that
-clarification guidance accompanies default, custom, options, template, and extra
+clarification guidance accompanies default, custom, template, and extra
 prompts without mutating stored prompts or accumulating across turns. They also
 check search guidance, auth retries, native tool handoffs, and AI Task exclusion.
 
@@ -354,9 +362,9 @@ finish after an exchange failure.
 
 `tests_ha/test_auth_recovery.py` drives HA's flow manager through setup, reauth,
 and reconfigure failures, then resumes each flow. It also calls public Conversation
-and AI Task APIs through temporary refresh failure and recovery, and opens options
-with cached models after a failed refresh. External HTTP is stubbed; the options
-cache uses an injected clock to advance its cooldown. Run this file in both HA
+and AI Task APIs through temporary refresh failure and recovery, and opens a
+conversation agent's settings with cached models after a failed refresh. External
+HTTP is stubbed; the model cache uses an injected clock to advance its cooldown. Run this file in both HA
 contract environments. These tests do not establish live sign-in or backend
 availability.
 
@@ -367,7 +375,7 @@ When auth or model handling changes:
 - confirm logs do not expose tokens, cookies, or device codes;
 - verify fallback models appear when discovery is unavailable;
 - verify authenticated model discovery when the backend supports it;
-- verify an unlisted saved model is labeled and remains selected when other options are saved;
+- verify an unlisted saved model is labeled and remains selected when other agent settings are saved;
 - verify discovery failure offers an explicitly unverified fallback only when no successful cache exists;
 - verify a successful empty account list does not become a fallback list;
 - verify setup asks for the model only after sign-in;

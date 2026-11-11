@@ -7,12 +7,12 @@ These tests cannot establish live model behavior or satellite microphone state.
 from copy import deepcopy
 
 import pytest
+from codex_entries import codex_entry
 from homeassistant.components import ai_task, conversation
 from homeassistant.components.conversation.chat_log import async_subscribe_chat_logs
 from homeassistant.components.homeassistant.exposed_entities import async_expose_entity
 from homeassistant.core import Context
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 from test_web_search_delivery import (
     COMPLETED,
     call_event,
@@ -23,12 +23,10 @@ from test_web_search_delivery import (
 )
 from test_web_search_delivery import backend as backend
 
-from custom_components.codex_assist import DOMAIN
-
 
 @pytest.fixture
-def entry_settings():
-    return {}, {}
+def agent_settings():
+    return {}
 
 
 @pytest.fixture
@@ -37,19 +35,21 @@ def web_search():
 
 
 @pytest.fixture
-async def clarification_entry(hass, entry_settings, web_search):
+async def clarification_entry(hass, agent_settings, web_search):
     assert await async_setup_component(hass, "homeassistant", {})
-    data, options = entry_settings
-    entry = MockConfigEntry(
-        domain=DOMAIN, title="Codex Assist", unique_id=DOMAIN,
-        data={"access_token": "test-access", "refresh_token": "test-refresh",
-              "model": "gpt-5.4", **data},
-        options={"web_search": web_search, **options},
+    entry = codex_entry(
+        {"access_token": "test-access", "refresh_token": "test-refresh"},
+        conversation={"web_search": web_search, **agent_settings},
+        ai_task={"web_search": web_search},
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     return entry
+
+
+def _stored_settings(entry):
+    return dict(entry.data), {key: dict(value.data) for key, value in entry.subentries.items()}
 
 
 def assert_clarification_guidance(instructions):
@@ -74,19 +74,16 @@ def assert_search_speech_guidance(instructions, enabled):
 
 
 @pytest.mark.parametrize("web_search", [False, True])
-@pytest.mark.parametrize(("entry_settings", "expected", "absent"), [
-    (({}, {}), "You are a concise Home Assistant Assist conversation agent.", None),
-    (({"prompt": "Use short replies."}, {}), "Use short replies.", None),
-    (({"prompt": "Old data prompt."}, {"prompt": "Options prompt."}),
-     "Options prompt.", "Old data prompt."),
-    (({}, {"prompt": "Template language {{ llm_context.language }}."}),
-     "Template language el.", "{{"),
+@pytest.mark.parametrize(("agent_settings", "expected", "absent"), [
+    ({}, "You are a concise Home Assistant Assist conversation agent.", None),
+    ({"prompt": "Use short replies."}, "Use short replies.", None),
+    ({"prompt": "Template language {{ llm_context.language }}."}, "Template language el.", "{{"),
 ])
 async def test_outbound_clarification_guidance_preserves_ha_prompt(
     hass, clarification_entry, backend, request, expected, absent, web_search,
 ):
     planned, requests = backend
-    stored = deepcopy((dict(clarification_entry.data), dict(clarification_entry.options)))
+    stored = deepcopy(_stored_settings(clarification_entry))
     chat_logs = []
     request.addfinalizer(async_subscribe_chat_logs(
         hass, lambda conversation_id, event_type, data: (
@@ -112,7 +109,7 @@ async def test_outbound_clarification_guidance_preserves_ha_prompt(
         if absent is not None:
             assert absent not in instructions
         assert_search_speech_guidance(instructions, web_search)
-    assert (dict(clarification_entry.data), dict(clarification_entry.options)) == stored
+    assert _stored_settings(clarification_entry) == stored
     assert len(requests) == 2
 
 

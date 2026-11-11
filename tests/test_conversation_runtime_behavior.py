@@ -28,7 +28,6 @@ class FakeEntry:
     def __init__(self):
         self.entry_id = "entry-1"
         self.data = {
-            "model": "gpt-5.4",
             "access_token": "access-1",
             "refresh_token": "refresh-1",
         }
@@ -37,6 +36,12 @@ class FakeEntry:
     def async_start_reauth(self, hass):
         self.reauth_started = True
         self.reauth_hass = hass
+
+
+class FakeSubentry:
+    subentry_id = "conversation-subentry"
+    title = "Codex Assist"
+    data = {"model": "gpt-5.4"}
 
 
 class FakeUserInput:
@@ -86,7 +91,6 @@ async def test_refresh_runtime_tokens_persists_rotated_tokens(conversation_modul
         (
             entry,
             {
-                "model": "gpt-5.4",
                 "access_token": "access-2",
                 "refresh_token": "refresh-2",
             },
@@ -128,8 +132,7 @@ async def test_handle_message_reports_temporary_auth_failure_without_reauth(
         {"http_client": None, "config_entries": FakeConfigEntries()},
     )()
     entry = FakeEntry()
-    entry.options = {}
-    entity = conversation_module.CodexAssistConversationEntity(entry)
+    entity = conversation_module.CodexAssistConversationEntity(entry, FakeSubentry())
     entity.hass = hass
     chat_log = FakeHandleMessageChatLog()
 
@@ -168,8 +171,7 @@ async def test_handle_message_reports_friendly_usage_limit_without_status_code(
         {"http_client": None, "config_entries": FakeConfigEntries()},
     )()
     entry = FakeEntry()
-    entry.options = {}
-    entity = conversation_module.CodexAssistConversationEntity(entry)
+    entity = conversation_module.CodexAssistConversationEntity(entry, FakeSubentry())
     entity.hass = hass
     entity.entity_id = "conversation.codex_assist"
     chat_log = FakeHandleMessageChatLog()

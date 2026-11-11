@@ -39,12 +39,12 @@ def _recording_client(body, *, session_id):
     return http, client, requests
 
 
-def test_codex_session_id_is_stable_per_entry_and_hides_the_entry_id():
-    first = codex_session_id("01JENTRYAAAA")
+def test_codex_session_id_is_stable_per_agent_and_hides_the_subentry_id():
+    first = codex_session_id("01JAGENTAAAA")
 
-    assert first == codex_session_id("01JENTRYAAAA")
-    assert first != codex_session_id("01JENTRYBBBB")
-    assert "01JENTRYAAAA" not in first
+    assert first == codex_session_id("01JAGENTAAAA")
+    assert first != codex_session_id("01JAGENTBBBB")
+    assert "01JAGENTAAAA" not in first
 
 
 @pytest.mark.asyncio

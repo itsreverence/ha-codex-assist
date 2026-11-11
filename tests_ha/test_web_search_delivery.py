@@ -13,6 +13,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 import voluptuous as vol
+from codex_entries import codex_entry
 from homeassistant.components import ai_task, conversation
 from homeassistant.components.conversation import trace as conversation_trace
 from homeassistant.components.conversation.chat_log import async_subscribe_chat_logs
@@ -20,9 +21,6 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from custom_components.codex_assist import DOMAIN
 
 COMPLETED = {"type": "response.completed", "response": {"status": "completed"}}
 
@@ -31,10 +29,10 @@ COMPLETED = {"type": "response.completed", "response": {"status": "completed"}}
 async def search_entry(hass: HomeAssistant):
     assert await async_setup_component(hass, "homeassistant", {})
     hass.config.country = "US"
-    entry = MockConfigEntry(
-        domain=DOMAIN, title="Codex Assist", unique_id=DOMAIN,
-        data={"access_token": "test-access", "refresh_token": "test-refresh", "model": "gpt-5.4"},
-        options={"web_search": True},
+    entry = codex_entry(
+        {"access_token": "test-access", "refresh_token": "test-refresh"},
+        conversation={"web_search": True},
+        ai_task={"web_search": True},
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)

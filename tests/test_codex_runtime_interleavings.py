@@ -318,7 +318,7 @@ async def discovery_actor(world: World, actor: str) -> None:
 
 
 def _reauth_writes_new_sign_in(world: World) -> None:
-    # config_flow.py: async_update_reload_and_abort(entry, data_updates=...) after device sign-in.
+    # config_flow.py: async_update_and_abort(entry, data_updates=...) after device sign-in.
     tokens = world.server.sign_in(FAR_FUTURE)
     world.update_entry(
         {
@@ -338,10 +338,7 @@ def _unload(world: World) -> None:
 ACTORS = {"conversation": request_actor, "ai_task": request_actor, "discovery": discovery_actor}
 EVENT_STEPS = {
     "reload": [("reload: unload entry", _unload)],
-    "reauth": [
-        ("reauth: write new sign-in to entry.data", _reauth_writes_new_sign_in),
-        ("reauth reload: unload entry", _unload),
-    ],
+    "reauth": [("reauth: write new sign-in to entry.data", _reauth_writes_new_sign_in)],
 }
 
 
@@ -395,6 +392,9 @@ VERIFIED = {
     "requests_across_plain_reload": Scenario(("conversation-1", "ai_task-1"), ("reload",)),
     "request_and_discovery_across_reauth": Scenario(
         ("conversation-1", "discovery-1"), ("reauth",)
+    ),
+    "request_and_discovery_across_reauth_then_reload": Scenario(
+        ("conversation-1", "discovery-1"), ("reauth", "reload")
     ),
     "tool_rounds_and_discovery_share_refreshes": Scenario(
         ("conversation-1", "discovery-1"), tool_rounds=2

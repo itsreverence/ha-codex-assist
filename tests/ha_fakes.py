@@ -25,6 +25,8 @@ def install_homeassistant_fakes(monkeypatch):
     core = types.ModuleType("homeassistant.core")
     exceptions = types.ModuleType("homeassistant.exceptions")
     helpers = types.ModuleType("homeassistant.helpers")
+    device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+    entity = types.ModuleType("homeassistant.helpers.entity")
     entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
     httpx_client = types.ModuleType("homeassistant.helpers.httpx_client")
     helpers_json = types.ModuleType("homeassistant.helpers.json")
@@ -52,18 +54,14 @@ def install_homeassistant_fakes(monkeypatch):
         def _abort_if_unique_id_configured(self):
             self.duplicate_checked = True
 
-        def async_update_reload_and_abort(self, entry, data_updates):
+        def async_update_and_abort(self, entry, data_updates):
             reason = (
                 "reconfigure_successful"
                 if getattr(self, "source", "") == "reconfigure"
                 else "reauth_successful"
             )
-            return {
-                "type": "abort",
-                "reason": reason,
-                "entry": entry,
-                "data_updates": data_updates,
-            }
+            entry.data = {**entry.data, **data_updates}
+            return {"type": "abort", "reason": reason}
 
         def _get_reauth_entry(self):
             return getattr(self, "reauth_entry", object())
@@ -71,20 +69,31 @@ def install_homeassistant_fakes(monkeypatch):
         def _get_reconfigure_entry(self):
             return getattr(self, "reconfigure_entry", object())
 
-    class OptionsFlow:
-        @property
-        def config_entry(self):
-            return self._config_entry
+    class ConfigEntryState:
+        LOADED = "loaded"
+        NOT_LOADED = "not_loaded"
 
-        @config_entry.setter
-        def config_entry(self, value):
-            self._config_entry = value
+    class ConfigSubentryFlow:
+        """Tests set ``entry``, ``subentry``, ``source`` and ``_subentry_type``."""
+
+        def _get_entry(self):
+            return self.entry
+
+        def _get_reconfigure_subentry(self):
+            return self.subentry
 
         def async_show_form(self, **kwargs):
             return {"type": "form", **kwargs}
 
         def async_create_entry(self, **kwargs):
             return {"type": "create_entry", **kwargs}
+
+        def async_abort(self, *, reason):
+            return {"type": "abort", "reason": reason}
+
+        def async_update_and_abort(self, entry, subentry, *, data):
+            subentry.data = data
+            return {"type": "abort", "reason": "reconfigure_successful"}
 
     class ConfigEntry:
         pass
@@ -203,7 +212,9 @@ def install_homeassistant_fakes(monkeypatch):
 
     config_entries.ConfigFlow = ConfigFlow
     config_entries.ConfigEntry = ConfigEntry
-    config_entries.OptionsFlow = OptionsFlow
+    config_entries.ConfigEntryState = ConfigEntryState
+    config_entries.ConfigSubentryFlow = ConfigSubentryFlow
+    config_entries.SOURCE_USER = "user"
     config_entries.SOURCE_REAUTH = "reauth"
     config_entries.SOURCE_RECONFIGURE = "reconfigure"
     data_entry_flow.section = Section  # type: ignore[attr-defined]
@@ -232,6 +243,10 @@ def install_homeassistant_fakes(monkeypatch):
     ai_task.GenImageTaskResult = object
     const.MATCH_ALL = "*"
     core.HomeAssistant = HomeAssistant
+    core.callback = lambda func: func
+    device_registry.DeviceEntryType = types.SimpleNamespace(SERVICE="service")
+    device_registry.DeviceInfo = dict
+    entity.Entity = type("Entity", (), {})
     exceptions.HomeAssistantError = RuntimeError
     entity_platform.AddConfigEntryEntitiesCallback = object
     httpx_client.get_async_client = lambda hass: getattr(hass, "http_client", None)
@@ -265,6 +280,8 @@ def install_homeassistant_fakes(monkeypatch):
     ha.data_entry_flow = data_entry_flow  # type: ignore[attr-defined]
     components.conversation = conversation
     components.ai_task = ai_task
+    helpers.device_registry = device_registry
+    helpers.entity = entity
     helpers.entity_platform = entity_platform
     helpers.httpx_client = httpx_client
     helpers.json = helpers_json
@@ -284,6 +301,8 @@ def install_homeassistant_fakes(monkeypatch):
         "homeassistant.core": core,
         "homeassistant.exceptions": exceptions,
         "homeassistant.helpers": helpers,
+        "homeassistant.helpers.device_registry": device_registry,
+        "homeassistant.helpers.entity": entity,
         "homeassistant.helpers.entity_platform": entity_platform,
         "homeassistant.helpers.httpx_client": httpx_client,
         "homeassistant.helpers.json": helpers_json,

@@ -41,7 +41,7 @@ Sign-in uses a device code, so you approve it in a browser. The browser can be o
 2. Select **Submit**. Home Assistant shows a web address and a short code.
 3. Open that address in a browser, sign in to ChatGPT, and enter the code.
 4. Return to Home Assistant and select **Submit**. If it says the code has not been approved yet, wait a few seconds and select **Submit** again.
-5. Choose a chat model from the list, then select **Submit**.
+5. Choose a chat model from the list, then select **Submit**. Setup creates a conversation agent named **Codex Assist** and an AI Task entity named **Codex Assist AI Task**.
 
 If sign-in does not start or the code page reports an error, device-code login may be turned off for your account. OpenAI's [authentication guide](https://learn.chatgpt.com/docs/auth) says a personal account enables it in ChatGPT security settings, and a workspace admin controls it for a workspace. Home Assistant stores the sign-in itself. Do not paste tokens or copy them from Codex CLI or another tool.
 
@@ -71,13 +71,21 @@ If something fails, start with [Troubleshooting](https://github.com/itsreverence
 
 ## What it does
 
-**Assist conversations.** Codex Assist registers as a normal Assist conversation agent and streams replies. It reads and controls only the entities you expose to Assist, through Home Assistant's own Assist LLM API.
+**Assist conversations.** Codex Assist registers as a normal Assist conversation agent and streams replies. One sign-in can serve several agents, each with its own name, prompt, and model. It reads and controls only the entities you expose to Assist, through Home Assistant's own Assist LLM API.
 
 **AI Task.** It generates plain text or structured data, reads supported image attachments (up to four images, 10 MiB each, 20 MiB total), and generates images. See the [AI Task example](https://github.com/itsreverence/ha-codex-assist/wiki/Features-and-Options#run-a-data-task).
 
 **Hosted web search.** Off by default. When on, the model can search for current information. The model is asked to keep raw URLs out of spoken replies, which is not guaranteed.
 
-**Options.** The chat model comes from your account's own model list. See [Choosing a Model](https://github.com/itsreverence/ha-codex-assist/wiki/Choosing-a-Model) and [Features and Options](https://github.com/itsreverence/ha-codex-assist/wiki/Features-and-Options).
+**Agents and settings.** Each conversation agent and the AI Task entity keep their own settings. To change them, open **Settings → Devices & services → Codex Assist** and select the gear icon next to the agent. To add another agent, select **Add conversation agent** on the same page and give it a name, a model, and its own system prompt. It appears as its own conversation entity, such as `conversation.kitchen_agent`, that you can choose in any Assist pipeline. All agents share the one sign-in. The AI Task entity uses its own fixed instructions instead of a conversation prompt.
+
+<p align="center">
+  <img src="assets/codex-assist-agents.png" alt="Codex Assist integration page with two conversation agents and one AI Task entity, each with its own model" width="560">
+</p>
+
+**Models.** The chat model comes from your account's own model list. See [Choosing a Model](https://github.com/itsreverence/ha-codex-assist/wiki/Choosing-a-Model) and [Features and Options](https://github.com/itsreverence/ha-codex-assist/wiki/Features-and-Options).
+
+**Upgrading.** Upgrading from 0.5.0 or earlier keeps your settings, entity IDs, and Assist pipelines. The old integration options become the first conversation agent and the AI Task entity's settings. Older releases cannot load the upgraded entry, so take a backup first.
 
 If a response ends before it completes, Codex Assist reports a failure. Part of the reply may already have been shown or spoken, so check a device's state before you repeat a request.
 

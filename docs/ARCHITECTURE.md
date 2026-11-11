@@ -4,7 +4,7 @@ Codex Assist is a Home Assistant custom integration backed by Codex / ChatGPT ac
 
 ```mermaid
 flowchart LR
-    Assist[Home Assistant Assist] --> Conversation[Codex Assist conversation agent]
+    Assist[Home Assistant Assist] --> Conversation[Codex Assist conversation agents]
     AITask[Home Assistant AI Task] --> Provider[Codex Assist AI Task provider]
 
     Conversation --> Runtime[Runtime and token coordinator]
@@ -25,10 +25,13 @@ flowchart LR
 
 ## Main components
 
-- **Config flow** handles Codex-style device-code sign-in. It stores OAuth tokens in the Home Assistant config entry and exposes integration options.
+- **Config flow** handles Codex-style device-code sign-in. The config entry stores only the OAuth tokens. Reauthentication and reconfiguration replace those tokens and leave agent settings untouched.
+- **Config subentries** hold agent settings. Each `conversation` subentry is one Assist conversation agent with its own name, model, prompt, reasoning effort, response length, and web-search toggle. An `ai_task_data` subentry holds the AI Task model, web-search, reasoning, and image-generation settings. `SUBENTRY_SETTING_KEYS` in `config_flow.py` defines which keys each type owns, and the setup flow, subentry flows, and migration all filter through it. Each subentry gets its own service device named after the subentry, and its entity's unique ID is the subentry ID.
+- **Subentry reloads** come from an update listener that compares subentry types, titles, and data with a snapshot taken at setup. Adding, editing, or removing an agent reloads the entry. Token rotation also writes the config entry, so changes to entry data alone never reload it.
+- **Version 1 migration** moves settings from entry data and options into one `conversation` subentry and one `ai_task_data` subentry, re-points the existing conversation and AI Task registry entries to them without changing their entity IDs, and leaves only the tokens in entry data.
 - **Model discovery** uses only visible model IDs returned for the signed-in account. An entry-scoped, in-memory cache survives temporary failures; a small, explicitly unverified fallback list is used only before a successful result.
-- **Conversation agent** registers `conversation.codex_assist` for Home Assistant Assist pipelines.
-- **AI Task entity** registers a native provider for text, structured data, supported image attachments, and image generation.
+- **Conversation agents** register one conversation entity per `conversation` subentry, such as `conversation.codex_assist`, for Home Assistant Assist pipelines. Each agent reads its subentry settings at request time.
+- **AI Task entity** registers a native provider per `ai_task_data` subentry for text, structured data, supported image attachments, and image generation. It uses fixed AI Task instructions, not a conversation agent's prompt.
 - **Runtime token coordinator** serializes refresh-token rotation per config entry. Concurrent Conversation and AI Task requests reuse the winning refresh instead of invalidating one another. The coordinator outlives entry reloads, so a request that is still refreshing keeps the lock that later requests wait on. Its in-memory model list and retry backoff also survive a reload. Reauthentication and reconfiguration still clear them.
 - **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream. Text/tool and image streams share a completion reader. Success requires `response.completed`; EOF or `[DONE]` alone is not success. The reader stops at completion without waiting for the connection to close and preserves explicit backend error classifications. Text can stream before completion, but tool calls are held until completion so a truncated response cannot dispatch native actions. Each tool call comes from its completed `function_call` item in `response.output_item.done`, as in Codex CLI. Argument deltas and `response.function_call_arguments.done` are ignored. A completed call without a call ID, a name, or arguments that parse to a JSON object, or one that repeats an earlier call ID, fails the turn instead of running. An interrupted image stream fails even if it supplied a preview. Existing preview-image acceptance after completion is unchanged.
 - **Native transcript state** retains completed provider output items for stateless replay. The state is deep-copy isolated and remains opaque to normal Home Assistant logs, listeners, and conversation traces, which receive only redacted metadata.
@@ -37,7 +40,7 @@ flowchart LR
 
 ## Assist conversation flow
 
-1. Home Assistant sends a voice or chat request through an Assist pipeline using `conversation.codex_assist`.
+1. Home Assistant sends a voice or chat request through an Assist pipeline using one of the Codex Assist conversation entities.
 2. Codex Assist refreshes its stored Codex or ChatGPT token if needed.
 3. Codex Assist sends the conversation to the Codex-compatible backend.
 4. If Codex requests a Home Assistant tool call, Codex Assist waits for that backend response to complete, then maps the request into Home Assistant's Assist LLM API.
@@ -53,7 +56,7 @@ concise, direct clarification question last, with language-appropriate question
 punctuation and nothing after it. Ordinary answers, completed actions, and
 cancellation should not acquire unnecessary closing questions.
 
-This composition leaves config-entry prompts and chat-log system content unchanged.
+This composition leaves agent prompts and chat-log system content unchanged.
 Each request, including auth retries and native tool handoffs, appends the internal
 guidance once. AI Task continues to use its existing instruction path. The guidance
 is a model instruction, not an execution guard.
@@ -180,9 +183,9 @@ with cached models retained. The auth boundary adds no automatic retries.
 ## Model discovery lifecycle
 
 First setup completes device-code sign-in before model selection. Authenticated
-discovery is refreshed when options open and every six hours while the entry is
+discovery is refreshed when an agent's settings open and every six hours while the entry is
 loaded, independently of Assist requests. The periodic callback is cancelled on
-unload. Options and periodic discovery resolve and refresh credentials through the
+unload. Agent settings and periodic discovery resolve and refresh credentials through the
 same token coordinator as conversation and AI Task. An HTTP 401 triggers at most
 one coordinated refresh and retry.
 
@@ -225,11 +228,15 @@ use Home Assistant's serializer for values such as states and timestamps.
 ## Prompt caching and usage
 
 Like Codex CLI, every Responses request carries a `session_id` header and a
-matching `prompt_cache_key`. The value is a UUID derived from the config entry
-ID, so it stays the same across conversations, AI Tasks, auth retries, and
-restarts, and it does not reveal the entry ID. A live probe found that the
-backend reused the cached prompt prefix (system prompt, exposed-entity context,
-and tool definitions) only when the header was present. With it, about 97% of
+matching `prompt_cache_key`. The value is a UUID derived from the agent's config
+subentry ID, so each conversation agent and the AI Task entity has its own
+session. It stays the same across that agent's conversations, auth retries,
+reloads, and restarts, and it does not reveal the subentry ID. Agents differ in
+prompt, model, or tools, so a shared session would mix prefixes that cannot reuse
+each other's cache. Releases before subentries derived the value from the entry
+ID, so the first request after upgrading starts with a cold cache. A live probe
+found that the backend reused the cached prompt prefix (system prompt,
+exposed-entity context, and tool definitions) only when the header was present. With it, about 97% of
 a 6,300-token Assist prompt came from the cache, including on the first turn of
 a new conversation and after a 10-minute gap. The backend's caching rules are
 not a public contract and may change.

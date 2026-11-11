@@ -37,12 +37,17 @@ from .codex_client import (
 from .codex_protocol import CodexNativeState, native_state_from_response_items
 from .codex_runtime import runtime_token_coordinator
 from .config_flow import (
+    CONF_MODEL,
+    CONF_PROMPT,
     CONF_WEB_SEARCH,
+    DEFAULT_PROMPT,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_REASONING_SUMMARY,
     DEFAULT_TEXT_VERBOSITY,
     DEFAULT_WEB_SEARCH,
+    SUBENTRY_CONVERSATION,
 )
+from .entity import CodexAssistSubentryEntity
 from .schema_compat import to_openapi
 
 MAX_TOOL_ITERATIONS = 5
@@ -75,45 +80,63 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    async_add_entities([CodexAssistConversationEntity(entry)])
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type == SUBENTRY_CONVERSATION:
+            async_add_entities(
+                [CodexAssistConversationEntity(entry, subentry)],
+                config_subentry_id=subentry.subentry_id,
+            )
 
 
 class CodexAssistConversationEntity(
     conversation.ConversationEntity,
     conversation.AbstractConversationAgent,
+    CodexAssistSubentryEntity,
 ):
-    _attr_has_entity_name = True
-    _attr_name = "Codex Assist"
     _attr_supported_features = conversation.ConversationEntityFeature.CONTROL
     _attr_supports_streaming = True
-
-    def __init__(self, entry: ConfigEntry) -> None:
-        self.entry = entry
-        self._attr_unique_id = entry.entry_id
 
     @property
     def supported_languages(self) -> list[str] | str:
         return MATCH_ALL
 
+    _registered_entry_agent_id = False
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        conversation.async_set_agent(self.hass, self.entry, self)
+        if self._owns_entry_agent_id():
+            conversation.async_set_agent(self.hass, self.entry, self)
+            self._registered_entry_agent_id = True
 
     async def async_will_remove_from_hass(self) -> None:
-        conversation.async_unset_agent(self.hass, self.entry)
+        # HA drops a deleted subentry before removing its entity, so ownership is
+        # remembered from registration rather than recomputed here.
+        if self._registered_entry_agent_id:
+            conversation.async_unset_agent(self.hass, self.entry)
+            self._registered_entry_agent_id = False
         await super().async_will_remove_from_hass()
+
+    def _owns_entry_agent_id(self) -> bool:
+        # The entry-ID agent alias predates subentries; keep it on the first agent so
+        # adding another agent cannot redirect callers that address the entry ID.
+        first_id = next(
+            (
+                s.subentry_id
+                for s in self.entry.subentries.values()
+                if s.subentry_type == SUBENTRY_CONVERSATION
+            ),
+            None,
+        )
+        return first_id == self.subentry.subentry_id
 
     async def _async_handle_message(
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
-        settings = {**self.entry.data, **self.entry.options}
-        model = settings.get("model", "gpt-5.4")
-        prompt = settings.get(
-            "prompt",
-            "You are a concise Home Assistant Assist conversation agent.",
-        )
+        settings = self.subentry.data
+        model = settings.get(CONF_MODEL, "gpt-5.4")
+        prompt = settings.get(CONF_PROMPT, DEFAULT_PROMPT)
         reasoning_effort = settings.get("reasoning_effort", DEFAULT_REASONING_EFFORT)
         reasoning_summary = settings.get("reasoning_summary", DEFAULT_REASONING_SUMMARY)
         text_verbosity = settings.get("text_verbosity", DEFAULT_TEXT_VERBOSITY)
@@ -159,7 +182,7 @@ class CodexAssistConversationEntity(
         codex = CodexClient(
             http_client=http_client,
             access_token=tokens.access_token,
-            session_id=codex_session_id(self.entry.entry_id),
+            session_id=codex_session_id(self.subentry.subentry_id),
         )
         try:
             for _iteration in range(MAX_TOOL_ITERATIONS + 1):
