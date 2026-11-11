@@ -100,14 +100,20 @@ class CodexAssistConversationEntity(
     def supported_languages(self) -> list[str] | str:
         return MATCH_ALL
 
+    _registered_entry_agent_id = False
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         if self._owns_entry_agent_id():
             conversation.async_set_agent(self.hass, self.entry, self)
+            self._registered_entry_agent_id = True
 
     async def async_will_remove_from_hass(self) -> None:
-        if self._owns_entry_agent_id():
+        # HA drops a deleted subentry before removing its entity, so ownership is
+        # remembered from registration rather than recomputed here.
+        if self._registered_entry_agent_id:
             conversation.async_unset_agent(self.hass, self.entry)
+            self._registered_entry_agent_id = False
         await super().async_will_remove_from_hass()
 
     def _owns_entry_agent_id(self) -> bool:

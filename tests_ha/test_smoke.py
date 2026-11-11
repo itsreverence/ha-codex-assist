@@ -1107,3 +1107,27 @@ async def test_entry_agent_id_stays_on_the_first_agent_after_adding_another(
     monkeypatch.setattr(CodexClient, "stream_turn", fake_stream_turn)
     await conversation.async_converse(hass, "Hello", None, Context(), agent_id=entry.entry_id)
     assert seen[0]["model"] == "gpt-5.4"
+
+
+async def test_deleting_the_only_agent_releases_the_entry_agent_id(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = await _setup_entry(hass)
+    seen: list[dict] = []
+
+    async def fake_stream_turn(self: CodexClient, **kwargs: object):
+        seen.append(kwargs)
+        yield CodexTextDelta("Still here.")
+
+    monkeypatch.setattr(CodexClient, "stream_turn", fake_stream_turn)
+    assert hass.config_entries.async_remove_subentry(
+        entry, subentry_of(entry, "conversation").subentry_id
+    )
+    await hass.async_block_till_done()
+
+    assert hass.states.get("conversation.codex_assist") is None
+    with pytest.raises(Exception):  # noqa: B017
+        await conversation.async_converse(
+            hass, "Hello", None, Context(), agent_id=entry.entry_id
+        )
+    assert seen == []
