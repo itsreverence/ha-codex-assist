@@ -51,7 +51,7 @@ async def test_every_rendered_subentry_field_and_outcome_is_translated(
     monkeypatch.setattr(module, "async_entry_model_catalog", catalog)
     flow = module.CodexAssistSubentryFlow()
     flow.hass = object()
-    flow.entry = SimpleNamespace(state="loaded")
+    flow.entry = SimpleNamespace(state="loaded", subentries={})
     flow._subentry_type = subentry_type
     flow.source = "user"
     form = await flow.async_step_user()

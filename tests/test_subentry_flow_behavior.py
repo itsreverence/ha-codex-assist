@@ -27,10 +27,13 @@ def _use_catalog(monkeypatch, module, *catalog):
     monkeypatch.setattr(module, "async_entry_model_catalog", entry_model_catalog)
 
 
-def _flow(module, subentry_type, *, subentry=None, state="loaded"):
+def _flow(module, subentry_type, *, subentry=None, state="loaded", titles=()):
     flow = module.CodexAssistSubentryFlow()
     flow.hass = object()
-    flow.entry = SimpleNamespace(state=state)
+    flow.entry = SimpleNamespace(
+        state=state,
+        subentries={title: SimpleNamespace(title=title) for title in titles},
+    )
     flow._subentry_type = subentry_type
     flow.source = "user" if subentry is None else "reconfigure"
     flow.subentry = subentry
@@ -261,3 +264,11 @@ def test_setup_default_is_always_one_of_the_discovered_models(module, models, ex
 
 def test_empty_account_list_does_not_get_populated_with_defaults(module):
     assert not module._model_schema({}, model_options=[]).schema
+
+
+async def test_adding_an_agent_suggests_a_name_no_agent_uses_yet(module):
+    flow = _flow(module, "conversation", titles=("Codex Assist", "Codex Assist 2", "Pirate"))
+
+    result = await flow.async_step_user()
+
+    assert next(iter(result["data_schema"].schema)).default == "Codex Assist 3"

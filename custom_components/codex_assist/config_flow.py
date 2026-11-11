@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from collections.abc import Mapping
 from typing import Any
 
@@ -304,13 +305,21 @@ class CodexAssistSubentryFlow(config_entries.ConfigSubentryFlow):
                 saved,
                 model_options=list(self._catalog.models),
                 keys=SUBENTRY_SETTING_KEYS[self._subentry_type],
-                name_default=SUBENTRY_TITLES[self._subentry_type] if is_new else None,
+                name_default=_unused_title(entry, self._subentry_type) if is_new else None,
             ),
             errors=errors,
             description_placeholders={
                 "model_status": _catalog_description(self._catalog, saved_model)
             },
         )
+
+
+def _unused_title(entry, subentry_type: str) -> str:
+    base = SUBENTRY_TITLES[subentry_type]
+    taken = {subentry.title for subentry in entry.subentries.values()}
+    if base not in taken:
+        return base
+    return next(f"{base} {n}" for n in itertools.count(2) if f"{base} {n}" not in taken)
 
 
 def _settings_schema(
