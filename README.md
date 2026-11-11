@@ -77,7 +77,11 @@ If something fails, start with [Troubleshooting](https://github.com/itsreverence
 
 **Hosted web search.** Off by default. When on, the model can search for current information. The model is asked to keep raw URLs out of spoken replies, which is not guaranteed.
 
-**Agents and settings.** Each conversation agent and the AI Task entity keep their own settings. To change them, open **Settings → Devices & services → Codex Assist**, open the menu next to the agent, and select **Reconfigure**. To add another agent, select **Add conversation agent** on the same page and give it a name, a model, and its own system prompt. It appears as its own conversation entity, such as `conversation.kitchen_agent`, that you can choose in any Assist pipeline. All agents share the one sign-in. The AI Task entity uses its own fixed instructions instead of a conversation prompt.
+**Agents and settings.** Each conversation agent and the AI Task entity keep their own settings. To change them, open **Settings → Devices & services → Codex Assist** and select the gear icon next to the agent. To add another agent, select **Add conversation agent** on the same page and give it a name, a model, and its own system prompt. It appears as its own conversation entity, such as `conversation.kitchen_agent`, that you can choose in any Assist pipeline. All agents share the one sign-in. The AI Task entity uses its own fixed instructions instead of a conversation prompt.
+
+<p align="center">
+  <img src="assets/codex-assist-agents.png" alt="Codex Assist integration page with two conversation agents and one AI Task entity, each with its own model" width="560">
+</p>
 
 **Models.** The chat model comes from your account's own model list. See [Choosing a Model](https://github.com/itsreverence/ha-codex-assist/wiki/Choosing-a-Model) and [Features and Options](https://github.com/itsreverence/ha-codex-assist/wiki/Features-and-Options).
 
