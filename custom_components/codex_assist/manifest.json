@@ -2,6 +2,7 @@
   "domain": "codex_assist",
   "name": "Codex Assist",
   "after_dependencies": ["ai_task", "conversation"],
+  "categories": ["ai_voice.ai_models"],
   "codeowners": ["@itsreverence"],
   "config_flow": true,
   "documentation": "https://github.com/itsreverence/ha-codex-assist",

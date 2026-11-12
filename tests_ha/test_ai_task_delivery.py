@@ -9,13 +9,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
-from codex_entries import codex_entry, update_settings
+from codex_entries import MockConfigEntry, codex_entry, update_settings
 from homeassistant.components import ai_task, media_source
 from homeassistant.components.conversation.chat_log import Attachment, ChatLog, UserContent
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.codex_assist.conversation import _codex_input_from_chat_log
 

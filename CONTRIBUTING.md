@@ -25,8 +25,7 @@ The fast suite under `tests/` uses lightweight Home Assistant fakes. Run the rea
 uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt \
   python -m pytest tests_ha -q
 uv venv --python 3.14 .venv-ha
-uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt \
-  --override requirements_test_ha_overrides.txt
+uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt
 .venv-ha/bin/python -m pytest tests_ha -q
 ```
 

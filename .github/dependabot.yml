@@ -12,6 +12,7 @@ updates:
     # advanced together with docs and real-HA tests, not as independent bumps.
     ignore:
       - dependency-name: homeassistant
+      - dependency-name: pytest-homeassistant
       - dependency-name: pytest-homeassistant-custom-component
       - dependency-name: hassil
       - dependency-name: home-assistant-intents

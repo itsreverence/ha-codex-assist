@@ -15,7 +15,7 @@ from types import MappingProxyType, SimpleNamespace
 
 import pytest
 import voluptuous as vol
-from codex_entries import codex_entry, subentry_of
+from codex_entries import MockConfigEntry, codex_entry, subentry_of
 from homeassistant.components import conversation
 from homeassistant.components.conversation import trace as conversation_trace
 from homeassistant.config_entries import (
@@ -29,7 +29,6 @@ from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import llm, selector
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.codex_assist import DOMAIN
 from custom_components.codex_assist.ai_task import (

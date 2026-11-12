@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+try:
+    from pytest_homeassistant.common import MockConfigEntry
+except ImportError:  # Home Assistant 2026.10 and older use the community plugin.
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.codex_assist import DOMAIN
 

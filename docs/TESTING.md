@@ -12,8 +12,7 @@ The fast suite under `tests/` uses lightweight Home Assistant fakes. Run the `te
 
 ```bash
 uv venv --python 3.14 .venv-ha
-uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt \
-  --override requirements_test_ha_overrides.txt
+uv pip install --python .venv-ha/bin/python -r requirements_test_ha.txt
 .venv-ha/bin/python -m pytest tests_ha -q
 
 uv run --isolated --python 3.14 --with-requirements requirements_test_ha_min.txt \
@@ -37,7 +36,8 @@ CI tests compatibility boundaries rather than every monthly or patch release:
 - **2026.6.0** is the minimum supported version.
 - **2026.8.3** exercises the legacy converter immediately before the Probatio transition.
 - **2026.9.0** exercises Probatio with the old tool-result API.
-- **2026.10.0** exercises the current stable release with `ToolResult` and no converter exports.
+- **2026.10.4** exercises `ToolResult` and no converter exports on the original `httpx`.
+- **2026.11.1** exercises the current stable release, where Home Assistant aliases `httpx` to `httpx2`.
 
 These checks do not establish that every omitted release, including 2026.7,
 has been tested. Add a version when a relevant API change or reported regression
@@ -47,10 +47,12 @@ API contract. Review the matrix with each monthly HA release and update the
 stable pins together. All lanes also run weekly, but pinned weekly runs do not
 discover new HA releases automatically.
 
-The current test plugin, `pytest-homeassistant-custom-component==0.13.370`,
-pins HA `2026.10.0b4`. The test-only override installs `2026.10.0` instead.
-Remove that override when an aligned plugin version is available and verified;
-do not silently test a beta while claiming stable coverage.
+From 2026.11 the current lane uses `pytest-homeassistant`, Home Assistant's own
+test package. Each release pins the matching `homeassistant` version, so bump it
+to move the lane. The community `pytest-homeassistant-custom-component` plugin
+stopped at 2026.10.4 and still serves the older lanes. `pyproject.toml` disables
+respx's pytest plugin, because it would import `httpx` before Home Assistant can
+alias it.
 
 ### Test ownership
 
@@ -167,7 +169,7 @@ with the current HA environment's python:
 .venv-ha/bin/python scripts/check_mutations.py --suite ha
 ```
 
-CI runs this suite in the Home Assistant 2026.10 job, and the fast suite (token
+CI runs this suite in the Home Assistant 2026.11 job, and the fast suite (token
 rotation and tool-call parsing, `--suite fast`) in the main test job. Each
 mutation prints one status:
 
@@ -192,6 +194,9 @@ packages are available. Codex Assist selects the converter used by Home
 Assistant's LLM helper, rather than inferring it from installed packages.
 
 ```bash
+uv run --isolated --python 3.14 --with-requirements requirements_test_ha_202610.txt \
+  python -m pytest tests_ha -q
+
 uv run --isolated --python 3.14 --with-requirements requirements_test_ha_202609.txt \
   python -m pytest tests_ha -q
 
