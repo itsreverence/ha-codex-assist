@@ -60,7 +60,7 @@ class Stream(httpx.AsyncByteStream):
 
 async def run(client, surface):
     if surface == "image":
-        return await client.generate_image(prompt="Draw a test image.")
+        return await client.generate_image(prompt="Draw a test image.", chat_model="gpt-5.4")
     return [delta async for delta in client.stream_turn(
         model="gpt-test", instructions="Test", input_items=[],
     )]

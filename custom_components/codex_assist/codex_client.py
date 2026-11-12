@@ -516,7 +516,7 @@ class CodexClient:
         *,
         prompt: str,
         input_items: list[dict[str, Any]] | None = None,
-        chat_model: str = "gpt-5.4",
+        chat_model: str,
         image_model: str = "gpt-image-2-medium",
         size: str = "1024x1024",
     ) -> CodexImageResult:

@@ -34,6 +34,7 @@ from .codex_client import (
     codex_session_id,
     codex_user_content_with_images,
 )
+from .codex_models import DEFAULT_CHAT_MODEL
 from .codex_protocol import CodexNativeState, native_state_from_response_items
 from .codex_runtime import runtime_token_coordinator
 from .config_flow import (
@@ -135,7 +136,7 @@ class CodexAssistConversationEntity(
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         settings = self.subentry.data
-        model = settings.get(CONF_MODEL, "gpt-5.4")
+        model = settings.get(CONF_MODEL, DEFAULT_CHAT_MODEL)
         prompt = settings.get(CONF_PROMPT, DEFAULT_PROMPT)
         reasoning_effort = settings.get("reasoning_effort", DEFAULT_REASONING_EFFORT)
         reasoning_summary = settings.get("reasoning_summary", DEFAULT_REASONING_SUMMARY)

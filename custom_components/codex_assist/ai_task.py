@@ -29,6 +29,7 @@ from .codex_client import (
     codex_session_id,
 )
 from .codex_image import DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_SIZE, image_size_dimensions
+from .codex_models import DEFAULT_CHAT_MODEL
 from .codex_runtime import runtime_token_coordinator
 from .config_flow import (
     CONF_IMAGE_MODEL,
@@ -103,7 +104,7 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity, CodexAssistSubentryEntity):
     ) -> ai_task.GenDataTaskResult:
         """Generate data from instructions and optional HA-native attachments."""
         settings = self.subentry.data
-        model = settings.get(CONF_MODEL, "gpt-5.4")
+        model = settings.get(CONF_MODEL, DEFAULT_CHAT_MODEL)
         reasoning_effort = settings.get("reasoning_effort", DEFAULT_REASONING_EFFORT)
         reasoning_summary = settings.get("reasoning_summary", DEFAULT_REASONING_SUMMARY)
         text_verbosity = settings.get("text_verbosity", DEFAULT_TEXT_VERBOSITY)
@@ -193,7 +194,7 @@ class CodexAssistAITaskEntity(ai_task.AITaskEntity, CodexAssistSubentryEntity):
     ) -> ai_task.GenImageTaskResult:
         """Generate an image from instructions and optional HA-native attachments."""
         settings = self.subentry.data
-        chat_model = settings.get(CONF_MODEL, "gpt-5.4")
+        chat_model = settings.get(CONF_MODEL, DEFAULT_CHAT_MODEL)
         image_model = settings.get(CONF_IMAGE_MODEL, DEFAULT_IMAGE_MODEL)
         image_size = settings.get(CONF_IMAGE_SIZE, DEFAULT_IMAGE_SIZE)
 
