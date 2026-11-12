@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/itsreverence/ha-codex-assist/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/itsreverence/ha-codex-assist?style=for-the-badge"></a>
   <a href="https://github.com/itsreverence/ha-codex-assist/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/itsreverence/ha-codex-assist/ci.yml?branch=main&style=for-the-badge&label=CI"></a>
-  <a href="https://www.hacs.xyz/docs/use/repositories/dashboard/"><img alt="Available in HACS" src="https://img.shields.io/badge/HACS-Default-41BDF5?style=for-the-badge"></a>
+  <a href="https://www.home-assistant.io/integrations/marketplace/"><img alt="Available in the Marketplace and HACS" src="https://img.shields.io/badge/Marketplace%20%7C%20HACS-Default-41BDF5?style=for-the-badge"></a>
 </p>
 
 Use OpenAI Codex / ChatGPT as a Home Assistant Assist conversation agent and AI Task provider.
@@ -18,20 +18,28 @@ Codex Assist signs in with Codex-style ChatGPT device-code auth. It keeps device
 
 ## Quick start
 
-You need Home Assistant `2026.6.0` or newer, [HACS](https://www.hacs.xyz/docs/use/download/download/), and a ChatGPT account or plan with Codex access.
+You need Home Assistant `2026.6.0` or newer and a ChatGPT account or plan with Codex access. Home Assistant `2026.11` and newer install it from the built-in [Marketplace](https://www.home-assistant.io/integrations/marketplace/). Older versions need [HACS](https://www.hacs.xyz/docs/use/download/download/).
 
+[![Open in the Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=itsreverence&repository=ha-codex-assist&category=integration)
 [![Open HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=itsreverence&repository=ha-codex-assist&category=integration)
 [![Add the Codex Assist integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=codex_assist)
 
 ### 1. Install
 
-Codex Assist is in the HACS default catalog, so you do not add a custom repository.
+Codex Assist is in the default catalog, so you do not add a custom repository.
 
-1. In the Home Assistant sidebar, open **HACS**.
+On Home Assistant `2026.11` or newer:
+
+1. Go to **Settings → Marketplace**, or use the Marketplace button above.
+2. Search for **Codex Assist**, open it, and select **Install**. Confirm the version, then select **Install** again.
+
+On Home Assistant `2026.10` or older:
+
+1. In the Home Assistant sidebar, open **HACS**, or use the HACS button above.
 2. Search for **Codex Assist**, open it, and select **Download**.
 3. Restart Home Assistant.
 
-If it does not appear after a new release or a catalog change, try again later.
+If it does not appear after a new release or a catalog change, try again later. Updates through either one need a Home Assistant restart.
 
 ### 2. Sign in
 
