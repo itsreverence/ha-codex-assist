@@ -54,7 +54,7 @@ Use reviewed user-facing notes instead of `--generate-notes` when the generated 
 
 - Confirm all required GitHub Actions checks pass for the exact commit the tag points to.
 - Confirm tagged `hacs.json`, `manifest.json`, local brand icon, and source archive are publicly reachable.
-- Install or update through HACS and restart Home Assistant.
+- Install or update through the Marketplace (Home Assistant `2026.11`+) or HACS, and restart Home Assistant after an update.
 - Complete the Assist smoke test in [TESTING.md](TESTING.md).
 - Verify reauthentication and AI Task behavior when those surfaces changed.
 

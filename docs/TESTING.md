@@ -283,13 +283,17 @@ When the hosted-search payload, model defaults, search delivery, or backend cont
 
 ## Release-candidate install
 
+To install a published prerelease on Home Assistant `2026.11` or newer, open **Settings → Devices & services → Marketplace**, open the Codex Assist device, enable its **Pre-release** switch entity (it is disabled by default), and turn the switch on. The prerelease then shows up as an update. On HACS, turn on beta versions for the repository instead.
+
+To test an unpublished branch:
+
 1. Download the branch or tag archive to test.
 2. Back up the installed integration.
 3. Copy `custom_components/codex_assist` to `/config/custom_components/codex_assist`.
 4. Restart Home Assistant.
 5. Confirm the integration version and logs reflect the candidate.
 
-Releases that move settings into subentries upgrade the config entry in place, and older releases cannot load it. Take a full Home Assistant backup before installing a candidate. To roll back, restore that backup, or reinstall the latest stable release through HACS and set the integration up again. If Codex rotated the sign-in after the backup, the restored entry asks you to sign in again.
+Releases that move settings into subentries upgrade the config entry in place, and older releases cannot load it. Take a full Home Assistant backup before installing a candidate. To roll back, restore that backup, or reinstall the latest stable release through the Marketplace or HACS and set the integration up again. If Codex rotated the sign-in after the backup, the restored entry asks you to sign in again.
 
 ## Assist smoke test
 
