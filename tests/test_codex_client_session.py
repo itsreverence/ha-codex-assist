@@ -75,7 +75,7 @@ async def test_generate_image_sends_session_header_and_prompt_cache_key():
         _sse(image, COMPLETED_WITH_USAGE), session_id="session-1"
     )
     async with http:
-        await client.generate_image(prompt="Draw a lamp")
+        await client.generate_image(prompt="Draw a lamp", chat_model="gpt-5.4")
 
     [request] = requests
     assert request.headers["session_id"] == "session-1"

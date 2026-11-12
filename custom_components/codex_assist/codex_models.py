@@ -16,6 +16,8 @@ CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models?client_version=
 # Reviewed 2026-11-10 against https://learn.chatgpt.com/docs/models.
 # See docs/RELEASING.md before updating these unverified suggestions.
 DEFAULT_CODEX_MODELS = ["gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra", "gpt-6-luna"]
+# Used only when a saved agent has no model.
+DEFAULT_CHAT_MODEL = DEFAULT_CODEX_MODELS[0]
 MODEL_CACHE_SECONDS = 6 * 60 * 60
 MODEL_RETRY_SECONDS = 60
 MODEL_REFRESH_DEBOUNCE_SECONDS = 30
