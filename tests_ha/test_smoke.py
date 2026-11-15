@@ -550,6 +550,7 @@ async def test_reconfigure_conversation_agent_uses_real_subentry_contract(
             SECTION_ADVANCED_SETTINGS: {
                 "prompt": prompt,
                 "reasoning_effort": "medium",
+                "llm_hass_api": ["assist"],
             },
         },
     )
@@ -564,6 +565,7 @@ async def test_reconfigure_conversation_agent_uses_real_subentry_contract(
         "reasoning_summary": "detailed",
         "text_verbosity": "low",
         "web_search": True,
+        "llm_hass_api": ["assist"],
     }
     assert entry.state is ConfigEntryState.LOADED
     assert hass.states.get("conversation.codex_assist") is not None

@@ -48,7 +48,7 @@
       "step": {
         "init": {
           "title": "Conversation agent",
-          "description": "{model_status}\n\nEach conversation agent appears as its own entity you can pick in an Assist pipeline. Advanced settings stay collapsed until you need them. Device control still follows Home Assistant’s Assist exposed-entity settings.",
+          "description": "{model_status}\n\nEach conversation agent appears as its own entity you can pick in an Assist pipeline. Advanced settings stay collapsed until you need them. With the default Assist tools, device control follows Home Assistant’s exposed-entity settings.",
           "data": {
             "name": "Name"
           },
@@ -73,11 +73,13 @@
               "name": "Advanced chat settings",
               "data": {
                 "prompt": "System prompt",
-                "reasoning_effort": "Reasoning effort"
+                "reasoning_effort": "Reasoning effort",
+                "llm_hass_api": "Home Assistant tools"
               },
               "data_description": {
                 "prompt": "Standing instructions for this conversation agent.",
-                "reasoning_effort": "How much reasoning supported models should use before answering."
+                "reasoning_effort": "How much reasoning supported models should use before answering.",
+                "llm_hass_api": "Tool sets this agent may use. Assist controls only exposed entities. Other sets, such as Home Assistant or an MCP server, can reach more of your system; Home Assistant allows admin-only sets only for an admin user. Clear every set for a chat-only agent."
               }
             }
           }

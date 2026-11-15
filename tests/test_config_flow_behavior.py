@@ -102,6 +102,7 @@ async def test_config_flow_creates_entry_only_after_device_token_exchange(
         "reasoning_effort": "low",
         "text_verbosity": "medium",
         "web_search": False,
+        "llm_hass_api": ["assist"],
     }
     assert subentries["ai_task_data"]["title"] == "Codex Assist AI Task"
     assert subentries["ai_task_data"]["data"] == {
