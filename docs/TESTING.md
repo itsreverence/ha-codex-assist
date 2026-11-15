@@ -306,6 +306,7 @@ After restarting Home Assistant:
 5. Confirm sensitive entities remain unexposed unless deliberately allowed.
 6. Select **Add conversation agent**, give it a different model and prompt, and confirm its new conversation entity answers without a restart.
 7. Delete that agent and confirm its entity disappears while the first agent still answers.
+8. On Home Assistant 2026.11 or newer, give a second agent the **Home Assistant** tools as an admin user in the browser chat, and ask it to list unavailable entities. Ask the same agent through a voice satellite and confirm Home Assistant refuses it. Clear every tool set on an agent and confirm it still chats but cannot read or control devices.
 
 ## Clarification follow-ups
 

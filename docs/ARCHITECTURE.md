@@ -11,7 +11,7 @@ flowchart LR
     Provider --> Runtime
     Runtime --> Codex[Codex-compatible backend]
 
-    Conversation --> Bridge[Home Assistant Assist LLM API]
+    Conversation --> Bridge[Home Assistant LLM APIs chosen per agent, Assist by default]
     Bridge --> Exposed[Entities exposed to Assist]
 
     Codex --> Reply[Streamed conversation reply]
@@ -36,15 +36,15 @@ flowchart LR
 - **Codex client** sends requests to the Codex-compatible service interface and normalizes its response stream. Text/tool and image streams share a completion reader. Success requires `response.completed`; EOF or `[DONE]` alone is not success. The reader stops at completion without waiting for the connection to close and preserves explicit backend error classifications. Text can stream before completion, but tool calls are held until completion so a truncated response cannot dispatch native actions. Each tool call comes from its completed `function_call` item in `response.output_item.done`, as in Codex CLI. Argument deltas and `response.function_call_arguments.done` are ignored. A completed call without a call ID, a name, or arguments that parse to a JSON object, or one that repeats an earlier call ID, fails the turn instead of running. An interrupted image stream fails even if it supplied a preview. Existing preview-image acceptance after completion is unchanged.
 - **Native transcript state** retains completed provider output items for stateless replay. The state is deep-copy isolated and remains opaque to normal Home Assistant logs, listeners, and conversation traces, which receive only redacted metadata.
 - **Hosted web search** is an explicit option. To avoid reported failures of the built-in search tool on the Codex backend, the client offers a `web_search` function and sends its calls to `alpha/search`, an undocumented endpoint also used by Codex CLI. This is a restricted query/direct-URL adapter, not an implementation of the CLI's complete search protocol. Each `stream_turn` invocation allows at most four search calls across four rounds, then removes the search tool for synthesis; a batch exceeding the remaining call budget or a search call after removal fails explicitly. A Home Assistant tool handoff ends that invocation. Search-only rounds stay inside the client: their text and annotations are withheld from visible output, while their complete ordinary function-call/output history, messages, and reasoning items are retained privately in `CodexNativeState`. That evidence is replayed after an HA tool handoff and on later user turns even when the final answer omits searched facts or URLs. In mixed search and HA rounds, HA tools take priority: search calls are not executed but receive explicit skipped outputs, preserving call/output closure and the round's reasoning. Consequently, search-enabled answer text waits for response completion while search remains available. Results use the Home Assistant country setting. Search text, including URLs, remains available to the model. Completed provider items retain their raw annotations for private replay. The integration does not extract citations or attach a separate Sources card. Native search-reference continuation and full-page extraction are not promised.
-- **Assist tool bridge** maps model-requested device actions into Home Assistant's Assist LLM API. It does not call services directly.
+- **Home Assistant tool bridge** maps model-requested tool calls into the Home Assistant LLM APIs the agent was given in its `llm_hass_api` setting. An agent without that setting gets `["assist"]`, and an empty list gives no tools. Home Assistant merges several APIs into one, refuses admin-only APIs without an admin user, and executes every call. The integration never calls services directly. It leaves out any tool whose name the Responses API would reject (anything outside `[A-Za-z0-9_-]{1,64}`), and, while hosted web search is on, a tool named `web_search`, so an API cannot shadow the hosted search tool. AI Task entities offer no Home Assistant tools.
 
 ## Assist conversation flow
 
 1. Home Assistant sends a voice or chat request through an Assist pipeline using one of the Codex Assist conversation entities.
 2. Codex Assist refreshes its stored Codex or ChatGPT token if needed.
 3. Codex Assist sends the conversation to the Codex-compatible backend.
-4. If Codex requests a Home Assistant tool call, Codex Assist waits for that backend response to complete, then maps the request into Home Assistant's Assist LLM API.
-5. Home Assistant validates and executes the tool call using its normal exposed-entity controls.
+4. If Codex requests a Home Assistant tool call, Codex Assist waits for that backend response to complete, then maps the request into the agent's Home Assistant LLM APIs.
+5. Home Assistant validates and executes the tool call. With the default Assist API, its normal exposed-entity controls apply.
 6. When search is enabled, the integration asks the model to keep raw URLs, markdown links, and source blocks out of speech and use human-readable source names only, without guaranteeing compliance. Conversation responses have no separate Sources card. Custom API consumers no longer receive Sources metadata in `response.card`. The previously inspected stock Assist browser did not render it.
 7. Codex Assist returns the final response to Home Assistant.
 
@@ -247,7 +247,7 @@ output, and reasoning tokens. The log line contains counts only.
 
 ## Security boundary
 
-Codex or ChatGPT may suggest an action, but Home Assistant remains the execution boundary. Device control goes through Home Assistant's Assist LLM API and is limited to entities exposed to Assist.
+Codex or ChatGPT may suggest an action, but Home Assistant remains the execution boundary. Every tool call goes through a Home Assistant LLM API that the user chose for that agent. With the default Assist API, device control is limited to entities exposed to Assist. The admin-only Home Assistant API and MCP server APIs reach further, and choosing them is an explicit, per-agent decision.
 
 Prompts, conversation context, supported AI Task attachments, and hosted-search requests leave the Home Assistant instance when the corresponding feature is used. See [../SECURITY.md](../SECURITY.md) for the full data and control boundaries.
 

@@ -9,7 +9,7 @@ Build a public-quality Home Assistant custom integration backed by OpenAI Codex 
 - Keep the integration generic and publishable. Do not add personal or home-specific entity IDs.
 - Do not copy or persist tokens from other tools such as Codex CLI, editors, or other assistants. The integration must own its OAuth and device-code credentials.
 - Follow the official Codex CLI authentication pattern, but document that the downstream Codex service interface is not a stable public third-party API contract.
-- Route device control through Home Assistant's native Assist LLM API. Do not add a raw arbitrary service-call bridge.
+- Route tool calls through LLM APIs that Home Assistant provides, with Assist as each agent's default. Do not add a raw arbitrary service-call bridge of our own.
 - Keep hosted web search opt-in. Keep search evidence and raw provider annotations in private native replay state. Do not attach a separate Sources card. Instruct the model to keep raw URLs out of spoken output.
 - Use Home Assistant's native AI Task types for structured data, attachments, and generated images. Do not add a separate upload service.
 - Avoid public endpoints. Authentication and model calls should happen inside the user's Home Assistant instance.
