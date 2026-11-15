@@ -47,4 +47,4 @@ For live Home Assistant verification, see [docs/TESTING.md](docs/TESTING.md). Ma
 
 ## Project boundaries
 
-Codex Assist must continue to route device control through Home Assistant's Assist LLM API and exposed-entity controls. It must not add an unrestricted service-call bridge, reuse credentials from unrelated tools, or require a separate public-facing Codex server.
+Codex Assist must continue to route tool calls through LLM APIs that Home Assistant provides, with the Assist API and its exposed-entity controls as the default. It must not add its own unrestricted service-call bridge, reuse credentials from unrelated tools, or require a separate public-facing Codex server.

@@ -12,7 +12,7 @@
 
 Use OpenAI Codex / ChatGPT as a Home Assistant Assist conversation agent and AI Task provider.
 
-Codex Assist signs in with Codex-style ChatGPT device-code auth. It keeps device control inside Home Assistant's normal exposed-entity safety model and does not require an OpenAI API key.
+Codex Assist signs in with Codex-style ChatGPT device-code auth. By default it keeps device control inside Home Assistant's normal exposed-entity safety model, and it does not require an OpenAI API key.
 
 > Experimental: this project is not affiliated with OpenAI or Home Assistant. Codex backend compatibility may change with upstream Codex updates.
 
@@ -79,7 +79,9 @@ If something fails, start with [Troubleshooting](https://github.com/itsreverence
 
 ## What it does
 
-**Assist conversations.** Codex Assist registers as a normal Assist conversation agent and streams replies. One sign-in can serve several agents, each with its own name, prompt, and model. It reads and controls only the entities you expose to Assist, through Home Assistant's own Assist LLM API.
+**Assist conversations.** Codex Assist registers as a normal Assist conversation agent and streams replies. One sign-in can serve several agents, each with its own name, prompt, and model. By default it reads and controls only the entities you expose to Assist, through Home Assistant's own Assist LLM API.
+
+**Home Assistant tools.** Each conversation agent chooses which of Home Assistant's LLM APIs it may use, under **Advanced chat settings → Home Assistant tools**. **Device control** (Assist) is the default. On Home Assistant 2026.11 and newer you can also choose **Home Assistant**, an admin-only API for diagnostics and management that can run any action, and every MCP server you connect through Home Assistant's MCP integration adds its own choice. Give extra tools to a separate agent rather than your everyday voice agent. Home Assistant refuses admin-only APIs when no admin user made the request, which is the case for most voice satellites. Clear every choice for a chat-only agent.
 
 **AI Task.** It generates plain text or structured data, reads supported image attachments (up to four images, 10 MiB each, 20 MiB total), and generates images. See the [AI Task example](https://github.com/itsreverence/ha-codex-assist/wiki/Features-and-Options#run-a-data-task).
 
@@ -99,7 +101,8 @@ If a response ends before it completes, Codex Assist reports a failure. Part of 
 
 ## Privacy and safety
 
-- Codex Assist has no raw "call any Home Assistant service" bridge. Control goes through Home Assistant's Assist LLM API, so your list of Assist-exposed entities is the practical safety boundary.
+- Codex Assist has no raw "call any Home Assistant service" bridge of its own. Every tool call goes through an LLM API that Home Assistant provides, and Home Assistant runs it. With the default Device control tools, your list of Assist-exposed entities is the practical safety boundary.
+- An agent you give the **Home Assistant** API can read your whole system and run any action, including on entities you have not exposed. Home Assistant allows it only for admin users. An agent you give an MCP server can use whatever that server offers. Choose these per agent, deliberately.
 - Each Assist request sends your message and the instructions Home Assistant builds for the model to the Codex service. Those instructions include an overview of your exposed entities. In Home Assistant 2026.10 the overview has names, areas, and aliases, and current states are sent only when the model asks for them. Other versions can differ. Expose only what you are comfortable sharing.
 - Keep locks, alarms, garage doors, water shutoff valves, covers, and other sensitive devices unexposed unless you want Assist to control them.
 - Hosted web search also sends the model's search queries to the Codex backend. AI Task prompts and supported attachments are sent when you run those tasks.

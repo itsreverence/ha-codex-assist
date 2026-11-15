@@ -230,6 +230,27 @@ def test_codex_tools_from_chat_log_converts_ha_llm_api_tools(conversation_module
     ) == [*result, {"type": "web_search"}]
 
 
+def test_codex_tools_skip_ha_tools_codex_cannot_call(conversation_module):
+    def tool(name):
+        return type("Tool", (), {"name": name, "description": "", "parameters": {}})()
+
+    names = ["assist__HassTurnOn", "docs.search", "x" * 65, "web_search", "a-b_C9"]
+    llm_api = type(
+        "LLMApi", (), {"tools": [tool(name) for name in names], "custom_serializer": None}
+    )()
+
+    def offered(enable_web_search):
+        return [
+            tool.get("name", tool["type"])
+            for tool in conversation_module._codex_tools_from_chat_log(
+                FakeChatLog(llm_api=llm_api), enable_web_search=enable_web_search
+            )
+        ]
+
+    assert offered(False) == ["assist__HassTurnOn", "web_search", "a-b_C9"]
+    assert offered(True) == ["assist__HassTurnOn", "a-b_C9", "web_search"]
+
+
 def test_codex_tools_adds_opt_in_web_search_without_ha_tools(conversation_module):
     assert (
         conversation_module._codex_tools_from_chat_log(FakeChatLog(), enable_web_search=False) == []

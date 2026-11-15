@@ -200,3 +200,37 @@ async def test_handle_message_reports_friendly_usage_limit_without_status_code(
     )
     assert "status 429" not in chat_log.added[0].content
     assert "Codex request failed" not in chat_log.added[0].content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data,api_ids",
+    [
+        ({"model": "gpt-5.4"}, ["assist"]),
+        (
+            {"model": "gpt-5.4", "llm_hass_api": ["assist", "homeassistant"]},
+            ["assist", "homeassistant"],
+        ),
+        ({"model": "gpt-5.4", "llm_hass_api": []}, []),
+    ],
+    ids=["unset-means-assist", "selected", "chat-only"],
+)
+async def test_handle_message_gives_home_assistant_the_agents_tool_apis(
+    conversation_module, monkeypatch, data, api_ids
+):
+    class StopAfterSetup:
+        async def resolve(self, *args, **kwargs):
+            raise CodexAuthTemporaryError("stop after LLM setup")
+
+    monkeypatch.setattr(
+        conversation_module, "runtime_token_coordinator", lambda entry: StopAfterSetup()
+    )
+    subentry = FakeSubentry()
+    subentry.data = data
+    entity = conversation_module.CodexAssistConversationEntity(FakeEntry(), subentry)
+    entity.hass = type("Hass", (), {"http_client": None, "config_entries": FakeConfigEntries()})()
+    chat_log = FakeHandleMessageChatLog()
+
+    await entity._async_handle_message(FakeUserInput(), chat_log)
+
+    assert chat_log.provided_args[1] == api_ids

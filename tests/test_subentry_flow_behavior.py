@@ -74,7 +74,7 @@ async def test_adding_a_conversation_agent_asks_for_name_prompt_and_chat_setting
     assert _form_layout(result) == {
         "name": str,
         "chat_settings": ["model", "text_verbosity", "web_search"],
-        "advanced_settings": ["prompt", "reasoning_effort"],
+        "advanced_settings": ["prompt", "reasoning_effort", "llm_hass_api"],
     }
     assert next(iter(result["data_schema"].schema)).default == "Codex Assist"
     assert _section_defaults(result, "chat_settings")["model"] == "account-model"
@@ -87,7 +87,11 @@ async def test_adding_a_conversation_agent_asks_for_name_prompt_and_chat_setting
         {
             "name": "Kitchen agent",
             **_chat(model="second-model", web_search=True),
-            "advanced_settings": {"prompt": PROMPT, "reasoning_effort": "high"},
+            "advanced_settings": {
+                "prompt": PROMPT,
+                "reasoning_effort": "high",
+                "llm_hass_api": ["assist"],
+            },
         }
     )
 
@@ -100,8 +104,88 @@ async def test_adding_a_conversation_agent_asks_for_name_prompt_and_chat_setting
             "web_search": True,
             "prompt": PROMPT,
             "reasoning_effort": "high",
+            "llm_hass_api": ["assist"],
         },
     }
+
+
+def _llm_api_field(result):
+    section_value = _fields(result["data_schema"])["advanced_settings"]
+    key, selector = next(
+        (key, value) for key, value in section_value.schema.schema.items()
+        if key.schema == "llm_hass_api"
+    )
+    return key.description["suggested_value"], selector.config
+
+
+def _with_apis(flow, *apis):
+    flow.hass = SimpleNamespace(
+        llm_apis=[SimpleNamespace(id=api_id, name=name) for api_id, name in apis]
+    )
+    return flow
+
+
+async def test_agent_tools_offer_every_registered_api_and_suggest_assist(module):
+    flow = _with_apis(
+        _flow(module, "conversation"),
+        ("assist", "Assist"), ("homeassistant", "Home Assistant"), ("mcp-1", "Docs MCP"),
+    )
+
+    suggested, config = _llm_api_field(await flow.async_step_user())
+
+    assert suggested == ["assist"]
+    assert config.multiple is True
+    assert [(c.value, c.label) for c in config.options] == [
+        ("assist", "Assist"), ("homeassistant", "Home Assistant"), ("mcp-1", "Docs MCP"),
+    ]
+
+
+async def test_agent_tools_keep_saved_apis_that_are_not_registered_right_now(module):
+    subentry = SimpleNamespace(
+        data={"model": "account-model", "llm_hass_api": ["assist", "mcp-off"]}
+    )
+    flow = _with_apis(_flow(module, "conversation", subentry=subentry), ("assist", "Assist"))
+
+    suggested, config = _llm_api_field(await flow.async_step_reconfigure())
+
+    assert suggested == ["assist", "mcp-off"]
+    assert [(c.value, c.label) for c in config.options] == [
+        ("assist", "Assist"),
+        ("mcp-off", "mcp-off (saved; not currently available)"),
+    ]
+    await flow.async_step_reconfigure(
+        {**_chat(model="account-model"), "advanced_settings": {"llm_hass_api": suggested}}
+    )
+    assert subentry.data["llm_hass_api"] == ["assist", "mcp-off"]
+
+
+@pytest.mark.parametrize(
+    "advanced,saved_apis",
+    [
+        ({"llm_hass_api": ["assist", "homeassistant"]}, ["assist", "homeassistant"]),
+        ({}, []),
+        (None, ["mcp-1"]),
+    ],
+    ids=["selected", "cleared", "section-not-submitted"],
+)
+async def test_agent_tools_save_the_selection(module, advanced, saved_apis):
+    subentry = SimpleNamespace(data={"model": "account-model", "llm_hass_api": ["mcp-1"]})
+    flow = _flow(module, "conversation", subentry=subentry)
+    user_input = _chat(model="account-model")
+    if advanced is not None:
+        user_input["advanced_settings"] = advanced
+
+    await flow.async_step_reconfigure(user_input)
+
+    assert subentry.data["llm_hass_api"] == saved_apis
+
+
+async def test_ai_task_entities_have_no_tool_selector(module):
+    flow = _flow(module, "ai_task_data")
+
+    result = await flow.async_step_user()
+
+    assert "llm_hass_api" not in _form_layout(result).get("advanced_settings", [])
 
 
 async def test_ai_task_settings_have_image_defaults_but_no_prompt(module):

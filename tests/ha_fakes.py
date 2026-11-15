@@ -143,6 +143,7 @@ def install_homeassistant_fakes(monkeypatch):
 
     class SelectSelectorMode:
         DROPDOWN = "dropdown"
+        LIST = "list"
 
     @dataclass
     class SelectOptionDict:
@@ -153,6 +154,7 @@ def install_homeassistant_fakes(monkeypatch):
     class SelectSelectorConfig:
         options: list
         mode: str
+        multiple: bool = False
 
     @dataclass
     class SelectSelector:
@@ -187,9 +189,10 @@ def install_homeassistant_fakes(monkeypatch):
         pass
 
     class Optional:
-        def __init__(self, key, default=None):
+        def __init__(self, key, default=None, description=None):
             self.schema = key
             self.default = default
+            self.description = description
 
         def __hash__(self):
             return hash((self.schema, self.default))
@@ -241,6 +244,7 @@ def install_homeassistant_fakes(monkeypatch):
     )
     ai_task.GenDataTaskResult = object
     ai_task.GenImageTaskResult = object
+    const.CONF_LLM_HASS_API = "llm_hass_api"
     const.MATCH_ALL = "*"
     core.HomeAssistant = HomeAssistant
     core.callback = lambda func: func
@@ -252,6 +256,9 @@ def install_homeassistant_fakes(monkeypatch):
     httpx_client.get_async_client = lambda hass: getattr(hass, "http_client", None)
     intent.IntentResponse = IntentResponse
     llm.LLM_API_ASSIST = "assist"
+    llm.async_get_apis = lambda hass: getattr(
+        hass, "llm_apis", [types.SimpleNamespace(id="assist", name="Assist")]
+    )
     llm.selector_serializer = object()
     llm.ToolInput = ToolInput
     selector.SelectOptionDict = SelectOptionDict

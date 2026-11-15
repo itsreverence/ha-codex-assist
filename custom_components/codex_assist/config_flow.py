@@ -6,9 +6,10 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
-from homeassistant.helpers import selector
+from homeassistant.helpers import llm, selector
 from homeassistant.helpers.httpx_client import get_async_client
 
 from . import DOMAIN
@@ -46,6 +47,7 @@ DEFAULT_REASONING_EFFORT = "low"
 DEFAULT_REASONING_SUMMARY = "auto"
 DEFAULT_TEXT_VERBOSITY = "medium"
 DEFAULT_WEB_SEARCH = False
+DEFAULT_LLM_HASS_API = [llm.LLM_API_ASSIST]
 
 CREDENTIAL_KEYS = (CONF_ACCESS_TOKEN, CONF_REFRESH_TOKEN)
 SUBENTRY_CONVERSATION = "conversation"
@@ -63,6 +65,7 @@ SUBENTRY_SETTING_KEYS = {
             CONF_REASONING_SUMMARY,
             CONF_TEXT_VERBOSITY,
             CONF_WEB_SEARCH,
+            CONF_LLM_HASS_API,
         }
     ),
     SUBENTRY_AI_TASK: frozenset(
@@ -82,6 +85,7 @@ RECOMMENDED_SETTINGS = {
     CONF_REASONING_EFFORT: DEFAULT_REASONING_EFFORT,
     CONF_TEXT_VERBOSITY: DEFAULT_TEXT_VERBOSITY,
     CONF_WEB_SEARCH: DEFAULT_WEB_SEARCH,
+    CONF_LLM_HASS_API: DEFAULT_LLM_HASS_API,
     CONF_IMAGE_MODEL: DEFAULT_IMAGE_MODEL,
     CONF_IMAGE_SIZE: DEFAULT_IMAGE_SIZE,
 }
@@ -284,9 +288,14 @@ class CodexAssistSubentryFlow(config_entries.ConfigSubentryFlow):
 
         errors = {}
         if user_input is not None:
-            data = subentry_settings(
-                self._subentry_type, {**saved, **_flatten_settings_input(user_input)}
-            )
+            settings_input = _flatten_settings_input(user_input)
+            if (
+                CONF_LLM_HASS_API in SUBENTRY_SETTING_KEYS[self._subentry_type]
+                and SECTION_ADVANCED_SETTINGS in user_input
+            ):
+                # The frontend omits a multi-select the user cleared.
+                settings_input.setdefault(CONF_LLM_HASS_API, [])
+            data = subentry_settings(self._subentry_type, {**saved, **settings_input})
             model = data.get(CONF_MODEL)
             if model is None:
                 errors["base"] = "no_models"
@@ -304,6 +313,7 @@ class CodexAssistSubentryFlow(config_entries.ConfigSubentryFlow):
             data_schema=_settings_schema(
                 saved,
                 model_options=list(self._catalog.models),
+                llm_apis={api.id: api.name for api in llm.async_get_apis(self.hass)},
                 keys=SUBENTRY_SETTING_KEYS[self._subentry_type],
                 name_default=_unused_title(entry, self._subentry_type) if is_new else None,
             ),
@@ -326,6 +336,7 @@ def _settings_schema(
     defaults: Mapping[str, Any],
     *,
     model_options: list[str],
+    llm_apis: Mapping[str, str] | None = None,
     keys: frozenset[str],
     name_default: str | None = None,
 ) -> vol.Schema:
@@ -343,6 +354,30 @@ def _settings_schema(
         if key not in keys or default is None:
             return {}
         return {vol.Optional(key, default=default): validator}
+
+    llm_api_fields: dict[Any, Any] = {}
+    if CONF_LLM_HASS_API in keys and llm_apis:
+        # A suggested value, not a default, so clearing every API saves an empty list.
+        selected = list(defaults.get(CONF_LLM_HASS_API, DEFAULT_LLM_HASS_API))
+        # An API can be missing while its integration is unloaded. Keep the choice
+        # until the user clears it, so saving other settings does not drop it.
+        unavailable = {
+            api_id: f"{api_id} (saved; not currently available)"
+            for api_id in selected
+            if api_id not in llm_apis
+        }
+        llm_api_fields[
+            vol.Optional(CONF_LLM_HASS_API, description={"suggested_value": selected})
+        ] = selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[
+                    selector.SelectOptionDict(value=api_id, label=name)
+                    for api_id, name in {**llm_apis, **unavailable}.items()
+                ],
+                multiple=True,
+                mode=selector.SelectSelectorMode.LIST,
+            )
+        )
 
     sections = (
         (
@@ -378,6 +413,7 @@ def _settings_schema(
                     defaults.get(CONF_REASONING_EFFORT, DEFAULT_REASONING_EFFORT),
                     _low_medium_high_selector(),
                 ),
+                **llm_api_fields,
             },
         ),
         (

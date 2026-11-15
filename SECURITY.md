@@ -21,15 +21,15 @@ Do not include raw access tokens, refresh tokens, device codes, cookies, full Ho
 
 ## Security stance
 
-Codex Assist uses Home Assistant's normal Assist LLM API and exposed-entity controls. It does not add a custom raw service-call bridge or bypass Home Assistant's Assist exposure model.
+By default Codex Assist uses Home Assistant's normal Assist LLM API and exposed-entity controls. It does not add a custom raw service-call bridge of its own. Each conversation agent can instead be given other LLM APIs that Home Assistant provides, such as the admin-only Home Assistant API or an MCP server's API. Those reach beyond the Assist exposure model, and Home Assistant enforces their own access rules, such as admin-only use.
 
 The diagram below covers the device-control path. Hosted search and AI Task have separate data paths described after it.
 
 ![Codex Assist device-control safety model](assets/codex-assist-safety-model.png)
 
-Codex or ChatGPT may request an action, but Codex Assist routes that request through Home Assistant's Assist LLM API. Home Assistant limits execution to the entities exposed to Assist.
+Codex or ChatGPT may request an action, but Codex Assist routes that request through the Home Assistant LLM APIs chosen for that agent. With the default Assist API, Home Assistant limits execution to the entities exposed to Assist.
 
-Every Assist conversation request sends the user's message, the conversation history Home Assistant supplies, and Home Assistant's Assist instructions to the Codex backend, whether or not hosted web search is on. Those instructions describe the entities you have exposed to Assist. In Home Assistant 2026.10 the description lists each exposed entity's names, domain, areas, and aliases, and entity states are sent when the model calls Home Assistant's live-context tool. Other Home Assistant versions can differ. Entities you have not exposed are not described.
+Every Assist conversation request sends the user's message, the conversation history Home Assistant supplies, and the instructions Home Assistant builds for that agent's LLM APIs to the Codex backend, whether or not hosted web search is on. With the default Assist API, those instructions describe the entities you have exposed to Assist. In Home Assistant 2026.10 the description lists each exposed entity's names, domain, areas, and aliases, and entity states are sent when the model calls Home Assistant's live-context tool. Other Home Assistant versions can differ. With only the Assist API, entities you have not exposed are not described. An agent with no LLM APIs sends no entity information. Other APIs you give an agent return their own data to Codex: the admin-only Home Assistant API can read unexposed entities, templates, and system information, and an MCP server returns whatever its tools produce.
 
 Hosted web search is disabled by default. When enabled, the Codex backend may use the current model turn, including the conversation context already supplied for Assist, to formulate a search. The model's search queries go to the same backend. Codex Assist adds only the Home Assistant country setting as an approximate search location (no city, coordinates, or zone), and does not bypass Home Assistant's exposed-entity boundary. Codex Assist does not extract citation links into a separate Sources card. Search text, including URLs, remains available to the model and in private native replay state. Guidance against URLs in generated answers is not an output filter.
 

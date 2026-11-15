@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ import httpx
 from homeassistant.components import conversation
 from homeassistant.components.conversation import AssistantContentDeltaDict
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import MATCH_ALL
+from homeassistant.const import CONF_LLM_HASS_API, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import intent, llm
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -24,6 +25,7 @@ from .codex_auth import (
     CodexTokenSet,
 )
 from .codex_client import (
+    WEB_SEARCH_TOOL_NAME,
     CodexAuthenticationError,
     CodexClient,
     CodexRateLimitError,
@@ -41,6 +43,7 @@ from .config_flow import (
     CONF_MODEL,
     CONF_PROMPT,
     CONF_WEB_SEARCH,
+    DEFAULT_LLM_HASS_API,
     DEFAULT_PROMPT,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_REASONING_SUMMARY,
@@ -56,6 +59,8 @@ MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_ATTACHMENTS = 4
 MAX_TOTAL_IMAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 LOGGER = logging.getLogger(__name__)
+# The Responses API rejects function names outside this pattern.
+_CODEX_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _INTEGRATION_DIRECTORY = Path(__file__).parent
 _AUTH_FAILURE_TEXT = "Codex Assist needs attention in Home Assistant."
 _ERROR_RESPONSE_INSTRUCTIONS = (
@@ -147,7 +152,7 @@ class CodexAssistConversationEntity(
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
-                llm.LLM_API_ASSIST,
+                settings.get(CONF_LLM_HASS_API, DEFAULT_LLM_HASS_API),
                 prompt,
                 user_input.extra_system_prompt,
             )
@@ -638,6 +643,7 @@ def _codex_tools_from_chat_log(
         tools.extend(
             _codex_tool_from_ha_tool(tool, chat_log.llm_api.custom_serializer)
             for tool in chat_log.llm_api.tools
+            if _codex_can_call(tool.name, enable_web_search=enable_web_search)
         )
     if enable_web_search:
         search: dict[str, Any] = {"type": "web_search"}
@@ -647,6 +653,17 @@ def _codex_tools_from_chat_log(
             search["user_location"] = {"type": "approximate", "country": country}
         tools.append(search)
     return tools
+
+
+def _codex_can_call(name: str, *, enable_web_search: bool) -> bool:
+    if not _CODEX_TOOL_NAME.fullmatch(name):
+        reason = "its name is not a valid Codex function name"
+    elif enable_web_search and name == WEB_SEARCH_TOOL_NAME:
+        reason = "hosted web search uses that name"
+    else:
+        return True
+    LOGGER.debug("Not offering Home Assistant tool %r to Codex: %s", name, reason)
+    return False
 
 
 def _codex_tool_from_ha_tool(
