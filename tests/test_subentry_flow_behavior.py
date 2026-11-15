@@ -140,15 +140,23 @@ async def test_agent_tools_offer_every_registered_api_and_suggest_assist(module)
     ]
 
 
-async def test_agent_tools_drop_saved_apis_that_are_no_longer_registered(module):
-    subentry = SimpleNamespace(data={"model": "account-model", "llm_hass_api": ["gone", "mcp-1"]})
-    flow = _with_apis(
-        _flow(module, "conversation", subentry=subentry), ("assist", "Assist"), ("mcp-1", "MCP")
+async def test_agent_tools_keep_saved_apis_that_are_not_registered_right_now(module):
+    subentry = SimpleNamespace(
+        data={"model": "account-model", "llm_hass_api": ["assist", "mcp-off"]}
     )
+    flow = _with_apis(_flow(module, "conversation", subentry=subentry), ("assist", "Assist"))
 
-    suggested, _config = _llm_api_field(await flow.async_step_reconfigure())
+    suggested, config = _llm_api_field(await flow.async_step_reconfigure())
 
-    assert suggested == ["mcp-1"]
+    assert suggested == ["assist", "mcp-off"]
+    assert [(c.value, c.label) for c in config.options] == [
+        ("assist", "Assist"),
+        ("mcp-off", "mcp-off (saved; not currently available)"),
+    ]
+    await flow.async_step_reconfigure(
+        {**_chat(model="account-model"), "advanced_settings": {"llm_hass_api": suggested}}
+    )
+    assert subentry.data["llm_hass_api"] == ["assist", "mcp-off"]
 
 
 @pytest.mark.parametrize(

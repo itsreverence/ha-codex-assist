@@ -358,18 +358,21 @@ def _settings_schema(
     llm_api_fields: dict[Any, Any] = {}
     if CONF_LLM_HASS_API in keys and llm_apis:
         # A suggested value, not a default, so clearing every API saves an empty list.
-        selected = [
-            api_id
-            for api_id in defaults.get(CONF_LLM_HASS_API, DEFAULT_LLM_HASS_API)
-            if api_id in llm_apis
-        ]
+        selected = list(defaults.get(CONF_LLM_HASS_API, DEFAULT_LLM_HASS_API))
+        # An API can be missing while its integration is unloaded. Keep the choice
+        # until the user clears it, so saving other settings does not drop it.
+        unavailable = {
+            api_id: f"{api_id} (saved; not currently available)"
+            for api_id in selected
+            if api_id not in llm_apis
+        }
         llm_api_fields[
             vol.Optional(CONF_LLM_HASS_API, description={"suggested_value": selected})
         ] = selector.SelectSelector(
             selector.SelectSelectorConfig(
                 options=[
                     selector.SelectOptionDict(value=api_id, label=name)
-                    for api_id, name in llm_apis.items()
+                    for api_id, name in {**llm_apis, **unavailable}.items()
                 ],
                 multiple=True,
                 mode=selector.SelectSelectorMode.LIST,
