@@ -7,6 +7,7 @@ import pytest
 
 from custom_components.codex_assist.codex_auth import (
     CodexAuthorizationCode,
+    CodexAuthTemporaryError,
     CodexDeviceCode,
     CodexTokenSet,
 )
@@ -214,15 +215,18 @@ async def test_reconfigure_updates_existing_entry_after_device_token_exchange(
     }
 
 
-@pytest.mark.asyncio
-async def test_reconfigure_device_code_request_failure_shows_error(config_flow_module):
-    flow = config_flow_module.CodexAssistConfigFlow()
-    auth = FakeAuthClient()
-
+def _failing_device_code_request(auth):
     async def request_device_code():
-        raise RuntimeError("network error")
+        raise CodexAuthTemporaryError("Codex device-code request failed with status 503")
 
     auth.request_device_code = request_device_code
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_device_code_request_failure_shows_error(config_flow_module, caplog):
+    flow = config_flow_module.CodexAssistConfigFlow()
+    auth = FakeAuthClient()
+    _failing_device_code_request(auth)
     flow._auth_client = lambda: auth
     flow.source = "reconfigure"
     flow.reconfigure_entry = _signed_in_entry()
@@ -233,6 +237,42 @@ async def test_reconfigure_device_code_request_failure_shows_error(config_flow_m
     assert result["step_id"] == "reconfigure"
     assert result["errors"] == {"base": "device_code_request_failed"}
     assert _schema_defaults(result["data_schema"]) == {}
+    assert "device-code request failed with status 503" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", ["user", "reauth_confirm"])
+async def test_device_code_request_failure_logs_its_cause(config_flow_module, caplog, step):
+    flow = config_flow_module.CodexAssistConfigFlow()
+    auth = FakeAuthClient()
+    _failing_device_code_request(auth)
+    flow._auth_client = lambda: auth
+
+    result = await getattr(flow, f"async_step_{step}")({})
+
+    assert result["step_id"] == step
+    assert result["errors"] == {"base": "device_code_request_failed"}
+    assert "Could not request a Codex device code" in caplog.text
+    assert "status 503" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_device_sign_in_failure_logs_its_cause(config_flow_module, caplog):
+    flow = config_flow_module.CodexAssistConfigFlow()
+    auth = FakeAuthClient()
+
+    async def exchange_authorization_code(authorization):
+        raise CodexAuthTemporaryError("Codex token exchange failed with status 500")
+
+    auth.exchange_authorization_code = exchange_authorization_code
+    flow._auth_client = lambda: auth
+    flow._device_code = auth.device_code
+
+    result = await flow.async_step_device_wait()
+
+    assert result["errors"] == {"base": "device_code_auth_failed"}
+    assert "token exchange failed with status 500" in caplog.text
+    assert "auth-code-1" not in caplog.text
 
 
 async def test_model_step_rejects_an_unadvertised_model(config_flow_module):
