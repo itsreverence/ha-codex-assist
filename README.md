@@ -47,8 +47,8 @@ Sign-in uses a device code, so you approve it in a browser. The browser can be o
 
 1. Go to **Settings → Devices & services → Add integration**, or use the button above. Search for **Codex Assist** and select it.
 2. Select **Submit**. Home Assistant shows a web address and a short code.
-3. Open that address in a browser, sign in to ChatGPT, and enter the code.
-4. Return to Home Assistant and select **Submit**. If it says the code has not been approved yet, wait a few seconds and select **Submit** again.
+3. Open that address in a browser, sign in to ChatGPT, and enter the code within 15 minutes.
+4. Return to Home Assistant and select **Submit**. If it says the code has not been approved yet, wait a few seconds and select **Submit** again. If the code has expired, select **Submit** for a new one.
 5. Choose a chat model from the list, then select **Submit**. Setup creates a conversation agent named **Codex Assist** and an AI Task entity named **Codex Assist AI Task**.
 
 If sign-in does not start or the code page reports an error, device-code login may be turned off for your account. OpenAI's [authentication guide](https://learn.chatgpt.com/docs/auth) says a personal account enables it in ChatGPT security settings, and a workspace admin controls it for a workspace. Home Assistant stores the sign-in itself. Do not paste tokens or copy them from Codex CLI or another tool.

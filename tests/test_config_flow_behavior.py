@@ -124,7 +124,7 @@ async def test_config_flow_pending_authorization_keeps_same_device_code(
     auth = FakeAuthClient()
     auth.poll_result = None
     flow._auth_client = lambda: auth
-    flow._device_code = auth.device_code
+    await flow.async_step_user({})
 
     result = await flow.async_step_device_wait()
 
@@ -132,6 +132,61 @@ async def test_config_flow_pending_authorization_keeps_same_device_code(
     assert result["step_id"] == "device"
     assert result["errors"] == {"base": "authorization_pending"}
     assert result["description_placeholders"]["user_code"] == "ABCD-EFGH"
+    assert auth.requested == 1
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("step", ["user", "reconfigure", "reauth_confirm"])
+async def test_an_unapproved_code_expires_after_fifteen_minutes(
+    config_flow_module, monkeypatch, step
+):
+    # OpenAI answers an expired code exactly like an unapproved one.
+    clock = FakeClock()
+    monkeypatch.setattr(config_flow_module, "monotonic", clock)
+    flow = config_flow_module.CodexAssistConfigFlow()
+    auth = FakeAuthClient()
+    auth.poll_result = None
+    flow._auth_client = lambda: auth
+    await getattr(flow, f"async_step_{step}")({})
+
+    clock.now += 15 * 60 - 1
+    assert (await flow.async_step_device_wait())["errors"] == {"base": "authorization_pending"}
+
+    clock.now += 1
+    result = await flow.async_step_device_wait()
+    assert result["step_id"] == step
+    assert result["errors"] == {"base": "device_code_expired"}
+
+    result = await getattr(flow, f"async_step_{step}")({})
+    assert result["step_id"] == "device"
+    assert auth.requested == 2
+
+
+@pytest.mark.asyncio
+async def test_an_approval_that_arrives_after_fifteen_minutes_still_signs_in(
+    config_flow_module, monkeypatch
+):
+    clock = FakeClock()
+    monkeypatch.setattr(config_flow_module, "monotonic", clock)
+    flow = config_flow_module.CodexAssistConfigFlow()
+    auth = FakeAuthClient()
+    flow._auth_client = lambda: auth
+    flow.hass = object()
+    flow.source = "user"
+    await flow.async_step_user({})
+
+    clock.now += 60 * 60
+    result = await flow.async_step_device_wait()
+
+    assert result["step_id"] == "model"
 
 
 @pytest.mark.asyncio
