@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -27,6 +28,8 @@ from .codex_image import (
 from .codex_models import ModelCatalog, ModelDiscoveryCache, fetch_codex_model_ids
 from .codex_runtime import runtime_token_coordinator
 from .model_discovery import async_entry_model_catalog
+
+LOGGER = logging.getLogger(__name__)
 
 CONF_ACCESS_TOKEN = "access_token"
 CONF_NAME = "name"
@@ -118,15 +121,7 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         if user_input is not None:
-            try:
-                self._device_code = await self._auth_client().request_device_code()
-            except RuntimeError:
-                return self.async_show_form(
-                    step_id="user",
-                    data_schema=_user_schema(),
-                    errors={"base": "device_code_request_failed"},
-                )
-            return await self.async_step_device()
+            return await self._async_start_device_sign_in("user", _user_schema())
 
         return self.async_show_form(step_id="user", data_schema=_user_schema())
 
@@ -149,7 +144,8 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if authorization is None:
                 return self._show_device_form(errors={"base": "authorization_pending"})
             tokens = await auth_client.exchange_authorization_code(authorization)
-        except RuntimeError:
+        except RuntimeError as err:
+            LOGGER.warning("Codex device sign-in failed: %s", err)
             return self._show_device_form(errors={"base": "device_code_auth_failed"})
 
         credentials = {
@@ -210,15 +206,7 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_reconfigure(self, user_input=None):
         if user_input is not None:
-            try:
-                self._device_code = await self._auth_client().request_device_code()
-            except RuntimeError:
-                return self.async_show_form(
-                    step_id="reconfigure",
-                    data_schema=vol.Schema({}),
-                    errors={"base": "device_code_request_failed"},
-                )
-            return await self.async_step_device()
+            return await self._async_start_device_sign_in("reconfigure", vol.Schema({}))
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -232,11 +220,17 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(self, user_input=None):
         if user_input is None:
             return self.async_show_form(step_id="reauth_confirm")
+        return await self._async_start_device_sign_in("reauth_confirm")
+
+    async def _async_start_device_sign_in(self, step_id: str, data_schema=None):
         try:
             self._device_code = await self._auth_client().request_device_code()
-        except RuntimeError:
+        except RuntimeError as err:
+            # Auth errors carry only a status, an exception type, or a field name.
+            LOGGER.warning("Could not request a Codex device code: %s", err)
             return self.async_show_form(
-                step_id="reauth_confirm",
+                step_id=step_id,
+                data_schema=data_schema,
                 errors={"base": "device_code_request_failed"},
             )
         return await self.async_step_device()
