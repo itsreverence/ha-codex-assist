@@ -7,7 +7,7 @@
       },
       "device": {
         "title": "Sign in with Codex",
-        "description": "Open {verification_uri} in your browser, sign in with your ChatGPT/Codex account, and enter this code:\n\n{user_code}\n\nAfter approving it, come back here and submit this form. If OpenAI says it is not ready yet, wait about {interval} seconds and try again."
+        "description": "Open {verification_uri} in your browser, sign in with your ChatGPT/Codex account, and enter this code within 15 minutes:\n\n{user_code}\n\nAfter approving it, come back here and submit this form. If OpenAI says it is not ready yet, wait about {interval} seconds and try again."
       },
       "reauth_confirm": {
         "title": "Sign in with Codex again",
@@ -33,6 +33,7 @@
     "error": {
       "authorization_pending": "That code has not been approved yet. Finish signing in in your browser, wait a few seconds, then continue again.",
       "device_code_auth_failed": "Codex sign-in failed. Restart setup and try again.",
+      "device_code_expired": "That code expired after 15 minutes. Submit again to get a new code.",
       "device_code_request_failed": "Could not request a Codex device code. Check network access from Home Assistant and try again.",
       "invalid_model": "Choose a model from the displayed list.",
       "no_models": "Your account returned no visible models. Try again later or restart setup with another account."

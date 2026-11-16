@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import logging
 from collections.abc import Mapping
+from time import monotonic
 from typing import Any
 
 import voluptuous as vol
@@ -30,6 +31,10 @@ from .codex_runtime import runtime_token_coordinator
 from .model_discovery import async_entry_model_catalog
 
 LOGGER = logging.getLogger(__name__)
+
+# The device-code endpoint reports an expired code exactly like an unapproved one,
+# so stop waiting after the lifetime Codex CLI uses.
+DEVICE_CODE_LIFETIME = 15 * 60
 
 CONF_ACCESS_TOKEN = "access_token"
 CONF_NAME = "name"
@@ -115,6 +120,8 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._device_code: CodexDeviceCode | None = None
+        self._device_code_expires_at = 0.0
+        self._sign_in_form: tuple[str, vol.Schema | None] = ("user", None)
         self._credentials: dict[str, Any] = {}
         self._model_cache = ModelDiscoveryCache()
         self._catalog: ModelCatalog | None = None
@@ -142,6 +149,8 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 user_code=self._device_code.user_code,
             )
             if authorization is None:
+                if monotonic() >= self._device_code_expires_at:
+                    return self._show_sign_in_form({"base": "device_code_expired"})
                 return self._show_device_form(errors={"base": "authorization_pending"})
             tokens = await auth_client.exchange_authorization_code(authorization)
         except RuntimeError as err:
@@ -223,17 +232,19 @@ class CodexAssistConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return await self._async_start_device_sign_in("reauth_confirm")
 
     async def _async_start_device_sign_in(self, step_id: str, data_schema=None):
+        self._sign_in_form = (step_id, data_schema)
         try:
             self._device_code = await self._auth_client().request_device_code()
         except RuntimeError as err:
             # Auth errors carry only a status, an exception type, or a field name.
             LOGGER.warning("Could not request a Codex device code: %s", err)
-            return self.async_show_form(
-                step_id=step_id,
-                data_schema=data_schema,
-                errors={"base": "device_code_request_failed"},
-            )
+            return self._show_sign_in_form({"base": "device_code_request_failed"})
+        self._device_code_expires_at = monotonic() + DEVICE_CODE_LIFETIME
         return await self.async_step_device()
+
+    def _show_sign_in_form(self, errors):
+        step_id, data_schema = self._sign_in_form
+        return self.async_show_form(step_id=step_id, data_schema=data_schema, errors=errors)
 
     def _auth_client(self) -> CodexAuthClient:
         return CodexAuthClient(http_client=get_async_client(self.hass))

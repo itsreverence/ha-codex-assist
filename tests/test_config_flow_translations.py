@@ -29,6 +29,7 @@ def test_config_flow_errors_are_translated_for_device_polling():
 
     assert "authorization_pending" in errors
     assert "device_code_auth_failed" in errors
+    assert "device_code_expired" in errors
     assert "device_code_request_failed" in errors
 
 
